@@ -1,0 +1,6 @@
+{
+  "port": 8080,
+  "apiUrl": "https://api.openai.com/v1/chat/completions",
+  "apiKey": "ВАШ_API_КЛЮЧ",
+  "model": "gpt-3.5-turbo"
+}

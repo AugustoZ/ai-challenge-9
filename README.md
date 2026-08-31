@@ -1,0 +1,151 @@
+# AI Web Client (Kotlin + Ktor)
+
+Проект на языке **Kotlin**, который отправляет запросы к AI API (OpenAI-совместимому) и выводит ответы в **веб-интерфейс**.
+
+## Что делает проект
+
+1. Запускает веб-сервер на **Ktor** (порт по умолчанию `8080`).
+2. Отдаёт статический веб-интерфейс (HTML/CSS/JS) в браузере.
+3. По кнопке «Отправить» фронтенд отправляет POST-запрос на наш сервер `POST /api/chat`.
+4. Сервер обращается к внешнему AI API (Chat Completions), получает ответ и возвращает его браузеру.
+5. Ответ отображается в чате.
+
+## Структура проекта
+
+```
+src/main/kotlin/com/example/aiweb/
+├── Application.kt          # Точка входа, настройка Ktor-сервера
+├── config/AppConfig.kt     # Конфигурация (конфиг-файл / переменные окружения)
+├── client/AIClient.kt      # HTTP-клиент для вызова внешнего AI API
+├── routes/Routes.kt        # HTTP-маршруты (POST /api/chat)
+└── model/Models.kt         # DTO-классы (ChatRequest, OpenAI, FileConfig)
+
+src/main/resources/static/  # Веб-интерфейс (index.html, style.css, script.js)
+
+Dockerfile                  # Многоступенчатая сборка контейнера
+docker-compose.yml          # Запуск через Docker Compose
+config.example.json         # Пример конфиг-файла
+```
+
+## Требования
+
+- **Java 17+** (проект настроен на Java 22)
+- **Gradle** (или используйте встроенный `./gradlew` wrapper)
+- **Docker + Docker Compose** (для запуска в контейнере)
+
+## Настройка конфигурации
+
+Конфигурация берётся из трёх источников, приоритет (от высшего к низшему):
+
+1. **Переменные окружения** (`PORT`, `AI_API_URL`, `AI_API_KEY`, `AI_MODEL`, `CONFIG_FILE`)
+2. **Конфиг-файл** (JSON, путь задаётся через `CONFIG_FILE`, по умолчанию `config.json`)
+3. **Значения по умолчанию**
+
+### Способ 1: конфиг-файл (рекомендуется)
+
+Скопируйте пример и заполните своими значениями:
+
+```bash
+cp config.example.json config.json
+```
+
+Формат `config.json` (все поля опциональны):
+
+```json
+{
+  "port": 8080,
+  "apiUrl": "https://api.openai.com/v1/chat/completions",
+  "apiKey": "ВАШ_API_КЛЮЧ",
+  "model": "gpt-3.5-turbo"
+}
+```
+
+Запуск с конфиг-файлом:
+
+```bash
+./gradlew run          # использует config.json из текущей директории
+# или с указанием пути:
+CONFIG_FILE=/path/to/config.json ./gradlew run
+```
+
+### Способ 2: переменные окружения
+
+```bash
+AI_API_KEY="ваш-ключ" ./gradlew run
+```
+
+### Используемые переменные окружения
+
+| Переменная | Назначение | По умолчанию |
+|---|---|---|
+| `PORT` | Порт веб-сервера | `8080` |
+| `AI_API_URL` | URL эндпоинта Chat Completions | `https://api.openai.com/v1/chat/completions` |
+| `AI_API_KEY` | Ключ API | `ВАШ_API_КЛЮЧ` |
+| `AI_MODEL` | Имя модели | `gpt-3.5-turbo` |
+| `CONFIG_FILE` | Путь к JSON-конфигу | `config.json` |
+
+## Открытие веб-интерфейса
+
+Откройте в браузере: **http://localhost:8080**
+
+Введите сообщение и нажмите **«Отправить»** — ответ AI появится в чате.
+
+## Запуск через Docker
+
+### Docker Compose (рекомендуется)
+
+1. Скопируйте пример конфига и заполните значения:
+
+   ```bash
+   cp config.example.json config.json
+   ```
+
+2. Запустите:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   - Контейнер монтирует `./config.json` как `/app/config.json` (только для чтения).
+   - Переменные окружения в `docker-compose.yml` имеют приоритет над `config.json`.
+   - Либо задайте ключ через переменные окружения Docket Compose:
+     ```bash
+     AI_API_KEY="ваш-ключ" docker compose up -d --build
+     ```
+
+3. Откройте **http://localhost:8080**
+
+4. Остановить:
+
+   ```bash
+   docker compose down
+   ```
+
+### Только Docker
+
+```bash
+docker build -t aiweb .
+docker run -p 8080:8080 -v "$(pwd)/config.json:/app/config.json:ro" aiweb
+```
+
+## Пример использования API напрямую
+
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Привет, как дела?"}'
+```
+
+## Совместимость
+
+Проект работает с любым **OpenAI-совместимым** API (OpenAI, Azure OpenAI, LocalAI, Ollama через совместимый шлюз и т.д.) — достаточно поменять `AI_API_URL`, `AI_API_KEY` и `AI_MODEL`.
+
+## Сборка (без запуска)
+
+```bash
+./gradlew build
+./gradlew installDist   # создаёт папку build/install, удобно для запуска
+
+# Сборка Docker-образа
+docker build -t aiweb .
+```
