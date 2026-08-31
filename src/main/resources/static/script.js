@@ -3,6 +3,9 @@ const form = document.getElementById('chatForm');
 const input = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const status = document.getElementById('status');
+const tokenCounter = document.getElementById('tokenCounter');
+
+let sessionTotalTokens = 0;
 
 // Добавление сообщения в чат
 function addMessage(sender, text) {
@@ -17,6 +20,30 @@ function addMessage(sender, text) {
     chat.appendChild(messageDiv);
     chat.scrollTop = chat.scrollHeight;
     return messageDiv;
+}
+
+// Добавление ответа бота с подписью о потраченных токенах
+function addBotMessage(text, tokenData) {
+    const messageDiv = addMessage('bot', text);
+
+    if (tokenData && tokenData.totalTokens != null) {
+        const meta = document.createElement('div');
+        meta.className = 'token-meta';
+        meta.textContent =
+            `Токены: промпт ${tokenData.promptTokens ?? 0} · ответ ${tokenData.completionTokens ?? 0} · всего ${tokenData.totalTokens}`;
+        messageDiv.appendChild(meta);
+
+        sessionTotalTokens += tokenData.totalTokens;
+        updateTokenCounter();
+    }
+
+    return messageDiv;
+}
+
+// Обновление общего счётчика токенов за сессию
+function updateTokenCounter() {
+    tokenCounter.textContent = `Токены за сессию: ${sessionTotalTokens}`;
+    tokenCounter.classList.remove('hidden');
 }
 
 // Индикатор "печатает..."
@@ -72,7 +99,7 @@ form.addEventListener('submit', async (e) => {
             showStatus(data.reply || 'Произошла ошибка');
         } else {
             hideTyping();
-            addMessage('bot', data.reply);
+            addBotMessage(data.reply, data);
         }
     } catch (err) {
         hideTyping();

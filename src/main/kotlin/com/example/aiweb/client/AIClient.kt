@@ -38,9 +38,10 @@ class AIClient(private val config: AppConfig) {
     }
 
     /**
-     * Отправляет сообщение пользователя в AI API и возвращает ответ.
+     * Отправляет сообщение пользователя в AI API и возвращает ответ
+     * вместе с информацией о потраченных токенах.
      */
-    suspend fun ask(userMessage: String): String {
+    suspend fun ask(userMessage: String): ChatResult {
         val request = OpenAIRequest(
             model = config.model,
             messages = listOf(
@@ -67,9 +68,24 @@ class AIClient(private val config: AppConfig) {
         val reply = parsed.choices.firstOrNull()?.message?.content
             ?: throw IllegalStateException("API вернул пустой ответ")
 
-        return reply.trim()
+        // Извлекаем данные об использовании токенов (могут отсутствовать)
+        val usage = parsed.usage
+        return ChatResult(
+            reply = reply.trim(),
+            promptTokens = usage?.promptTokens,
+            completionTokens = usage?.completionTokens,
+            totalTokens = usage?.totalTokens
+        )
     }
 
     /** Закрытие HTTP-клиента. */
     fun close() = client.close()
 }
+
+/** Результат обращения к AI API: ответ и сведения о потраченных токенах. */
+data class ChatResult(
+    val reply: String,
+    val promptTokens: Int?,
+    val completionTokens: Int?,
+    val totalTokens: Int?
+)

@@ -45,6 +45,20 @@ body {
     font-size: 14px;
 }
 
+.token-counter {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #667eea;
+    background: #eff1fd;
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+}
+
+.token-counter.hidden {
+    display: none;
+}
+
 .chat {
     flex: 1;
     overflow-y: auto;
@@ -89,6 +103,13 @@ body {
     background: #fff;
     border: 1px solid #e3e6f0;
     border-bottom-left-radius: 4px;
+}
+
+.token-meta {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #9aa0b5;
+    display: block;
 }
 
 .input-row {

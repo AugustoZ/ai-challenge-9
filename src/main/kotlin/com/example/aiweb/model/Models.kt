@@ -1,5 +1,6 @@
 package com.example.aiweb.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -23,7 +24,10 @@ data class ChatRequest(
 /** Ответ, который сервер возвращает веб-интерфейсу. */
 @Serializable
 data class ChatResponse(
-    val reply: String
+    val reply: String,
+    val promptTokens: Int? = null,
+    val completionTokens: Int? = null,
+    val totalTokens: Int? = null
 )
 
 // --- Модели для OpenAI-совместимого API (Chat Completions) ---
@@ -43,10 +47,19 @@ data class OpenAIRequest(
 
 @Serializable
 data class OpenAIResponse(
-    val choices: List<OpenAIChoice> = emptyList()
+    val choices: List<OpenAIChoice> = emptyList(),
+    val usage: OpenAIUsage? = null
 )
 
 @Serializable
 data class OpenAIChoice(
     val message: OpenAIMessage? = null
+)
+
+/** Информация об использовании токенов, которую возвращает API. */
+@Serializable
+data class OpenAIUsage(
+    @SerialName("prompt_tokens") val promptTokens: Int? = null,
+    @SerialName("completion_tokens") val completionTokens: Int? = null,
+    @SerialName("total_tokens") val totalTokens: Int? = null
 )

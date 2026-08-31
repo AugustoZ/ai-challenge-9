@@ -38,8 +38,15 @@ fun Route.aiRoutes(config: AppConfig) {
         }
 
         try {
-            val reply = aiClient.ask(body.message)
-            call.respond(ChatResponse(reply))
+            val result = aiClient.ask(body.message)
+            call.respond(
+                ChatResponse(
+                    reply = result.reply,
+                    promptTokens = result.promptTokens,
+                    completionTokens = result.completionTokens,
+                    totalTokens = result.totalTokens
+                )
+            )
         } catch (e: Exception) {
             println("Ошибка при обращении к API: ${e.message}")
             call.respond(
