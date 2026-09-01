@@ -4,18 +4,36 @@ const input = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const status = document.getElementById('status');
 const tokenCounter = document.getElementById('tokenCounter');
-const maxTokensSelect = document.getElementById('maxTokens');
 
-// Идентификатор сессии: постоянный для одной вкладки (localStorage), чтобы
-// сервер сохранял историю диалога между запросами.
-function getSessionId() {
-    let id = localStorage.getItem('aiweb_session_id');
-    if (!id) {
-        id = crypto.randomUUID ? crypto.randomUUID() : ('s-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-        localStorage.setItem('aiweb_session_id', id);
-    }
-    return id;
-}
+// Управление параметрами модели. Числовое значение каждой пары — источник истины,
+// ползунок отображает его (браузер округляет до своего шага).
+const settingsControls = {
+    temperature: {
+        range: document.getElementById('temperatureRange'),
+        number: document.getElementById('temperature'),
+        value: 0.7,
+    },
+    maxTokens: {
+        range: document.getElementById('maxTokensRange'),
+        number: document.getElementById('maxTokens'),
+        value: 1024,
+    },
+    topP: {
+        range: document.getElementById('topPRange'),
+        number: document.getElementById('topP'),
+        value: 1.0,
+    },
+};
+const stopInput = document.getElementById('stopSeq');
+const resetBtn = document.getElementById('resetBtn');
+
+const sidebar = document.getElementById('settings');
+const settingsToggle = document.getElementById('settingsToggle');
+const settingsClose = document.getElementById('settingsClose');
+const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+
+const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
+const DEFAULTS = { temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '' };
 
 let sessionTotalTokens = 0;
 
@@ -110,6 +128,134 @@ function hideStatus() {
     status.classList.add('hidden');
 }
 
+/* ---------- Настройки модели ---------- */
+
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+// Заполненная часть дорожки ползунка (WebKit; в Firefox работает ::-moz-range-progress)
+function updateFill(ctrl) {
+    const min = Number(ctrl.range.min);
+    const max = Number(ctrl.range.max);
+    const pct = max > min ? ((ctrl.value - min) / (max - min)) * 100 : 0;
+    ctrl.range.style.setProperty('--fill', pct.toFixed(2) + '%');
+}
+
+function setControlValue(ctrl, value) {
+    ctrl.value = clamp(value, Number(ctrl.range.min), Number(ctrl.range.max));
+    ctrl.range.value = ctrl.value;
+    ctrl.number.value = ctrl.value;
+    updateFill(ctrl);
+}
+
+// Ползунок -> числовое поле (значение ползунка всегда валидно)
+function syncFromRange(ctrl) {
+    setControlValue(ctrl, Number(ctrl.range.value));
+}
+
+// Числовое поле -> ползунок. Пока пользователь печатает, текст поля не трогаем —
+// нормализация (clamp/откат) произойдёт по blur или Enter.
+function syncFromNumber(ctrl) {
+    const raw = ctrl.number.value.trim();
+    const value = Number(raw);
+    if (raw === '' || !Number.isFinite(value)) return;
+    setControlValue(ctrl, value);
+}
+
+function normalizeNumber(ctrl) {
+    const raw = ctrl.number.value.trim();
+    const value = Number(raw);
+    if (raw === '' || !Number.isFinite(value)) {
+        ctrl.number.value = ctrl.value;
+    } else {
+        setControlValue(ctrl, value);
+    }
+}
+
+function readSettings() {
+    return {
+        temperature: settingsControls.temperature.value,
+        maxTokens: settingsControls.maxTokens.value,
+        topP: settingsControls.topP.value,
+        stop: stopInput.value.trim(),
+    };
+}
+
+function saveSettings() {
+    try {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(readSettings()));
+    } catch (err) {
+        // localStorage может быть недоступен (приватный режим и т.п.) — не критично
+    }
+}
+
+function loadSettings() {
+    let stored = null;
+    try {
+        stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY));
+    } catch (err) {
+        stored = null;
+    }
+
+    for (const [key, ctrl] of Object.entries(settingsControls)) {
+        const value = stored ? Number(stored[key]) : NaN;
+        setControlValue(ctrl, Number.isFinite(value) ? value : DEFAULTS[key]);
+    }
+    stopInput.value = stored && typeof stored.stop === 'string' ? stored.stop : '';
+}
+
+for (const ctrl of Object.values(settingsControls)) {
+    ctrl.range.addEventListener('input', () => syncFromRange(ctrl));
+    ctrl.range.addEventListener('change', saveSettings);
+
+    ctrl.number.addEventListener('input', () => syncFromNumber(ctrl));
+    ctrl.number.addEventListener('change', () => {
+        normalizeNumber(ctrl);
+        saveSettings();
+    });
+}
+
+stopInput.addEventListener('change', saveSettings);
+
+resetBtn.addEventListener('click', () => {
+    for (const [key, ctrl] of Object.entries(settingsControls)) {
+        setControlValue(ctrl, DEFAULTS[key]);
+    }
+    stopInput.value = '';
+    saveSettings();
+});
+
+/* ---------- Мобильное меню (drawer) ---------- */
+
+function openSettings() {
+    sidebar.classList.add('open');
+    sidebarBackdrop.classList.add('visible');
+    settingsToggle.setAttribute('aria-expanded', 'true');
+}
+
+function closeSettings() {
+    sidebar.classList.remove('open');
+    sidebarBackdrop.classList.remove('visible');
+    settingsToggle.setAttribute('aria-expanded', 'false');
+}
+
+settingsToggle.addEventListener('click', () => {
+    if (sidebar.classList.contains('open')) closeSettings();
+    else openSettings();
+});
+
+settingsClose.addEventListener('click', closeSettings);
+sidebarBackdrop.addEventListener('click', closeSettings);
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSettings();
+});
+
+loadSettings();
+
+/* ---------- Отправка сообщения ---------- */
+
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -123,13 +269,19 @@ form.addEventListener('submit', async (e) => {
     input.disabled = true;
     showTyping();
 
-    try {
-        const maxTokens = maxTokensSelect.value ? Number(maxTokensSelect.value) : null;
+    const { temperature, maxTokens, topP, stop } = readSettings();
 
+    try {
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message, maxTokens, sessionId: getSessionId() })
+            body: JSON.stringify({
+                message,
+                maxTokens,
+                temperature,
+                topP,
+                stop: stop || null,
+            }),
         });
 
         const data = await res.json();

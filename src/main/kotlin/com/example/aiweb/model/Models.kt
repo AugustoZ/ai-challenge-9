@@ -20,7 +20,9 @@ data class FileConfig(
 data class ChatRequest(
     val message: String,
     val maxTokens: Int? = null,
-    val sessionId: String? = null
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val stop: String? = null
 )
 
 /** Ответ, который сервер возвращает веб-интерфейсу. */
@@ -45,6 +47,7 @@ data class OpenAIRequest(
     val model: String,
     val messages: List<OpenAIMessage>,
     val temperature: Double = 0.7,
+    @SerialName("top_p") val topP: Double? = null,
     @SerialName("max_tokens") val maxTokens: Int? = null,
     val stop: List<String>? = null
 )

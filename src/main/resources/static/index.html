@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Web Client</title>
+    <title>AI Ассистент</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet"
@@ -12,44 +12,111 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
 <body>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
     <div class="container">
-        <header class="header">
-            <h1>🤖 AI Ассистент</h1>
-            <p class="subtitle">Отправьте запрос — получите ответ от нейросети</p>
-            <div class="controls">
-                <label class="control" for="maxTokens">
-                    Макс. длина ответа
-                    <select id="maxTokens">
-                        <option value="" selected>Без ограничений</option>
-                        <option value="100">Короткий (≈100)</option>
-                        <option value="250">Средний (≈250)</option>
-                        <option value="500">Длинный (≈500)</option>
-                        <option value="1000">Очень длинный (≈1000)</option>
-                    </select>
-                </label>
+        <aside class="sidebar" id="settings">
+            <div class="sidebar-head">
+                <button type="button" class="sidebar-close" id="settingsClose" aria-label="Закрыть настройки">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+                <h1>🤖 AI Ассистент</h1>
+                <p class="subtitle">Отправьте запрос — получите ответ от нейросети</p>
             </div>
-            <div id="tokenCounter" class="token-counter hidden">Токены за сессию: 0</div>
-        </header>
 
-        <div id="chat" class="chat">
-            <div class="message bot">
-                <div class="bubble">Здравствуйте! Задайте мне любой вопрос.</div>
+            <div class="sidebar-body">
+                <h2 class="settings-title">Параметры модели</h2>
+
+                <div class="setting">
+                    <div class="setting-head">
+                        <label for="temperature">Температура</label>
+                        <input type="number" id="temperature" class="num"
+                               min="0" max="2" step="0.01" value="0.7">
+                    </div>
+                    <input type="range" id="temperatureRange" class="range"
+                           min="0" max="2" step="0.01" value="0.7"
+                           aria-label="Температура: ползунок">
+                    <p class="hint">Контроль случайности: меньше — предсказуемее; 0 — детерминированно</p>
+                </div>
+
+                <div class="setting">
+                    <div class="setting-head">
+                        <label for="maxTokens">Максимум токенов</label>
+                        <input type="number" id="maxTokens" class="num"
+                               min="200" max="1024000" step="1" value="1024">
+                    </div>
+                    <input type="range" id="maxTokensRange" class="range"
+                           min="200" max="1024000" step="200" value="1024"
+                           aria-label="Максимум токенов: ползунок">
+                    <p class="hint">Максимальное количество генерируемых токенов. Ограничено длиной контекста модели</p>
+                </div>
+
+                <div class="setting">
+                    <div class="setting-head">
+                        <label for="topP">Top P</label>
+                        <input type="number" id="topP" class="num"
+                               min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <input type="range" id="topPRange" class="range"
+                           min="0" max="1" step="0.01" value="1"
+                           aria-label="Top P: ползунок">
+                    <p class="hint">Контроль разнообразия через ядерную выборку: 0.5 — половина вариантов</p>
+                </div>
+
+                <div class="setting">
+                    <label class="setting-label" for="stopSeq">Стоп-последовательность</label>
+                    <input type="text" id="stopSeq" class="text-input"
+                           placeholder="Не задана" autocomplete="off" spellcheck="false">
+                    <p class="hint">Генерация остановится, когда этот текст появится в выводе</p>
+                </div>
             </div>
-        </div>
 
-        <form id="chatForm" class="input-row">
-            <input
-                type="text"
-                id="messageInput"
-                class="input"
-                placeholder="Введите ваше сообщение..."
-                autocomplete="off"
-                required
-            >
-            <button type="submit" id="sendBtn" class="btn">Отправить</button>
-        </form>
+            <div class="sidebar-foot">
+                <button type="button" class="reset" id="resetBtn">Сбросить</button>
+            </div>
+        </aside>
+        <main class="chat-column">
+            <div class="chat-header">
+                <button type="button" class="settings-toggle" id="settingsToggle"
+                        aria-expanded="false" aria-controls="settings">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
+                        <line x1="4" y1="7" x2="20" y2="7"></line>
+                        <line x1="4" y1="12" x2="20" y2="12"></line>
+                        <line x1="4" y1="17" x2="20" y2="17"></line>
+                        <circle cx="9" cy="7" r="2.2" fill="currentColor" stroke="none"></circle>
+                        <circle cx="15" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
+                        <circle cx="8" cy="17" r="2.2" fill="currentColor" stroke="none"></circle>
+                    </svg>
+                    Настройки
+                </button>
+                <div id="tokenCounter" class="token-counter hidden">Токены за сессию: 0</div>
+            </div>
 
-        <div id="status" class="status hidden"></div>
+            <div id="chat" class="chat">
+                <div class="message bot">
+                    <div class="bubble">Здравствуйте! Задайте мне любой вопрос.</div>
+                </div>
+            </div>
+
+            <form id="chatForm" class="input-row">
+                <input
+                    type="text"
+                    id="messageInput"
+                    class="input"
+                    placeholder="Введите ваше сообщение..."
+                    autocomplete="off"
+                    required
+                >
+                <button type="submit" id="sendBtn" class="btn">Отправить</button>
+            </form>
+
+            <div id="status" class="status hidden"></div>
+        </main>
     </div>
 
     <script src="script.js"></script>

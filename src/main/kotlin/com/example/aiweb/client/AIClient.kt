@@ -38,50 +38,33 @@ class AIClient(private val config: AppConfig) {
     }
 
     /**
-     * Отправляет запрос в AI API с готовым контекстом (уже сформированным
-     * набором сообщений: system-инструкция + история + текущий запрос) и
-     * возвращает ответ вместе с информацией о потраченных токенах.
+     * Отправляет запрос в AI API с готовым контекстом (набором сообщений)
+     * и возвращает ответ вместе с информацией о потраченных токенах.
      *
      * @param messages полный контекст для отправки модели
      * @param maxTokens (необязательно) ограничение на длину ответа, либо null
+     * @param temperature (необязательно) параметр случайности генерации
+     * @param topP (необязательно) ядро выборки по кумулятивной вероятности
+     * @param stop (необязательно) пользовательская стоп-последовательность;
+     *              если указана и не пуста — применяется вместо стандартных STOP_SEQUENCES
      */
     suspend fun ask(
         messages: List<OpenAIMessage>,
-        maxTokens: Int? = null
+        maxTokens: Int? = null,
+        temperature: Double? = null,
+        topP: Double? = null,
+        stop: String? = null
     ): ChatResult {
+        val finalStop = if (stop.isNullOrBlank()) STOP_SEQUENCES else listOf(stop.trim())
         val request = OpenAIRequest(
             model = config.model,
             messages = messages,
+            temperature = temperature ?: 0.7,
+            topP = topP,
             maxTokens = maxTokens,
-            stop = STOP_SEQUENCES
+            stop = finalStop
         )
         return execute(request)
-    }
-
-    /**
-     * Сжимает переданную часть диалога в краткое резюме (отдельный запрос к LLM).
-     * Используется для суммаризации «выпавших» из окна старых сообщений.
-     */
-    suspend fun summarize(part: List<OpenAIMessage>): String? {
-        if (part.isEmpty()) return null
-
-        val lines = part.joinToString("\n") { "${it.role}: ${it.content}" }
-        val request = OpenAIRequest(
-            model = config.model,
-            messages = listOf(
-                OpenAIMessage(
-                    role = "system",
-                    content = "Ты сжимаешь историю диалога в краткое связное резюме " +
-                        "на русском, сохраняя ключевые факты, решения и вопросы. " +
-                        "Верни только само резюме."
-                ),
-                OpenAIMessage(role = "user", content = "Сожми диалог:\n$lines")
-            ),
-            maxTokens = 500,
-            stop = STOP_SEQUENCES
-        )
-        val result = execute(request)
-        return result.reply
     }
 
     /** Выполняет HTTP-запрос и разбирает ответ API. */
