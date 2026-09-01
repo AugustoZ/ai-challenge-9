@@ -38,18 +38,54 @@ class AIClient(private val config: AppConfig) {
     }
 
     /**
-     * Отправляет сообщение пользователя в AI API и возвращает ответ
-     * вместе с информацией о потраченных токенах.
+     * Отправляет запрос в AI API с готовым контекстом (уже сформированным
+     * набором сообщений: system-инструкция + история + текущий запрос) и
+     * возвращает ответ вместе с информацией о потраченных токенах.
+     *
+     * @param messages полный контекст для отправки модели
+     * @param maxTokens (необязательно) ограничение на длину ответа, либо null
      */
-    suspend fun ask(userMessage: String): ChatResult {
+    suspend fun ask(
+        messages: List<OpenAIMessage>,
+        maxTokens: Int? = null
+    ): ChatResult {
+        val request = OpenAIRequest(
+            model = config.model,
+            messages = messages,
+            maxTokens = maxTokens,
+            stop = STOP_SEQUENCES
+        )
+        return execute(request)
+    }
+
+    /**
+     * Сжимает переданную часть диалога в краткое резюме (отдельный запрос к LLM).
+     * Используется для суммаризации «выпавших» из окна старых сообщений.
+     */
+    suspend fun summarize(part: List<OpenAIMessage>): String? {
+        if (part.isEmpty()) return null
+
+        val lines = part.joinToString("\n") { "${it.role}: ${it.content}" }
         val request = OpenAIRequest(
             model = config.model,
             messages = listOf(
-                OpenAIMessage(role = "system", content = "Ты полезный ассистент."),
-                OpenAIMessage(role = "user", content = userMessage)
-            )
+                OpenAIMessage(
+                    role = "system",
+                    content = "Ты сжимаешь историю диалога в краткое связное резюме " +
+                        "на русском, сохраняя ключевые факты, решения и вопросы. " +
+                        "Верни только само резюме."
+                ),
+                OpenAIMessage(role = "user", content = "Сожми диалог:\n$lines")
+            ),
+            maxTokens = 500,
+            stop = STOP_SEQUENCES
         )
+        val result = execute(request)
+        return result.reply
+    }
 
+    /** Выполняет HTTP-запрос и разбирает ответ API. */
+    private suspend fun execute(request: OpenAIRequest): ChatResult {
         val response: HttpResponse = client.post(config.apiUrl) {
             contentType(ContentType.Application.Json)
             bearerAuth(config.apiKey)
@@ -80,6 +116,30 @@ class AIClient(private val config: AppConfig) {
 
     /** Закрытие HTTP-клиента. */
     fun close() = client.close()
+
+    companion object {
+        private val SYSTEM_INSTRUCTION = buildString {
+            append("Ты полезный ассистент. Отвечай структурированно, если пользователь не просит иного формата. ")
+            append("Оформляй ответ в Markdown: заголовки, абзацы, маркированные и нумерованные списки, жирный и курсив. ")
+            append("Фрагменты кода заключай в блоки с тройными обратными кавычками и указывай язык (например ```kotlin, ```python). ")
+            append("Если в ответе присутствуют данные JSON, XML или YAML — оборачивай их в соответствующие блоки кода. ")
+            append("Если пользователь явно запросил конкретный формат — следуй именно его инструкции. ")
+            append("Завершай ответ, когда тема раскрыта полностью; не продолжай после логического конца.")
+        }
+
+        /**
+         * Возвращает явное описание формата ответа (структурированный Markdown,
+         * блоки кода, JSON/XML/YAML) для system-сообщения. Модель следует ему,
+         * только если пользователь не просит конкретный формат.
+         */
+        fun formatInstruction(): String = SYSTEM_INSTRUCTION
+
+        /**
+         * Условие завершения ответа (stop sequences): применяется безусловно (априори).
+         * Модель прекращает генерацию при появлении этих последовательностей.
+         */
+        private val STOP_SEQUENCES = listOf("<|endoftext|>", "\n\nAssistant:")
+    }
 }
 
 /** Результат обращения к AI API: ответ и сведения о потраченных токенах. */

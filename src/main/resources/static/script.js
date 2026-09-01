@@ -4,8 +4,40 @@ const input = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const status = document.getElementById('status');
 const tokenCounter = document.getElementById('tokenCounter');
+const maxTokensSelect = document.getElementById('maxTokens');
+
+// Идентификатор сессии: постоянный для одной вкладки (localStorage), чтобы
+// сервер сохранял историю диалога между запросами.
+function getSessionId() {
+    let id = localStorage.getItem('aiweb_session_id');
+    if (!id) {
+        id = crypto.randomUUID ? crypto.randomUUID() : ('s-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+        localStorage.setItem('aiweb_session_id', id);
+    }
+    return id;
+}
 
 let sessionTotalTokens = 0;
+
+// Преобразует markdown в HTML и подсвечивает блоки кода
+function renderMarkdown(text) {
+    if (typeof marked !== 'undefined') {
+        const html = marked.parse(text);
+        return html
+            .replace(/<pre><code class="language-([^"]+)">/g, '<pre><code>')
+            .replace(/<code>/g, '<code>');
+    }
+    return text;
+}
+
+// Подсветка кода после вставки HTML
+function highlightCode(container) {
+    if (typeof hljs !== 'undefined') {
+        container.querySelectorAll('pre code').forEach((block) => {
+            hljs.highlightElement(block);
+        });
+    }
+}
 
 // Добавление сообщения в чат
 function addMessage(sender, text) {
@@ -24,7 +56,12 @@ function addMessage(sender, text) {
 
 // Добавление ответа бота с подписью о потраченных токенах
 function addBotMessage(text, tokenData) {
-    const messageDiv = addMessage('bot', text);
+    const messageDiv = addMessage('bot');
+
+    const bubble = messageDiv.querySelector('.bubble');
+    bubble.classList.add('md');
+    bubble.innerHTML = renderMarkdown(text);
+    highlightCode(bubble);
 
     if (tokenData && tokenData.totalTokens != null) {
         const meta = document.createElement('div');
@@ -87,10 +124,12 @@ form.addEventListener('submit', async (e) => {
     showTyping();
 
     try {
+        const maxTokens = maxTokensSelect.value ? Number(maxTokensSelect.value) : null;
+
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({ message, maxTokens, sessionId: getSessionId() })
         });
 
         const data = await res.json();

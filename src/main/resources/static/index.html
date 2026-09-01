@@ -6,12 +6,28 @@
     <title>AI Web Client</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
 <body>
     <div class="container">
         <header class="header">
             <h1>🤖 AI Ассистент</h1>
             <p class="subtitle">Отправьте запрос — получите ответ от нейросети</p>
+            <div class="controls">
+                <label class="control" for="maxTokens">
+                    Макс. длина ответа
+                    <select id="maxTokens">
+                        <option value="" selected>Без ограничений</option>
+                        <option value="100">Короткий (≈100)</option>
+                        <option value="250">Средний (≈250)</option>
+                        <option value="500">Длинный (≈500)</option>
+                        <option value="1000">Очень длинный (≈1000)</option>
+                    </select>
+                </label>
+            </div>
             <div id="tokenCounter" class="token-counter hidden">Токены за сессию: 0</div>
         </header>
 

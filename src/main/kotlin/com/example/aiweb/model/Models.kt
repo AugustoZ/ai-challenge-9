@@ -18,7 +18,9 @@ data class FileConfig(
 /** Тело запроса, который приходит от веб-интерфейса на наш сервер. */
 @Serializable
 data class ChatRequest(
-    val message: String
+    val message: String,
+    val maxTokens: Int? = null,
+    val sessionId: String? = null
 )
 
 /** Ответ, который сервер возвращает веб-интерфейсу. */
@@ -42,7 +44,9 @@ data class OpenAIMessage(
 data class OpenAIRequest(
     val model: String,
     val messages: List<OpenAIMessage>,
-    val temperature: Double = 0.7
+    val temperature: Double = 0.7,
+    @SerialName("max_tokens") val maxTokens: Int? = null,
+    val stop: List<String>? = null
 )
 
 @Serializable
