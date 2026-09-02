@@ -86,6 +86,21 @@ object ReasoningPrompts {
             error("Для режима TEAM используйте оркестрацию ролей, а не одиночный system-промт")
     }
 
+    /**
+     * Текстовое указание лимита токенов для модели. Работает даже если API
+     * игнорирует параметр max_tokens: модель сама планирует объём ответа
+     * и не обрывает его на середине.
+     */
+    fun budgetNote(maxTokens: Int?): String? = maxTokens?.let {
+        "Ограничение объёма: уложи ответ примерно в $it токенов. " +
+            "Не обрывай текст на середине — если содержимое не помещается, " +
+            "сократи второстепенное, сохранив главное и завершение."
+    }
+
+    /** Дополняет system-промт указанием лимита токенов; без лимита возвращает промт как есть. */
+    fun withBudget(system: String, maxTokens: Int?): String =
+        budgetNote(maxTokens)?.let { "$system\n\n$it" } ?: system
+
     fun teamSynthesisUser(task: String, answersBlock: String): String = """
         Задача команды:
         $task

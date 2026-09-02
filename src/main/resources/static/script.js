@@ -34,7 +34,7 @@ const reasoningHint = document.getElementById('reasoningHint');
 const REASONING_HINTS = {
     direct: 'Сугубо сухой и прямолинейный ответ без лишних инструкций',
     step_by_step: 'Подробно расписывается способ решения и получения ответа',
-    prompt_to_prompt: 'Вывод — готовый промт, который передаётся в LLM для решения задачи',
+    prompt_to_prompt: 'Формирует промт, передаёт его в LLM и показывает промт и решение по нему',
     team: 'Архитектор, Инженер и Исследователь решают задачу, затем — сравнение ответов и саммари',
 };
 
@@ -188,7 +188,8 @@ function readSettings() {
     return {
         reasoningMode: reasoningModeSelect.value,
         temperature: settingsControls.temperature.value,
-        maxTokens: settingsControls.maxTokens.value,
+        // Округляем: дробное значение из числового поля не десериализуется в Int на сервере
+        maxTokens: Math.round(settingsControls.maxTokens.value),
         topP: settingsControls.topP.value,
         stop: stopInput.value.trim(),
     };

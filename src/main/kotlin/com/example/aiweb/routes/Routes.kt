@@ -50,6 +50,7 @@ fun Route.aiRoutes(config: AppConfig) {
         try {
             val response = when (mode) {
                 ReasoningMode.TEAM -> handleTeam(aiClient, body)
+                ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(aiClient, body)
                 else -> handleSingle(aiClient, body, mode)
             }
             call.respond(response)
@@ -64,7 +65,9 @@ fun Route.aiRoutes(config: AppConfig) {
 }
 
 /**
- * Режимы с одним обращением к модели: прямой ответ, пошаговое решение, промт-на-промт.
+ * Режимы с одним обращением к модели: прямой ответ и пошаговое решение.
+ * Лимит maxTokens передаётся в API и дополнительно указывается модели в системной
+ * инструкции, чтобы ответ не обрывался на середине.
  */
 private suspend fun handleSingle(
     aiClient: AIClient,
@@ -72,7 +75,10 @@ private suspend fun handleSingle(
     mode: ReasoningMode
 ): ChatResponse {
     val context = listOf(
-        OpenAIMessage(role = "system", content = ReasoningPrompts.systemFor(mode)),
+        OpenAIMessage(
+            role = "system",
+            content = ReasoningPrompts.withBudget(ReasoningPrompts.systemFor(mode), body.maxTokens)
+        ),
         OpenAIMessage(role = "user", content = body.message)
     )
 
@@ -90,20 +96,29 @@ private suspend fun handleSingle(
 /**
  * Режим «Команда»: Архитектор, Инженер и Исследователь решают задачу параллельно
  * (у каждого свой system-промт и набор навыков), затем отдельным вызовом строится
- * саммари сравнения их ответов. Токены всех вызовов суммируются.
+ * саммари сравнения их ответов.
+ *
+ * Лимит maxTokens трактуется как бюджет всего видимого ответа, поэтому делится
+ * поровну на 4 вызова (3 роли + саммари); иначе суммарный объём превысил бы
+ * установленный лимит в 4 раза. Токены всех вызовов суммируются.
  */
 private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatResponse =
     coroutineScope {
+        val perCallBudget = body.maxTokens?.let { (it / 4).coerceAtLeast(1) }
+
         val attempts: List<Pair<TeamRole, Result<ChatResult>>> =
             ReasoningPrompts.TEAM_ROLES.map { teamRole ->
                 async {
                     teamRole to runCatching {
                         aiClient.ask(
                             messages = listOf(
-                                OpenAIMessage(role = "system", content = teamRole.prompt),
+                                OpenAIMessage(
+                                    role = "system",
+                                    content = ReasoningPrompts.withBudget(teamRole.prompt, perCallBudget)
+                                ),
                                 OpenAIMessage(role = "user", content = body.message)
                             ),
-                            maxTokens = body.maxTokens,
+                            maxTokens = perCallBudget,
                             temperature = body.temperature,
                             topP = body.topP,
                             stop = body.stop
@@ -127,13 +142,16 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
         val synthesis = runCatching {
             aiClient.ask(
                 messages = listOf(
-                    OpenAIMessage(role = "system", content = ReasoningPrompts.TEAM_SYNTHESIS_SYSTEM),
+                    OpenAIMessage(
+                        role = "system",
+                        content = ReasoningPrompts.withBudget(ReasoningPrompts.TEAM_SYNTHESIS_SYSTEM, perCallBudget)
+                    ),
                     OpenAIMessage(
                         role = "user",
                         content = ReasoningPrompts.teamSynthesisUser(body.message, answersBlock)
                     )
                 ),
-                maxTokens = body.maxTokens,
+                maxTokens = perCallBudget,
                 temperature = body.temperature,
                 topP = body.topP,
                 stop = body.stop
@@ -167,6 +185,85 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
             totalTokens = sumTokens(results.map { it?.totalTokens })
         )
     }
+
+/**
+ * Режим Prompt-to-Prompt, два этапа:
+ * 1) модель-инженер промтов формирует готовый промт для решения задачи;
+ * 2) этот промт передаётся в LLM как обычный запрос, и её решение показывается
+ *    пользователю вместе с самим промтом.
+ * Лимит maxTokens делится пополам между этапами.
+ */
+private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest): ChatResponse {
+    val stageBudget = body.maxTokens?.let { (it / 2).coerceAtLeast(1) }
+
+    val stage1 = aiClient.ask(
+        messages = listOf(
+            OpenAIMessage(
+                role = "system",
+                content = ReasoningPrompts.withBudget(
+                    ReasoningPrompts.systemFor(ReasoningMode.PROMPT_TO_PROMPT),
+                    stageBudget
+                )
+            ),
+            OpenAIMessage(role = "user", content = body.message)
+        ),
+        maxTokens = stageBudget,
+        temperature = body.temperature,
+        topP = body.topP,
+        stop = body.stop
+    )
+
+    val generatedPrompt = extractPrompt(stage1.reply)
+
+    // Промт самодостаточен (роль, контекст, формат уже внутри него), поэтому из
+    // системных сообщений на втором этапе уходит только указание лимита токенов
+    val stage2Messages = ReasoningPrompts.budgetNote(stageBudget)
+        ?.let { listOf(OpenAIMessage(role = "system", content = it)) }
+        ?: emptyList()
+
+    val stage2 = runCatching {
+        aiClient.ask(
+            messages = stage2Messages + OpenAIMessage(role = "user", content = generatedPrompt),
+            maxTokens = stageBudget,
+            temperature = body.temperature,
+            topP = body.topP,
+            stop = body.stop
+        )
+    }
+
+    val reply = buildString {
+        append("## Сгенерированный промт\n\n```text\n")
+        append(generatedPrompt)
+        append("\n```\n\n---\n\n## Ответ модели\n\n")
+        append(
+            stage2.fold(
+                onSuccess = { it.reply },
+                onFailure = { "Решение по промту получить не удалось: ${it.message}." }
+            )
+        )
+    }
+
+    val results = listOf(stage1, stage2.getOrNull())
+    return ChatResponse(
+        reply = reply,
+        promptTokens = sumTokens(results.map { it?.promptTokens }),
+        completionTokens = sumTokens(results.map { it?.completionTokens }),
+        totalTokens = sumTokens(results.map { it?.totalTokens })
+    )
+}
+
+/**
+ * Достаёт промт из блока кода (```text ... ```), который требует формировать
+ * режим Prompt-to-Prompt; если блока нет — использует ответ как есть.
+ */
+private fun extractPrompt(reply: String): String =
+    Regex("```[^\\n]*\\n?([\\s\\S]*?)```")
+        .find(reply)
+        ?.groupValues
+        ?.get(1)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: reply.trim()
 
 /** Суммирует значения токенов; null, если API не вернул ни одного значения. */
 private fun sumTokens(values: List<Int?>): Int? =

@@ -513,6 +513,8 @@ body {
 /* --- Markdown-контент внутри сообщения бота --- */
 .bubble.md {
     white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
 .bubble.md p {
@@ -583,11 +585,31 @@ body {
     padding: 0;
     font-size: 13px;
     line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
 }
 
 .bubble.md pre code.hljs {
     background: transparent;
     padding: 0;
+}
+
+.bubble.md table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+}
+
+.bubble.md table::-webkit-scrollbar {
+    height: 8px;
+}
+
+.bubble.md table::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 8px;
 }
 
 .input-row {
