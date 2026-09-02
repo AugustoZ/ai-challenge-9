@@ -32,6 +32,17 @@
                 <h2 class="settings-title">Параметры модели</h2>
 
                 <div class="setting">
+                    <label class="setting-label" for="reasoningMode">Способ рассуждения</label>
+                    <select id="reasoningMode" class="select-input" autocomplete="off">
+                        <option value="direct">Прямой ответ</option>
+                        <option value="step_by_step">Пошаговое решение</option>
+                        <option value="prompt_to_prompt">Prompt-to-Prompt</option>
+                        <option value="team">Команда</option>
+                    </select>
+                    <p class="hint" id="reasoningHint">Сугубо сухой и прямолинейный ответ без лишних инструкций</p>
+                </div>
+
+                <div class="setting">
                     <div class="setting-head">
                         <label for="temperature">Температура</label>
                         <input type="number" id="temperature" class="num"

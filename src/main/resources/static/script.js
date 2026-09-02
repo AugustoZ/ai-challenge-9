@@ -27,13 +27,24 @@ const settingsControls = {
 const stopInput = document.getElementById('stopSeq');
 const resetBtn = document.getElementById('resetBtn');
 
+const reasoningModeSelect = document.getElementById('reasoningMode');
+const reasoningHint = document.getElementById('reasoningHint');
+
+// Подсказка под выпадающим списком обновляется вместе с выбранным способом рассуждения
+const REASONING_HINTS = {
+    direct: 'Сугубо сухой и прямолинейный ответ без лишних инструкций',
+    step_by_step: 'Подробно расписывается способ решения и получения ответа',
+    prompt_to_prompt: 'Вывод — готовый промт, который передаётся в LLM для решения задачи',
+    team: 'Архитектор, Инженер и Исследователь решают задачу, затем — сравнение ответов и саммари',
+};
+
 const sidebar = document.getElementById('settings');
 const settingsToggle = document.getElementById('settingsToggle');
 const settingsClose = document.getElementById('settingsClose');
 const sidebarBackdrop = document.getElementById('sidebarBackdrop');
 
 const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
-const DEFAULTS = { temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '' };
+const DEFAULTS = { reasoningMode: 'direct', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '' };
 
 let sessionTotalTokens = 0;
 
@@ -175,6 +186,7 @@ function normalizeNumber(ctrl) {
 
 function readSettings() {
     return {
+        reasoningMode: reasoningModeSelect.value,
         temperature: settingsControls.temperature.value,
         maxTokens: settingsControls.maxTokens.value,
         topP: settingsControls.topP.value,
@@ -203,6 +215,13 @@ function loadSettings() {
         setControlValue(ctrl, Number.isFinite(value) ? value : DEFAULTS[key]);
     }
     stopInput.value = stored && typeof stored.stop === 'string' ? stored.stop : '';
+
+    const storedMode = stored && stored.reasoningMode;
+    reasoningModeSelect.value =
+        storedMode && Object.prototype.hasOwnProperty.call(REASONING_HINTS, storedMode)
+            ? storedMode
+            : DEFAULTS.reasoningMode;
+    reasoningHint.textContent = REASONING_HINTS[reasoningModeSelect.value];
 }
 
 for (const ctrl of Object.values(settingsControls)) {
@@ -218,11 +237,18 @@ for (const ctrl of Object.values(settingsControls)) {
 
 stopInput.addEventListener('change', saveSettings);
 
+reasoningModeSelect.addEventListener('change', () => {
+    reasoningHint.textContent = REASONING_HINTS[reasoningModeSelect.value];
+    saveSettings();
+});
+
 resetBtn.addEventListener('click', () => {
     for (const [key, ctrl] of Object.entries(settingsControls)) {
         setControlValue(ctrl, DEFAULTS[key]);
     }
     stopInput.value = '';
+    reasoningModeSelect.value = DEFAULTS.reasoningMode;
+    reasoningHint.textContent = REASONING_HINTS[reasoningModeSelect.value];
     saveSettings();
 });
 
@@ -269,7 +295,7 @@ form.addEventListener('submit', async (e) => {
     input.disabled = true;
     showTyping();
 
-    const { temperature, maxTokens, topP, stop } = readSettings();
+    const { reasoningMode, temperature, maxTokens, topP, stop } = readSettings();
 
     try {
         const res = await fetch('/api/chat', {
@@ -277,6 +303,7 @@ form.addEventListener('submit', async (e) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message,
+                reasoningMode,
                 maxTokens,
                 temperature,
                 topP,

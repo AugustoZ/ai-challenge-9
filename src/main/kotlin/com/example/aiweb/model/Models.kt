@@ -19,6 +19,8 @@ data class FileConfig(
 @Serializable
 data class ChatRequest(
     val message: String,
+    /** Способ рассуждения: direct | step_by_step | prompt_to_prompt | team (null — как direct). */
+    val reasoningMode: String? = null,
     val maxTokens: Int? = null,
     val temperature: Double? = null,
     val topP: Double? = null,
