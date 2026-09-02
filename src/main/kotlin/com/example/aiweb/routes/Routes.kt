@@ -2,11 +2,13 @@ package com.example.aiweb.routes
 
 import com.example.aiweb.client.AIClient
 import com.example.aiweb.client.ChatResult
+import com.example.aiweb.client.ExchangeLog
 import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.client.TeamRole
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
+import com.example.aiweb.model.ExchangeLogResponse
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.ReasoningMode
 import io.ktor.server.application.*
@@ -23,6 +25,11 @@ import kotlinx.coroutines.coroutineScope
  */
 fun Route.aiRoutes(config: AppConfig) {
     val aiClient = AIClient(config)
+
+    // GET /api/log — сырой протокол обменов с моделью (самописец)
+    get("/api/log") {
+        call.respond(ExchangeLogResponse(entries = ExchangeLog.all()))
+    }
 
     // POST /api/chat — принимает сообщение и возвращает ответ AI
     post("/api/chat") {
@@ -74,6 +81,8 @@ private suspend fun handleSingle(
     body: ChatRequest,
     mode: ReasoningMode
 ): ChatResponse {
+    val startSeq = ExchangeLog.mark()
+
     val context = listOf(
         OpenAIMessage(
             role = "system",
@@ -90,7 +99,7 @@ private suspend fun handleSingle(
         stop = body.stop
     )
 
-    return result.toResponse()
+    return result.toResponse().copy(exchanges = ExchangeLog.since(startSeq))
 }
 
 /**
@@ -104,6 +113,7 @@ private suspend fun handleSingle(
  */
 private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatResponse =
     coroutineScope {
+        val startSeq = ExchangeLog.mark()
         val perCallBudget = body.maxTokens?.let { (it / 4).coerceAtLeast(1) }
 
         val attempts: List<Pair<TeamRole, Result<ChatResult>>> =
@@ -182,7 +192,8 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
             reply = reply,
             promptTokens = sumTokens(results.map { it?.promptTokens }),
             completionTokens = sumTokens(results.map { it?.completionTokens }),
-            totalTokens = sumTokens(results.map { it?.totalTokens })
+            totalTokens = sumTokens(results.map { it?.totalTokens }),
+            exchanges = ExchangeLog.since(startSeq)
         )
     }
 
@@ -194,6 +205,7 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
  * Лимит maxTokens делится пополам между этапами.
  */
 private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest): ChatResponse {
+    val startSeq = ExchangeLog.mark()
     val stageBudget = body.maxTokens?.let { (it / 2).coerceAtLeast(1) }
 
     val stage1 = aiClient.ask(
@@ -248,7 +260,8 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
         reply = reply,
         promptTokens = sumTokens(results.map { it?.promptTokens }),
         completionTokens = sumTokens(results.map { it?.completionTokens }),
-        totalTokens = sumTokens(results.map { it?.totalTokens })
+        totalTokens = sumTokens(results.map { it?.totalTokens }),
+        exchanges = ExchangeLog.since(startSeq)
     )
 }
 

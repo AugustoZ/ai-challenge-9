@@ -1,0 +1,423 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-02T20:22:54Z",
+  "title": "Дизайн-система: Штурман",
+  "extensions": {
+    "colorMeta": {
+      "ground": {
+        "role": "neutral",
+        "displayName": "Ground — фон журнала",
+        "canonical": "#16181c",
+        "tonalRamp": [
+          "oklch(0.15 0.008 270)",
+          "oklch(0.27 0.008 270)",
+          "oklch(0.39 0.008 270)",
+          "oklch(0.51 0.008 270)",
+          "oklch(0.63 0.008 270)",
+          "oklch(0.72 0.008 270)",
+          "oklch(0.83 0.008 270)",
+          "oklch(0.94 0.008 270)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel — приборные пластины",
+        "canonical": "#1e2127",
+        "tonalRamp": [
+          "oklch(0.15 0.009 270)",
+          "oklch(0.27 0.009 270)",
+          "oklch(0.39 0.009 270)",
+          "oklch(0.51 0.009 270)",
+          "oklch(0.63 0.009 270)",
+          "oklch(0.72 0.009 270)",
+          "oklch(0.83 0.009 270)",
+          "oklch(0.94 0.009 270)"
+        ]
+      },
+      "panel-deep": {
+        "role": "neutral",
+        "displayName": "Panel Deep — тёмная полоса консоли",
+        "canonical": "#14161a",
+        "tonalRamp": [
+          "oklch(0.15 0.01 270)",
+          "oklch(0.27 0.01 270)",
+          "oklch(0.39 0.01 270)",
+          "oklch(0.51 0.01 270)",
+          "oklch(0.63 0.01 270)",
+          "oklch(0.72 0.01 270)",
+          "oklch(0.83 0.01 270)",
+          "oklch(0.94 0.01 270)"
+        ]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Well — утопленные колодцы",
+        "canonical": "#101216",
+        "tonalRamp": [
+          "oklch(0.15 0.012 270)",
+          "oklch(0.27 0.012 270)",
+          "oklch(0.39 0.012 270)",
+          "oklch(0.51 0.012 270)",
+          "oklch(0.63 0.012 270)",
+          "oklch(0.72 0.012 270)",
+          "oklch(0.83 0.012 270)",
+          "oklch(0.94 0.012 270)"
+        ]
+      },
+      "bezel": {
+        "role": "neutral",
+        "displayName": "Bezel — фаски и 1px-рамки",
+        "canonical": "#2c3038",
+        "tonalRamp": [
+          "oklch(0.15 0.013 270)",
+          "oklch(0.27 0.013 270)",
+          "oklch(0.39 0.013 270)",
+          "oklch(0.51 0.013 270)",
+          "oklch(0.63 0.013 270)",
+          "oklch(0.72 0.013 270)",
+          "oklch(0.83 0.013 270)",
+          "oklch(0.94 0.013 270)"
+        ]
+      },
+      "bezel-lit": {
+        "role": "neutral",
+        "displayName": "Bezel Lit — фаска под курсором",
+        "canonical": "#3d434d",
+        "tonalRamp": [
+          "oklch(0.15 0.014 270)",
+          "oklch(0.27 0.014 270)",
+          "oklch(0.39 0.014 270)",
+          "oklch(0.51 0.014 270)",
+          "oklch(0.63 0.014 270)",
+          "oklch(0.72 0.014 270)",
+          "oklch(0.83 0.014 270)",
+          "oklch(0.94 0.014 270)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink — тёплый белый подсветки",
+        "canonical": "#f3ecdc",
+        "tonalRamp": [
+          "oklch(0.15 0.02 85)",
+          "oklch(0.27 0.02 85)",
+          "oklch(0.39 0.02 85)",
+          "oklch(0.51 0.02 85)",
+          "oklch(0.63 0.02 85)",
+          "oklch(0.72 0.02 85)",
+          "oklch(0.83 0.02 85)",
+          "oklch(0.94 0.02 85)"
+        ]
+      },
+      "ink-dim": {
+        "role": "neutral",
+        "displayName": "Ink Dim — приглушённый тёплый",
+        "canonical": "#b8ad97",
+        "tonalRamp": [
+          "oklch(0.15 0.045 85)",
+          "oklch(0.27 0.045 85)",
+          "oklch(0.39 0.045 85)",
+          "oklch(0.51 0.045 85)",
+          "oklch(0.63 0.045 85)",
+          "oklch(0.72 0.045 85)",
+          "oklch(0.83 0.045 85)",
+          "oklch(0.94 0.045 85)"
+        ]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Ink Faint — выгравированное на панели",
+        "canonical": "#948b75",
+        "tonalRamp": [
+          "oklch(0.15 0.05 85)",
+          "oklch(0.27 0.05 85)",
+          "oklch(0.39 0.05 85)",
+          "oklch(0.51 0.05 85)",
+          "oklch(0.63 0.05 85)",
+          "oklch(0.72 0.05 85)",
+          "oklch(0.83 0.05 85)",
+          "oklch(0.94 0.05 85)"
+        ]
+      },
+      "amber": {
+        "role": "primary",
+        "displayName": "Янтарь — органы управления и активное",
+        "canonical": "#ffb347",
+        "tonalRamp": [
+          "oklch(0.15 0.14 75)",
+          "oklch(0.27 0.14 75)",
+          "oklch(0.39 0.14 75)",
+          "oklch(0.51 0.14 75)",
+          "oklch(0.63 0.14 75)",
+          "oklch(0.72 0.14 75)",
+          "oklch(0.83 0.14 75)",
+          "oklch(0.94 0.14 75)"
+        ]
+      },
+      "amber-ink": {
+        "role": "neutral",
+        "displayName": "Amber Ink — текст на янтарной пластине",
+        "canonical": "#16130a",
+        "tonalRamp": [
+          "oklch(0.15 0.04 80)",
+          "oklch(0.27 0.04 80)",
+          "oklch(0.39 0.04 80)",
+          "oklch(0.51 0.04 80)",
+          "oklch(0.63 0.04 80)",
+          "oklch(0.72 0.04 80)",
+          "oklch(0.83 0.04 80)",
+          "oklch(0.94 0.04 80)"
+        ]
+      },
+      "amber-soft": {
+        "role": "primary",
+        "displayName": "Amber Soft — фокус-кольца и выделение",
+        "canonical": "rgba(255, 179, 71, 0.16)",
+        "tonalRamp": [
+          "oklch(0.8 0.14 75 / 0.03)",
+          "oklch(0.8 0.14 75 / 0.06)",
+          "oklch(0.8 0.14 75 / 0.1)",
+          "oklch(0.8 0.14 75 / 0.16)",
+          "oklch(0.8 0.14 75 / 0.28)",
+          "oklch(0.8 0.14 75 / 0.45)",
+          "oklch(0.8 0.14 75 / 0.65)",
+          "oklch(0.8 0.14 75 / 0.9)"
+        ]
+      },
+      "green": {
+        "role": "secondary",
+        "displayName": "Зелёный — табло-цифры и показания",
+        "canonical": "#5fd68f",
+        "tonalRamp": [
+          "oklch(0.15 0.16 155)",
+          "oklch(0.27 0.16 155)",
+          "oklch(0.39 0.16 155)",
+          "oklch(0.51 0.16 155)",
+          "oklch(0.63 0.16 155)",
+          "oklch(0.72 0.16 155)",
+          "oklch(0.83 0.16 155)",
+          "oklch(0.94 0.16 155)"
+        ]
+      },
+      "red": {
+        "role": "tertiary",
+        "displayName": "Красный — отказы",
+        "canonical": "#ff6b5e",
+        "tonalRamp": [
+          "oklch(0.15 0.19 35)",
+          "oklch(0.27 0.19 35)",
+          "oklch(0.39 0.19 35)",
+          "oklch(0.51 0.19 35)",
+          "oklch(0.63 0.19 35)",
+          "oklch(0.72 0.19 35)",
+          "oklch(0.83 0.19 35)",
+          "oklch(0.94 0.19 35)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display — бренд-пластина",
+        "purpose": "Словомарка «Штурман» на верхней полосе; только 700, uppercase, 0.22em."
+      },
+      "body": {
+        "displayName": "Body — бортовой журнал",
+        "purpose": "Текст пузырей журнала; max 75ch у бота, 60ch у пользователя."
+      },
+      "label": {
+        "displayName": "Label — captions панели",
+        "purpose": "Заголовки секций приборов и подсказки; ink-faint, uppercase, 0.16em."
+      },
+      "data": {
+        "displayName": "Data — приборные цифры",
+        "purpose": "B612 Mono для топлива, показаний, времени, статусных строк и кода; всегда tabular-nums."
+      }
+    },
+    "shadows": [
+      {
+        "name": "drawer-open",
+        "value": "20px 0 50px rgba(0, 0, 0, 0.55)",
+        "purpose": "Открытый мобильный drawer — отделяет панель приборов от журнала."
+      },
+      {
+        "name": "slider-thumb",
+        "value": "0 1px 3px rgba(0, 0, 0, 0.5)",
+        "purpose": "Бегунок ползунка — лёгкое физическое снятие с панели."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-snap",
+        "value": "cubic-bezier(0.2, 0.9, 0.3, 1)",
+        "purpose": "Единственное затухание системы — «щёлк» без инерции."
+      },
+      {
+        "name": "snap",
+        "value": "0.1s",
+        "purpose": "Смена аннунциатора режима."
+      },
+      {
+        "name": "standard",
+        "value": "0.12s",
+        "purpose": "Hover/focus большинства органов управления."
+      },
+      {
+        "name": "entry-in",
+        "value": "0.16s",
+        "purpose": "Появление новой записи в журнале (opacity + translateY 2px)."
+      },
+      {
+        "name": "lamp",
+        "value": "1.1s infinite",
+        "purpose": "Мерцание лампы: busy-директива и индикатор обработки."
+      },
+      {
+        "name": "backdrop-fade",
+        "value": "0.22s",
+        "purpose": "Появление/затухание backdrop drawer."
+      },
+      {
+        "name": "drawer-slide",
+        "value": "0.24s",
+        "purpose": "Выезд и возврат drawer с панелем приборов."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "drawer",
+        "value": "900px"
+      },
+      {
+        "name": "strip-compression",
+        "value": "600px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Аннунциатор режима",
+      "kind": "custom",
+      "refersTo": "annunciator-active",
+      "description": "Табличка способа рассуждения; активная — инверсия в янтарную пластину, смена за 0.1s.",
+      "html": "<div class='ds-annunciators' role='radiogroup' aria-label='Способ рассуждения'><button type='button' class='ds-annunciator' role='radio' aria-checked='true'>Прямой ответ</button><button type='button' class='ds-annunciator' role='radio' aria-checked='false' tabindex='-1'>Пошаговое решение</button></div>",
+      "css": ".ds-annunciators { display: grid; gap: 8px; } .ds-annunciator { width: 100%; padding: 11px 12px; font-family: var(--sans); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-align: left; color: var(--ink-dim); background: var(--well); border: 1px solid var(--bezel); border-radius: var(--radius); cursor: pointer; transition: color 0.1s var(--ease-snap), background-color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap); } .ds-annunciator:hover { color: var(--ink); border-color: var(--bezel-lit); } .ds-annunciator[aria-checked='true'] { color: var(--amber-ink); background: var(--amber); border-color: var(--amber); } .ds-annunciator:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }"
+    },
+    {
+      "name": "Кнопка «Передать»",
+      "kind": "button",
+      "refersTo": "transmit-button",
+      "description": "Основное действие строки передачи; янтарная пластина с тёмным текстом, disabled — колодец.",
+      "html": "<button type='button' class='ds-tx-btn'>Передать</button>",
+      "css": ".ds-tx-btn { padding: 12px 22px; font-family: var(--sans); font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber-ink); background: var(--amber); border: 1px solid var(--amber); border-radius: var(--radius); cursor: pointer; transition: filter 0.12s var(--ease-snap); } .ds-tx-btn:hover { filter: brightness(1.07); } .ds-tx-btn:disabled { background: var(--well); color: var(--ink-faint); border-color: var(--bezel); cursor: not-allowed; filter: none; } .ds-tx-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }"
+    },
+    {
+      "name": "Repeater режима",
+      "kind": "chip",
+      "refersTo": "repeater-plate",
+      "description": "Янтарная пластина в верхней полосе, дублирующая активный способ рассуждения.",
+      "html": "<span class='ds-repeater'>ПРЯМОЙ ОТВЕТ</span>",
+      "css": ".ds-repeater { display: inline-block; font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber-ink); background: var(--amber); border: 1px solid var(--amber); border-radius: 3px; padding: 4px 10px; }"
+    },
+    {
+      "name": "Цифровой колодец",
+      "kind": "input",
+      "refersTo": "input-number",
+      "description": "Поле числового параметра: зелёные приборные цифры в утопленном колодце.",
+      "html": "<input class='ds-num' type='number' value='0.7' step='0.01' min='0' max='2' aria-label='Температура'>",
+      "css": ".ds-num { width: 84px; padding: 5px 8px; font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; color: var(--green); background: var(--well); border: 1px solid var(--bezel); border-radius: 3px; transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap); } .ds-num:hover { border-color: var(--bezel-lit); } .ds-num:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }"
+    },
+    {
+      "name": "Ползунок прибора",
+      "kind": "input",
+      "description": "Дорожка 4px с янтарным заполнением и квадратным бегунком; focus — кольцо amber-soft.",
+      "html": "<input class='ds-range' type='range' min='0' max='2' step='0.01' value='0.7' style='--fill: 35%' aria-label='Температура: ползунок'>",
+      "css": ".ds-range { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; cursor: pointer; } .ds-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--amber) 0%, var(--amber) var(--fill, 0%), var(--well) var(--fill, 0%)); } .ds-range::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -5px; width: 14px; height: 14px; border-radius: 3px; background: var(--ink); border: 2px solid var(--ground); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); transition: transform 0.12s var(--ease-snap); } .ds-range:hover::-webkit-slider-thumb { transform: scale(1.12); } .ds-range:focus { outline: none; } .ds-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 4px var(--amber-soft); } .ds-range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--well); } .ds-range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--amber); } .ds-range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 3px; background: var(--ink); border: 2px solid var(--ground); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); } .ds-range:hover::-moz-range-thumb { transform: scale(1.12); } .ds-range:focus-visible::-moz-range-thumb { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 4px var(--amber-soft); }"
+    },
+    {
+      "name": "Поле ввода строки передачи",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "Главное поле запроса: sans 15px, янтарный caret, фокус — янтарная рамка с кольцом.",
+      "html": "<input class='ds-tx-input' type='text' placeholder='Введите запрос…'>",
+      "css": ".ds-tx-input { width: 100%; padding: 12px 14px; font-family: var(--sans); font-size: 15px; color: var(--ink); background: var(--well); border: 1px solid var(--bezel); border-radius: var(--radius); caret-color: var(--amber); transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap); } .ds-tx-input::placeholder { color: var(--ink-faint); } .ds-tx-input:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }"
+    },
+    {
+      "name": "Запись бортового журнала",
+      "kind": "card",
+      "refersTo": "entry-card",
+      "description": "Моно-шапка «тег · режим · время · топливо» и пластина ответа; топливо — зелёным.",
+      "html": "<div class='ds-entry'><div class='ds-entry-head'><span class='ds-entry-tag'>Ответ</span><span class='ds-entry-sep'>·</span><span>Прямой ответ</span><span class='ds-entry-sep'>·</span><span>21:07</span><span class='ds-entry-sep'>·</span><span class='ds-fuel-digits'>Топливо 128/460/588</span></div><div class='ds-bubble'>Ответ модели: Markdown, код, таблицы.</div></div>",
+      "css": ".ds-entry { max-width: min(75ch, 100%); display: flex; flex-direction: column; gap: 6px; animation: ds-entry-in 0.16s var(--ease-snap); } @keyframes ds-entry-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } } .ds-entry-head { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-entry-tag { color: var(--ink-dim); font-weight: 700; } .ds-entry-sep { margin: 0 2px; } .ds-fuel-digits { color: var(--green); } .ds-bubble { padding: 12px 16px; border-radius: var(--radius); border: 1px solid var(--bezel); line-height: 1.6; font-size: 14.5px; background: var(--panel); color: var(--ink); }"
+    },
+    {
+      "name": "Директива состояния",
+      "kind": "custom",
+      "refersTo": "directive-strip",
+      "description": "Строка статуса с лампой: ready — зелёная, busy — мерцающая янтарная, fault — красная.",
+      "html": "<div class='ds-directive' data-kind='ready'><span class='ds-lamp'></span><span class='ds-directive-text'>Готов к передаче</span></div>",
+      "css": "@keyframes ds-lamp-blink { 0%, 60%, 100% { opacity: 0.2; } 30% { opacity: 1; } } .ds-directive { display: flex; align-items: center; gap: 9px; min-height: 30px; padding: 4px 20px; background: var(--panel-deep); border-top: 1px solid var(--bezel); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); } .ds-lamp { flex-shrink: 0; width: 7px; height: 7px; border-radius: 2px; background: var(--green); } .ds-directive[data-kind='busy'] .ds-lamp { background: var(--amber); animation: ds-lamp-blink 1.1s infinite; } .ds-directive[data-kind='fault'] .ds-lamp { background: var(--red); } .ds-directive[data-kind='fault'] .ds-directive-text { color: var(--red); } .ds-directive-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }"
+    },
+    {
+      "name": "«Сбросить параметры»",
+      "kind": "button",
+      "description": "Гост-кнопка внизу панели приборов: прозрачная, бебельная рамка, hover — янтарь.",
+      "html": "<button type='button' class='ds-reset'>Сбросить параметры</button>",
+      "css": ".ds-reset { width: 100%; padding: 9px 12px; font-family: var(--sans); font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); background: transparent; border: 1px solid var(--bezel); border-radius: var(--radius); cursor: pointer; transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap); } .ds-reset:hover { color: var(--amber); border-color: var(--amber); } .ds-reset:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Приборная доска",
+    "overview": "Штурман — не мессенджер, а стенд: вечерний кокпит, где графитовые панели светятся тёплой матовой подсветкой и всё считывается одним взглядом. Режим рассуждения живёт на табло-аннунциаторах, переписка ведётся как бортовой журнал, а токены показываются цифрами топливомера. Интерфейс отвечает на один вопрос: «какой способ мышления сейчас включён и что система сейчас делает».\n\nПлотность — приборная: левая панель — плотный ряд инструментов, правая колонка — журнал на весь остаток ширины. Каркас фиксированный, страница не скроллится; скроллятся только журнал и панель приборов. Глубина строится тоном, а не светом: колодец (well) — углубление, бебель (bezel) — 1px-фаска. Цвет работает как канал информации: янтарь — органы управления и активное состояние, зелёный — показания, красный — отказы.\n\nАнтиреференсы, подтверждённые системой: ни неонового «киберпанк-дефолта», ни градиентов, ни свечения вне фокус-колец и ламп.\n\nГрамматика движения: одно затухание var(--ease-snap) — cubic-bezier(0.2, 0.9, 0.3, 1); длительности 0.1s (смена аннунциатора), 0.12s (hover/focus органов), 0.16s (появление записи в журнале), 0.22–0.24s (backdrop и сдвиг drawer), 1.1s (мерцание лампы). prefers-reduced-motion: reduce обнуляет все анимации и переходы.",
+    "keyCharacteristics": [
+      "Тёплый графит (ground → panel → well) под тёплым белым «подсветочным» чернилом",
+      "Три семантических акцента с жёсткой дисциплиной ролей: янтарь / зелёный / красный",
+      "B612 + B612 Mono: моно — только данные, показания, статусы и код",
+      "Всё — «пластина»: малый радиус 4px/3px, 1px-фаска, фрезерованный край",
+      "Состояние всегда анонсируется: лампа директивы, repeater режима, зелёные цифры топлива",
+      "Движение — «щёлк»: короткие переходы без инерции и декоративных анимаций"
+    ],
+    "rules": [
+      {
+        "name": "Правило «Янтарь — только действие»",
+        "body": "Янтарь — только на элементах, которые отвечают на ввод: кнопки, активные состояния, ссылки, фокус. Если элемент не орган управления и не активен — он не янтарный.",
+        "section": "colors"
+      },
+      {
+        "name": "Правило «Показания — зелёные»",
+        "body": "Зелёный — только цифры: топливо, показания приборов, числа в коде. Зелёный никогда не подсвечивает органы управления.",
+        "section": "colors"
+      },
+      {
+        "name": "Правило «Красный — только отказы»",
+        "body": "Красный — только состояние fault: лампа и текст директивы. В остальном интерфейсе красного нет.",
+        "section": "colors"
+      },
+      {
+        "name": "Правило «Моно — только данные»",
+        "body": "B612 Mono — только данные, измерения, статусы и код. Проза и подписи — B612. Все цифры — с font-variant-numeric: tabular-nums, чтобы колонки не «дышали».",
+        "section": "typography"
+      },
+      {
+        "name": "Правило «Тональная глубина»",
+        "body": "Глубина поверхности — её тон, а не тень. Тени — в двух местах: мобильный drawer и бегунок ползунка.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do использовать янтарь #ffb347 только для органов управления, активных состояний и ссылок; тёмная пара на янтаре — #16130a.",
+      "Do печатать все цифры B612 Mono с tabular-nums: топливо, показания приборов, время, статусные строки.",
+      "Do держать два радиуса: 4px для пластин, 3px для мелкого; рамка всегда 1px бебель.",
+      "Do помечать фокус явно: 2px янтарный outline (offset 2px) у кнопок, янтарная рамка + 3px кольцо amber-soft у полей.",
+      "Do давать лампу каждому состоянию: ready — зелёная, busy — мерцающая янтарная, fault — красная; строка директивы — aria-live.",
+      "Do сохранять структуру шапки записи «тег · режим · время · топливо» — цифры топлива зелёным."
+    ],
+    "donts": [
+      "Don't использовать зелёный или красный вне показаний и отказов: палитра замкнута, пятнадцатый цвет сломает приборный язык.",
+      "Don't ставить тени на статичные поверхности: глубина — тон (ground/panel/well + бебель), а не свечение.",
+      "Don't делать прозу моноширинной: B612 Mono — только данные, статусы и код.",
+      "Don't добавлять декоративные анимации: движение — «щёлк» (0.1–0.16s, var(--ease-snap)) и мерцание ламп для состояний.",
+      "Don't превращать repeater в пассивную метку: это активный режим на янтарной пластине.",
+      "Don't изобретать новые акцентные роли: новое состояние берёт цвет из трёх семантических акцентов."
+    ]
+  }
+}

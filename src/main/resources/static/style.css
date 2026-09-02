@@ -1,29 +1,46 @@
+/* ============================================================
+   ШТУРМАН · мир «Приборная доска»
+   Ночной кокпит: матовая тёплая подсветка, таблички-аннунциаторы,
+   бортовой журнал, зелёные табло-цифры. Янтарь — только органы
+   управления и активные состояния; зелёный — только показания;
+   красный — только отказы.
+   ============================================================ */
+
 :root {
-    --bg-gradient-1: #101018;
-    --bg-gradient-2: #1e1830;
-    --container-bg: #191924;
-    --sidebar-bg: #14141e;
-    --container-border: rgba(255, 255, 255, 0.08);
-    --surface: #22222f;
-    --surface-alt: #2a2a3d;
-    --border: #2e2e44;
-    --border-soft: #242438;
-    --text: #eceaf3;
-    --text-muted: #a2a7bd;
-    --text-faint: #6f7492;
-    --accent: #7c8cf8;
-    --accent-hover: #8f9dff;
-    --accent-contrast: #ffffff;
-    --accent-soft: rgba(124, 140, 248, 0.16);
-    --accent-border: rgba(124, 140, 248, 0.35);
-    --track: #2c2c44;
-    --success: #4cd6a0;
-    --danger: #f07373;
-    --danger-bg: rgba(240, 115, 115, 0.12);
-    --shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
-    --radius: 16px;
-    --radius-lg: 20px;
-    --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --ground: #16181c;          /* фон журнала */
+    --panel: #1e2127;           /* приборные пластины */
+    --panel-deep: #14161a;      /* тёмные полосы консоли */
+    --well: #101216;            /* утопленные колодцы цифр и ввода */
+    --bezel: #2c3038;           /* фаски и 1px-рамки */
+    --bezel-lit: #3d434d;       /* фаска под курсором */
+    --ink: #f3ecdc;             /* тёплый белый подсветки */
+    --ink-dim: #b8ad97;         /* приглушённый тёплый */
+    --ink-faint: #948b75;       /* подписи, выгравированные на панели */
+    --amber: #ffb347;           /* органы управления и активное состояние */
+    --amber-ink: #16130a;       /* текст на янтарной пластине */
+    --amber-soft: rgba(255, 179, 71, 0.16);
+    --green: #5fd68f;           /* табло-цифры и показания */
+    --red: #ff6b5e;             /* отказы */
+    --lamp-text: #ffdca6;       /* надпись клавиши, подсвеченная лампой из-под неё */
+    --lamp-warm: 255, 179, 71;  /* тот же янтарь в RGB — свечения разной плотности */
+    --lamp-green: #b9f2cd;      /* надпись под зелёной лампой (запросы в самописце) */
+    --lamp-cool: 95, 214, 143;  /* зелёный показаний (#5fd68f) в RGB — свечения */
+    --lamp-alarm: 255, 107, 94; /* красный отказов (#ff6b5e) в RGB — свечения */
+    --lamp-key-face: linear-gradient(180deg, var(--panel) 0%, var(--well) 100%);
+    --lamp-rgb: 255, 179, 71;   /* цвет активной лампы; клавиша с иной лампой переопределяет */
+    --lamp-face: radial-gradient(130% 100% at 50% 115%,
+            rgba(var(--lamp-rgb), 0.40) 0%, rgba(var(--lamp-rgb), 0.16) 55%, rgba(var(--lamp-rgb), 0.06) 100%),
+        var(--lamp-key-face);
+    --lamp-label-shadow: 0 0 1px rgba(var(--lamp-rgb), 0.95),
+        0 0 8px rgba(var(--lamp-rgb), 0.8), 0 0 18px rgba(var(--lamp-rgb), 0.45);
+    --lamp-glow: inset 0 0 11px rgba(var(--lamp-rgb), 0.30),
+        inset 0 1px 0 rgba(var(--lamp-rgb), 0.28), 0 0 13px rgba(var(--lamp-rgb), 0.22),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    --lamp-red: #ffb3aa;        /* надпись под красной лампой (клавиша сброса) */
+    --radius: 4px;
+    --mono: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "B612", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
 * {
@@ -32,92 +49,166 @@
     padding: 0;
 }
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    background: linear-gradient(135deg, var(--bg-gradient-1) 0%, var(--bg-gradient-2) 100%);
-    background-attachment: fixed;
-    min-height: 100vh;
-    color: var(--text);
-    display: flex;
-    justify-content: center;
-    align-items: stretch;
-    padding: 20px;
-    -webkit-font-smoothing: antialiased;
+html, body {
+    height: 100%;
 }
 
-.container {
-    width: 100%;
-    max-width: 1200px;
-    height: calc(100vh - 40px);
-    height: calc(100dvh - 40px);
-    display: grid;
-    grid-template-columns: 320px minmax(0, 1fr);
-    background: var(--container-bg);
-    border: 1px solid var(--container-border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
+body {
+    font-family: var(--sans);
+    background: var(--ground);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
     overflow: hidden;
 }
 
-/* ---------- Сайдбар: бренд и настройки ---------- */
+::selection {
+    background: var(--amber-soft);
+    color: var(--ink);
+}
+
+/* ---------- Каркас: полоса состояния / приборы / журнал ---------- */
+
+.container {
+    display: grid;
+    grid-template:
+        "strip strip" auto
+        "side  main" minmax(0, 1fr)
+        / 320px minmax(0, 1fr);
+    height: 100vh;
+    height: 100dvh;
+}
+
+/* ---------- Верхняя полоса состояния ---------- */
+
+.top-strip {
+    grid-area: strip;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 52px;
+    padding: 0 18px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--bezel);
+}
+
+.brand {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.repeater {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--amber-ink);
+    background: var(--amber);
+    border: 1px solid var(--amber);
+    border-radius: 3px;
+    padding: 4px 10px;
+}
+
+.strip-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.clock {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.fuel {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+}
+
+.fuel.hidden {
+    display: none;
+}
+
+.drawer-toggle {
+    display: none;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+.drawer-toggle:hover {
+    color: var(--ink);
+    border-color: var(--bezel-lit);
+}
+
+.drawer-toggle:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* ---------- Сайдбар: приборная доска ---------- */
 
 .sidebar {
+    grid-area: side;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background: var(--sidebar-bg);
-    border-right: 1px solid var(--border-soft);
+    background: var(--panel);
+    border-right: 1px solid var(--bezel);
 }
 
 .sidebar-head {
     position: relative;
-    padding: 22px 20px 18px;
-    border-bottom: 1px solid var(--border-soft);
-    background: linear-gradient(180deg, rgba(124, 140, 248, 0.05), transparent);
-}
-
-.sidebar-head h1 {
-    font-size: 19px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    background: linear-gradient(135deg, #a5b4ff, #7c8cf8);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.subtitle {
-    margin-top: 6px;
-    font-size: 12.5px;
-    line-height: 1.45;
-    color: var(--text-muted);
+    flex-shrink: 0;
+    height: 10px;
+    border-bottom: 1px solid var(--bezel);
 }
 
 .sidebar-close {
     position: absolute;
-    top: 14px;
-    right: 14px;
+    top: 8px;
+    right: 12px;
     display: none;
     align-items: center;
     justify-content: center;
     width: 30px;
     height: 30px;
-    border-radius: 8px;
+    border-radius: var(--radius);
     border: 1px solid transparent;
     background: transparent;
-    color: var(--text-faint);
+    color: var(--ink-faint);
     cursor: pointer;
-    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
 }
 
 .sidebar-close:hover {
-    color: var(--text);
-    background: var(--surface);
-    border-color: var(--border);
+    color: var(--ink);
+    border-color: var(--bezel);
 }
 
 .sidebar-close:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--amber);
     outline-offset: 2px;
 }
 
@@ -125,12 +216,12 @@ body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 20px 20px 8px;
+    padding: 16px 16px 8px;
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: 16px;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--bezel) transparent;
 }
 
 .sidebar-body::-webkit-scrollbar {
@@ -138,383 +229,580 @@ body {
 }
 
 .sidebar-body::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 8px;
+    background: var(--bezel);
+    border-radius: 4px;
 }
 
-.settings-title {
+.panel-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.section-caption {
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--text-faint);
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border-soft);
-}
-
-/* ---------- Группы настроек ---------- */
-
-.setting {
-    display: grid;
-    gap: 8px;
-}
-
-.setting-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.setting-head label,
-.setting-label {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: 0.01em;
+    color: var(--ink-faint);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--bezel);
 }
 
 .hint {
     font-size: 11.5px;
     line-height: 1.5;
-    color: var(--text-faint);
+    color: var(--ink-faint);
 }
 
-.num {
-    width: 76px;
-    padding: 5px 8px;
-    font-family: var(--font-mono);
-    font-size: 13px;
+/* --- Табло-аннунциаторы: банк 2×2 --- */
+
+.annunciators {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+/* Клавиша-кнопка: объёмная, сидит в гнезде панели; лампа под клавишей
+   подсвечивает активные постоянно и нажимаемые — пока их держат */
+.annunciator {
+    width: 100%;
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 6px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-align: center;
+    color: var(--ink-dim);
+    background: linear-gradient(180deg, var(--panel) 0%, var(--well) 100%);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), background 0.1s var(--ease-snap),
+                border-color 0.1s var(--ease-snap), box-shadow 0.1s var(--ease-snap),
+                text-shadow 0.1s var(--ease-snap), transform 0.05s var(--ease-snap),
+                filter 0.1s var(--ease-snap);
+}
+
+.annunciator:hover {
+    color: var(--ink);
+    border-color: var(--bezel-lit);
+    filter: brightness(1.18);
+}
+
+/* Лампа под клавишей: тёплый свет пробивает надпись и сочится из-под краёв.
+   Формула — общие токены --lamp-face/--lamp-label-shadow/--lamp-glow */
+.annunciator:active,
+.annunciator[aria-checked="true"],
+.annunciator[aria-pressed="true"] {
+    color: var(--lamp-text);
+    background: var(--lamp-face);
+    border-color: rgba(var(--lamp-rgb), 0.6);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
+}
+
+/* Ход клавиши: нажатая утопает в гнезде, свечение из-под краёв сильнее */
+.annunciator:active {
+    transform: translateY(1px);
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-warm), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-warm), 0.22);
+}
+
+.annunciator:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* --- Круглые шкалы параметров --- */
+
+.gauges {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.gauge {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: 7px;
+}
+
+.dial {
+    position: relative;
+    width: 84px;
+    height: 84px;
+    touch-action: none;
+    cursor: grab;
+}
+
+.dial:active {
+    cursor: grabbing;
+}
+
+.dial-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.dial-bezel {
+    fill: var(--well);
+    stroke: var(--bezel);
+    stroke-width: 2.5;
+    transition: stroke 0.12s var(--ease-snap);
+}
+
+.dial:hover .dial-bezel {
+    stroke: var(--bezel-lit);
+}
+
+/* Янтарь — только когда шкала «взята» (фокус скрытого range или перетаскивание) */
+.dial.engaged .dial-bezel {
+    stroke: var(--amber);
+}
+
+/* Прибор оживает: ореол вокруг безеля — под курсором слабее, «взята» — ярче */
+.dial:hover .dial-svg {
+    filter: drop-shadow(0 0 5px rgba(var(--lamp-warm), 0.16));
+}
+
+.dial.engaged .dial-svg {
+    filter: drop-shadow(0 0 7px rgba(var(--lamp-warm), 0.32));
+}
+
+.dial-face {
+    fill: var(--ground);
+}
+
+.dial-ticks line {
+    stroke: var(--bezel-lit);
+    stroke-width: 1.5;
+}
+
+.dial-ticks line.major {
+    stroke: var(--ink-faint);
+    stroke-width: 2;
+}
+
+/* Показания — зелёные, по дисциплине цвета; свечение — лампа под стрелкой */
+.dial-arc {
+    fill: none;
+    stroke: var(--green);
+    stroke-width: 3;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-cool), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-cool), 0.3));
+    transition: stroke 0.12s var(--ease-snap), filter 0.12s var(--ease-snap);
+}
+
+.dial-needle {
+    stroke: var(--green);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-cool), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-cool), 0.3));
+    transition: stroke 0.12s var(--ease-snap), filter 0.12s var(--ease-snap);
+}
+
+.dial-hub {
+    fill: var(--ink-faint);
+}
+
+/* Цифры — в мёртвой зоне (низ), куда стрелка не доходит */
+.dial-value {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 61%;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
-    text-align: right;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    letter-spacing: 0.02em;
+    color: var(--green);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-cool), 0.9),
+        0 0 8px rgba(var(--lamp-cool), 0.45),
+        0 0 16px rgba(var(--lamp-cool), 0.2);
+    pointer-events: none;
+    transition: color 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap);
 }
 
-.num:hover {
-    border-color: var(--text-faint);
+/* Зоны допуска на лимбе — гравировка разметки, не активный элемент */
+.dial-zone {
+    fill: none;
+    stroke-width: 4;
+    opacity: 0.38;
 }
 
-.num:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+.dial-zone.z-red { stroke: var(--red); }
+.dial-zone.z-amber { stroke: var(--amber); }
+.dial-zone.z-green { stroke: var(--green); }
+
+/* Показание (дуга, стрелка, цифры) перекрашивается и переливается по зоне значения */
+.dial-arc.z-amber, .dial-needle.z-amber {
+    stroke: var(--amber);
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-warm), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-warm), 0.3));
 }
 
-.num::-webkit-outer-spin-button,
-.num::-webkit-inner-spin-button {
-    -webkit-appearance: none;
+.dial-arc.z-red, .dial-needle.z-red {
+    stroke: var(--red);
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-alarm), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-alarm), 0.3));
+}
+
+.dial-value.z-amber {
+    color: var(--amber);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-warm), 0.9),
+        0 0 8px rgba(var(--lamp-warm), 0.45),
+        0 0 16px rgba(var(--lamp-warm), 0.2);
+}
+
+.dial-value.z-red {
+    color: var(--red);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-alarm), 0.9),
+        0 0 8px rgba(var(--lamp-alarm), 0.45),
+        0 0 16px rgba(var(--lamp-alarm), 0.2);
+}
+
+/* Клавиатурный диапазон невидим: указатели обрабатывает сама шкала */
+.dial-kbd {
+    position: absolute;
+    inset: 0;
     margin: 0;
+    opacity: 0;
+    pointer-events: none;
 }
 
-.num {
-    -moz-appearance: textfield;
+.gauge-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    position: relative;
+}
+
+.gauge-name {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--ink-dim);
+}
+
+.info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    padding: 0;
+    border-radius: 50%;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    cursor: help;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+.info-btn:hover,
+.info-btn[aria-expanded="true"] {
+    color: var(--amber);
+    border-color: var(--amber);
+}
+
+.info-btn:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.tooltip {
+    position: absolute;
+    bottom: calc(100% + 7px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: 236px;
+    padding: 8px 11px;
+    background: var(--panel-deep);
+    border: 1px solid var(--bezel-lit);
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 30;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    transition: opacity 0.12s var(--ease-snap), visibility 0.12s var(--ease-snap);
+}
+
+/* Показ подсказки: hover/focus (CSS) или клик по «?» — тач (класс от JS) */
+.gauge:has(.info-btn:hover) .tooltip,
+.gauge:has(.info-btn:focus-visible) .tooltip,
+.setting-inline:has(.info-btn:hover) .tooltip,
+.setting-inline:has(.info-btn:focus-visible) .tooltip,
+.gauge.tip-open .tooltip,
+.setting-inline.tip-open .tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Панель обрезает всё за своими границами, поэтому у крайних приборов
+   подсказка открывается от своего края, а не по центру шкалы */
+.gauge:first-child .tooltip {
+    left: 0;
+    transform: none;
+}
+
+.gauge:last-child .tooltip {
+    left: auto;
+    right: 0;
+    transform: none;
+}
+
+.setting-inline .tooltip {
+    left: 0;
+    transform: none;
+}
+
+.setting-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: 0.01em;
 }
 
 .text-input {
     width: 100%;
     padding: 9px 11px;
+    font-family: var(--mono);
     font-size: 13px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    color: var(--ink);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap),
+                color 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap);
 }
 
 .text-input::placeholder {
-    color: var(--text-faint);
+    color: var(--ink-faint);
 }
 
 .text-input:focus {
     outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--amber-soft);
 }
 
-.select-input {
-    width: 100%;
-    padding: 9px 11px;
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    cursor: pointer;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a2a7bd' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 11px center;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+.setting-inline {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: 8px;
+    position: relative;
 }
 
-.select-input:hover {
-    border-color: var(--text-faint);
+.setting-inline .setting-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--ink-dim);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
 }
 
-.select-input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+.setting-inline .text-input {
+    padding: 7px 10px;
+    font-size: 12px;
 }
 
-.select-input option {
-    background: var(--surface);
-    color: var(--text);
-}
-
-.range {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 20px;
-    margin: 0;
-    background: transparent;
-    cursor: pointer;
-}
-
-.range:focus {
-    outline: none;
-}
-
-.range::-webkit-slider-runnable-track {
-    height: 4px;
-    border-radius: 999px;
-    background: linear-gradient(
-        to right,
-        var(--accent) 0%,
-        var(--accent) var(--fill, 0%),
-        var(--track) var(--fill, 0%)
-    );
-}
-
-.range::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    margin-top: -6px;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--accent);
-    border: 2px solid #131320;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-    transition: transform 0.12s ease, box-shadow 0.15s ease;
-}
-
-.range:hover::-webkit-slider-thumb {
-    transform: scale(1.1);
-}
-
-.range:active::-webkit-slider-thumb {
-    transform: scale(1.18);
-}
-
-.range:focus-visible::-webkit-slider-thumb {
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45), 0 0 0 4px var(--accent-soft);
-}
-
-.range::-moz-range-track {
-    height: 4px;
-    border-radius: 999px;
-    background: var(--track);
-}
-
-.range::-moz-range-progress {
-    height: 4px;
-    border-radius: 999px;
-    background: var(--accent);
-}
-
-.range::-moz-range-thumb {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--accent);
-    border: 2px solid #131320;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-    transition: transform 0.12s ease, box-shadow 0.15s ease;
-}
-
-.range:hover::-moz-range-thumb {
-    transform: scale(1.1);
-}
-
-.range:focus-visible::-moz-range-thumb {
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45), 0 0 0 4px var(--accent-soft);
+/* Стоп-фраза набрана — текст горит лампой, как надписи на активных клавишах;
+   пустое поле остаётся гравировкой (placeholder) */
+.setting-inline .text-input:not(:placeholder-shown) {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
 }
 
 .sidebar-foot {
-    padding: 14px 20px 16px;
-    border-top: 1px solid var(--border-soft);
+    flex-shrink: 0;
+    padding: 14px 18px 16px;
+    border-top: 1px solid var(--bezel);
 }
 
+/* Клавиша сброса: красная лампа горит всегда — напоминание об ответственности
+   действия; формула та же, цвет лампы переопределён через --lamp-rgb */
 .reset {
+    --lamp-rgb: 255, 107, 94;
+
     width: 100%;
     padding: 9px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--lamp-red);
+    background: var(--lamp-face);
+    border: 1px solid rgba(var(--lamp-rgb), 0.6);
+    border-radius: var(--radius);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
     cursor: pointer;
-    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap),
+                box-shadow 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap),
+                filter 0.12s var(--ease-snap), transform 0.05s var(--ease-snap);
 }
 
 .reset:hover {
-    color: var(--text);
-    background: var(--surface);
-    border-color: var(--text-faint);
+    filter: brightness(1.12);
+}
+
+.reset:active {
+    transform: translateY(1px);
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-rgb), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-rgb), 0.22);
 }
 
 .reset:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--red);
     outline-offset: 2px;
 }
 
-/* ---------- Колонка чата ---------- */
+/* ---------- Бортовой журнал ---------- */
 
-.chat-column {
+.log-column {
     display: flex;
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    grid-area: main;
 }
 
-.chat-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border-soft);
-    background: linear-gradient(180deg, rgba(124, 140, 248, 0.05), transparent);
-}
-
-.settings-toggle {
-    display: none;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    cursor: pointer;
-    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-}
-
-.settings-toggle svg {
-    flex-shrink: 0;
-}
-
-.settings-toggle:hover {
-    color: var(--text);
-    border-color: var(--text-faint);
-}
-
-.settings-toggle[aria-expanded="true"] {
-    color: var(--accent);
-    background: var(--accent-soft);
-    border-color: var(--accent-border);
-}
-
-.settings-toggle:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-.token-counter {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    color: var(--accent);
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
-    border-radius: 999px;
-    padding: 5px 12px;
-    white-space: nowrap;
-}
-
-.token-counter.hidden {
-    display: none;
-}
-
-.chat {
+.flight-log {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 22px;
+    gap: 18px;
+    padding: 22px 24px;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--bezel) transparent;
 }
 
-.chat::-webkit-scrollbar {
+.flight-log::-webkit-scrollbar {
     width: 8px;
 }
 
-.chat::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 8px;
+.flight-log::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
 }
 
 .message {
     display: flex;
+    flex-direction: column;
+    animation: entry-in 0.16s var(--ease-snap);
 }
 
 .message.user {
-    justify-content: flex-end;
+    align-items: flex-end;
 }
 
 .message.bot {
-    justify-content: flex-start;
+    align-items: flex-start;
+}
+
+@keyframes entry-in {
+    from {
+        opacity: 0;
+        transform: translateY(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.entry {
+    max-width: min(75ch, 86%);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.message.user .entry {
+    max-width: min(60ch, 86%);
+}
+
+.entry-head {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.entry-tag {
+    color: var(--ink-dim);
+    font-weight: 700;
+}
+
+.entry-sep {
+    margin: 0 2px;
+}
+
+.fuel-digits {
+    color: var(--green);
 }
 
 .bubble {
-    max-width: 75%;
     padding: 12px 16px;
-    border-radius: 18px;
-    line-height: 1.55;
+    border-radius: var(--radius);
+    border: 1px solid var(--bezel);
+    line-height: 1.6;
     white-space: pre-wrap;
-    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
     font-size: 14.5px;
 }
 
 .message.user .bubble {
-    background: linear-gradient(135deg, #7c8cf8, #6f5fd8);
-    color: var(--accent-contrast);
-    border-bottom-right-radius: 6px;
+    background: var(--well);
+    color: var(--ink);
 }
 
 .message.bot .bubble {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-bottom-left-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    background: var(--panel);
 }
 
-.token-meta {
-    margin-top: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    display: block;
-}
+/* --- Markdown в ответах --- */
 
-/* --- Markdown-контент внутри сообщения бота --- */
 .bubble.md {
     white-space: normal;
-    overflow-wrap: break-word;
-    word-break: break-word;
 }
 
 .bubble.md p {
@@ -529,9 +817,27 @@ body {
 .bubble.md h2,
 .bubble.md h3,
 .bubble.md h4 {
-    margin: 12px 0 8px;
+    margin: 16px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--bezel);
     line-height: 1.3;
-    color: var(--text);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.bubble.md h1 {
+    font-size: 17px;
+}
+
+.bubble.md h2 {
+    font-size: 15.5px;
+}
+
+.bubble.md h3,
+.bubble.md h4 {
+    font-size: 14px;
 }
 
 .bubble.md ul,
@@ -552,55 +858,73 @@ body {
     font-style: italic;
 }
 
+.bubble.md a {
+    color: var(--amber);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.bubble.md a:hover {
+    text-decoration-style: double;
+}
+
 .bubble.md blockquote {
     margin: 8px 0;
-    padding: 4px 12px;
-    border-left: 3px solid var(--accent);
-    color: var(--text-muted);
-    background: var(--surface-alt);
-    border-radius: 4px;
+    padding: 6px 12px;
+    border-left: 1px solid var(--bezel-lit);
+    color: var(--ink-dim);
+    background: var(--well);
+    border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .bubble.md code {
-    font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-family: var(--mono);
     font-size: 13px;
-    background: var(--surface-alt);
-    color: var(--accent);
+    background: var(--well);
+    color: var(--ink);
     padding: 2px 5px;
-    border-radius: 4px;
+    border-radius: 3px;
 }
 
 .bubble.md pre {
     margin: 10px 0;
     padding: 12px;
-    border-radius: 10px;
-    background: #0d0d17;
-    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--well);
+    border: 1px solid var(--bezel);
     overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.bubble.md pre::-webkit-scrollbar {
+    height: 8px;
+}
+
+.bubble.md pre::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
 }
 
 .bubble.md pre code {
     background: transparent;
-    color: var(--text);
+    color: var(--ink);
     padding: 0;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.55;
     white-space: pre-wrap;
     overflow-wrap: break-word;
-}
-
-.bubble.md pre code.hljs {
-    background: transparent;
-    padding: 0;
 }
 
 .bubble.md table {
     display: block;
     max-width: 100%;
+    margin: 10px 0;
     overflow-x: auto;
     border-collapse: collapse;
+    font-size: 13.5px;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--bezel) transparent;
 }
 
 .bubble.md table::-webkit-scrollbar {
@@ -608,129 +932,269 @@ body {
 }
 
 .bubble.md table::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 8px;
+    background: var(--bezel);
+    border-radius: 4px;
 }
 
-.input-row {
-    display: flex;
-    gap: 10px;
-    padding: 16px 20px 18px;
-    border-top: 1px solid var(--border-soft);
+.bubble.md th,
+.bubble.md td {
+    border: 1px solid var(--bezel);
+    padding: 6px 10px;
+    text-align: left;
 }
 
-.input {
-    flex: 1;
-    min-width: 0;
-    padding: 13px 16px;
-    border: 2px solid var(--border);
-    border-radius: 12px;
-    font-size: 15px;
-    outline: none;
-    background: var(--surface);
-    color: var(--text);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+.bubble.md th {
+    background: var(--well);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 12px;
+    color: var(--ink-dim);
 }
 
-.input::placeholder {
-    color: var(--text-faint);
+/* --- Подсветка кода: кабинетная схема --- */
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal {
+    color: var(--amber);
 }
 
-.input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+    color: #9ad98f;
 }
 
-.btn {
-    padding: 13px 22px;
-    background: linear-gradient(135deg, #7c8cf8, #6f5fd8);
-    color: var(--accent-contrast);
-    border: none;
-    border-radius: 12px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform 0.15s ease, filter 0.2s ease;
+.hljs-comment,
+.hljs-quote {
+    color: var(--ink-faint);
+    font-style: italic;
 }
 
-.btn:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+    color: var(--green);
 }
 
-.btn:disabled {
-    background: var(--surface-alt);
-    color: var(--text-faint);
-    cursor: not-allowed;
-    transform: none;
-    filter: none;
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id {
+    color: var(--ink);
+    font-weight: 700;
 }
 
-.btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+    color: #e0c88f;
 }
 
-.status {
-    padding: 10px 20px;
-    text-align: center;
-    font-size: 13px;
-    color: var(--danger);
-    background: var(--danger-bg);
-    border-top: 1px solid var(--border-soft);
+.hljs-type,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-class .hljs-title {
+    color: #9ad98f;
 }
 
-.status.hidden {
-    display: none;
+.hljs-meta,
+.hljs-deletion {
+    color: var(--ink-faint);
 }
+
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: 700;
+}
+
+/* --- Индикатор обработки: лампы --- */
 
 .typing {
     display: inline-flex;
-    gap: 5px;
-    padding: 14px 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    border-bottom-left-radius: 6px;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
 }
 
 .typing span {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--accent);
-    animation: blink 1.2s infinite;
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--amber);
+    animation: lamp 1.1s infinite;
 }
 
 .typing span:nth-child(2) {
-    animation-delay: 0.2s;
+    animation-delay: 0.18s;
 }
 
 .typing span:nth-child(3) {
-    animation-delay: 0.4s;
+    animation-delay: 0.36s;
 }
 
-@keyframes blink {
-    0%, 80%, 100% {
-        opacity: 0.25;
-        transform: translateY(0);
+@keyframes lamp {
+    0%, 60%, 100% {
+        opacity: 0.2;
     }
-    40% {
+    30% {
         opacity: 1;
-        transform: translateY(-3px);
     }
 }
 
-/* ---------- Мобильная вёрстка: сайдбар превращается в drawer ---------- */
+/* ---------- Директива состояния ---------- */
+
+.directive {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 30px;
+    padding: 4px 20px;
+    background: var(--panel-deep);
+    border-top: 1px solid var(--bezel);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+.lamp {
+    flex-shrink: 0;
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--green);
+}
+
+.directive[data-kind="ready"] .lamp {
+    background: var(--green);
+}
+
+.directive[data-kind="busy"] .lamp {
+    background: var(--amber);
+    animation: lamp 1.1s infinite;
+}
+
+.directive[data-kind="fault"] .lamp {
+    background: var(--red);
+}
+
+.directive[data-kind="fault"] .directive-text {
+    color: var(--red);
+}
+
+.directive-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---------- Строка передачи ---------- */
+
+.tx-row {
+    display: flex;
+    gap: 10px;
+    padding: 14px 20px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--bezel);
+}
+
+.tx-input {
+    flex: 1;
+    min-width: 0;
+    padding: 12px 14px;
+    font-family: var(--sans);
+    font-size: 15px;
+    color: var(--ink);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    caret-color: var(--amber);
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap);
+}
+
+.tx-input::placeholder {
+    color: var(--ink-faint);
+}
+
+.tx-input:focus {
+    outline: none;
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+/* Клавиша «Передать»: лампа горит всегда — Штурман готов принять запрос.
+   Та же лампа, что у клавиш-табло: свет сквозь надпись и из-под краёв */
+.tx-btn {
+    padding: 12px 22px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--lamp-text);
+    background: var(--lamp-face);
+    border: 1px solid rgba(var(--lamp-rgb), 0.6);
+    border-radius: var(--radius);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
+    cursor: pointer;
+    transition: filter 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap),
+                color 0.12s var(--ease-snap), background 0.12s var(--ease-snap),
+                border-color 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap),
+                transform 0.05s var(--ease-snap);
+}
+
+.tx-btn:hover {
+    filter: brightness(1.12);
+}
+
+/* Ход клавиши при передаче */
+.tx-btn:active {
+    transform: translateY(1px);
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-warm), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-warm), 0.22);
+}
+
+/* Лампа погасла — Штурман обрабатывает запрос */
+.tx-btn:disabled {
+    color: var(--ink-faint);
+    background: var(--lamp-key-face);
+    border-color: var(--bezel);
+    text-shadow: none;
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: not-allowed;
+    filter: none;
+}
+
+.tx-btn:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* ---------- Мобильная вёрстка: приборы — выдвижная панель ---------- */
 
 .sidebar-backdrop {
     position: fixed;
     inset: 0;
     z-index: 30;
-    background: rgba(8, 8, 14, 0.55);
+    background: rgba(8, 9, 11, 0.6);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.22s var(--ease-snap);
 }
 
 .sidebar-backdrop.visible {
@@ -738,19 +1202,427 @@ body {
     pointer-events: auto;
 }
 
-@media (max-width: 900px) {
-    body {
-        padding: 0;
+/* ---------- Обслуживание: Режим ТО и Самописец ---------- */
+
+.maint-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+/* Сырой обмен в записях журнала виден только в Режиме ТО */
+.raw-exchange {
+    display: none;
+    margin-top: 10px;
+}
+
+body.maint-on .raw-exchange {
+    display: block;
+}
+
+.raw-exchange > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.raw-exchange > summary::-webkit-details-marker,
+.raw-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.raw-exchange > summary::before,
+.raw-item > summary::before {
+    content: '+';
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.raw-exchange[open] > summary::before,
+.raw-item[open] > summary::before {
+    content: '−';
+}
+
+.raw-exchange > summary:hover {
+    color: var(--ink-dim);
+    border-color: var(--bezel-lit);
+}
+
+.raw-exchange > summary:focus-visible,
+.raw-item > summary:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.raw-item {
+    margin-top: 8px;
+}
+
+.raw-item > summary {
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.raw-item > summary:hover {
+    color: var(--ink);
+    border-color: var(--bezel-lit);
+}
+
+.raw-item .raw-meta {
+    color: var(--ink-faint);
+    flex-shrink: 0;
+}
+
+/* Отказавший обмен помечается красным — цвет только для отказов */
+.raw-item.fault > summary,
+.raw-item.fault > summary .raw-meta {
+    color: var(--red);
+    border-color: rgba(255, 107, 94, 0.45);
+}
+
+.json-view {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    overflow: auto;
+    max-height: 300px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.json-view::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.json-view::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.json-view code {
+    font-family: inherit;
+    white-space: pre;
+}
+
+/* ---------- Самописец: протокол обмена с моделью ---------- */
+
+.recorder-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(6, 7, 9, 0.62);
+    backdrop-filter: blur(3px);
+}
+
+/* display:flex выше перебивает display:none из атрибута hidden — возвращаем */
+.recorder-overlay[hidden] {
+    display: none;
+}
+
+.recorder {
+    display: flex;
+    flex-direction: column;
+    width: min(880px, 100%);
+    height: min(78vh, 720px);
+    background: var(--panel);
+    border: 1px solid var(--bezel-lit);
+    border-radius: var(--radius);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    animation: entry-in 0.16s var(--ease-snap);
+}
+
+.recorder-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+    padding: 12px 16px;
+    background: var(--panel-deep);
+    border-bottom: 1px solid var(--bezel);
+}
+
+.recorder-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+}
+
+.recorder-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.recorder-sub {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+}
+
+.recorder-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.recorder-refresh {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+.recorder-refresh:hover {
+    color: var(--amber);
+    border-color: var(--amber);
+}
+
+.recorder-refresh:focus-visible,
+.recorder-close:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.recorder-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    color: var(--ink-dim);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+.recorder-close:hover {
+    color: var(--amber);
+    border-color: var(--amber);
+}
+
+.recorder-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 16px 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.recorder-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.recorder-body::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.recorder-body .json-view {
+    margin-right: 2px;
+}
+
+.rec-entry {
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    background: var(--well);
+}
+
+.rec-entry + .rec-entry {
+    margin-top: 8px;
+}
+
+.rec-entry[open] {
+    border-color: var(--bezel-lit);
+}
+
+.rec-head {
+    list-style: none;
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: baseline;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-dim);
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap);
+}
+
+.rec-head::-webkit-details-marker {
+    display: none;
+}
+
+.rec-head::before {
+    content: '+';
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.rec-entry[open] .rec-head::before {
+    content: '−';
+}
+
+.rec-head:hover {
+    color: var(--ink);
+}
+
+.rec-time {
+    color: var(--ink-faint);
+}
+
+.rec-meta {
+    text-align: right;
+    color: var(--ink-faint);
+}
+
+/* Направление обмена — лампа: запрос зелёным, ответ янтарным (как надписи клавиш) */
+.rec-entry.req .rec-dir {
+    color: var(--lamp-green);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-cool), 0.95),
+        0 0 7px rgba(var(--lamp-cool), 0.7),
+        0 0 15px rgba(var(--lamp-cool), 0.35);
+}
+
+.rec-entry.res .rec-dir {
+    color: var(--lamp-text);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-warm), 0.95),
+        0 0 7px rgba(var(--lamp-warm), 0.7),
+        0 0 15px rgba(var(--lamp-warm), 0.35);
+}
+
+/* Отказ в протоколе — красный, по дисциплине цвета */
+.rec-entry.fault > .rec-head,
+.rec-entry.fault > .rec-head .rec-time,
+.rec-entry.fault > .rec-head .rec-meta {
+    color: var(--red);
+}
+
+.rec-entry.fault .rec-dir {
+    color: var(--red);
+    text-shadow: none;
+}
+
+.recorder-empty {
+    margin: 24px 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+}
+
+.recorder-empty.fault {
+    color: var(--red);
+}
+
+@media (max-width: 600px) {
+    .recorder-overlay {
+        padding: 10px;
     }
 
+    .recorder {
+        height: 86vh;
+    }
+
+    .recorder-sub {
+        display: none;
+    }
+
+    .rec-head {
+        grid-template-columns: auto auto;
+        grid-template-rows: auto auto;
+    }
+
+    .rec-meta {
+        grid-column: 1 / -1;
+        text-align: left;
+    }
+}
+
+@media (max-width: 900px) {
     .container {
-        grid-template-columns: 1fr;
-        max-width: none;
-        height: 100vh;
-        height: 100dvh;
-        border: none;
-        border-radius: 0;
-        box-shadow: none;
+        grid-template:
+            "strip" auto
+            "main" minmax(0, 1fr)
+            / 1fr;
+    }
+
+    .top-strip {
+        padding: 0 14px;
+        gap: 10px;
+    }
+
+    .brand {
+        font-size: 13px;
+    }
+
+    .repeater {
+        font-size: 9.5px;
+        padding: 3px 8px;
+    }
+
+    .clock {
+        display: none;
+    }
+
+    .drawer-toggle {
+        display: inline-flex;
     }
 
     .sidebar {
@@ -760,42 +1632,77 @@ body {
         left: 0;
         z-index: 40;
         width: min(330px, 88vw);
-        border-right: 1px solid var(--border);
+        border-right: 1px solid var(--bezel);
         transform: translateX(-104%);
-        transition: transform 0.28s cubic-bezier(0.32, 0.72, 0.28, 1);
+        transition: transform 0.24s var(--ease-snap);
+        box-shadow: none;
     }
 
     .sidebar.open {
         transform: translateX(0);
-        box-shadow: 24px 0 60px rgba(0, 0, 0, 0.5);
+        box-shadow: 20px 0 50px rgba(0, 0, 0, 0.55);
+    }
+
+    .sidebar-head {
+        height: 44px;
     }
 
     .sidebar-close {
         display: inline-flex;
     }
 
-    .settings-toggle {
-        display: inline-flex;
+    .flight-log {
+        padding: 16px;
+    }
+
+    .entry,
+    .message.user .entry {
+        max-width: 100%;
     }
 }
 
 @media (max-width: 600px) {
-    .chat {
-        padding: 16px;
+    .top-strip {
+        gap: 8px;
+        padding: 0 10px;
     }
 
-    .bubble {
-        max-width: 85%;
+    .brand {
+        font-size: 12px;
+        letter-spacing: 0.14em;
     }
 
-    .input-row {
-        padding: 12px 16px 14px;
+    .repeater {
+        max-width: 96px;
     }
 
-    .token-counter {
-        max-width: 55%;
+    .strip-right {
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .fuel {
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .repeater {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .drawer-toggle {
+        padding: 6px 9px;
+        font-size: 11px;
+        gap: 5px;
+        flex-shrink: 0;
+    }
+
+    .tx-row {
+        padding: 12px 14px 14px;
     }
 }
 

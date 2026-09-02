@@ -15,19 +15,22 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 
 /**
  * Клиент для отправки запросов к OpenAI-совместимому AI API.
  */
 class AIClient(private val config: AppConfig) {
 
+    /** Единый Json-инстанс: им сериализуется и трафик, и копия тела для самописца. */
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            json(
-                Json {
-                    ignoreUnknownKeys = true
-                }
-            )
+            json(this@AIClient.json)
         }
         install(HttpTimeout) {
             connectTimeoutMillis = 10_000
@@ -67,23 +70,42 @@ class AIClient(private val config: AppConfig) {
         return execute(request)
     }
 
-    /** Выполняет HTTP-запрос и разбирает ответ API. */
+    /**
+     * Выполняет HTTP-запрос и разбирает ответ API. Сырые тела запроса и ответа
+     * (а также отказы связи) фиксируются в самописце ExchangeLog.
+     */
     private suspend fun execute(request: OpenAIRequest): ChatResult {
-        val response: HttpResponse = client.post(config.apiUrl) {
-            contentType(ContentType.Application.Json)
-            bearerAuth(config.apiKey)
-            setBody(request)
+        ExchangeLog.record(DIR_REQ, json.encodeToString(request), ok = null, ms = null)
+
+        val startedAt = System.currentTimeMillis()
+        val response = try {
+            client.post(config.apiUrl) {
+                contentType(ContentType.Application.Json)
+                bearerAuth(config.apiKey)
+                setBody(request)
+            }
+        } catch (e: Exception) {
+            ExchangeLog.record(
+                DIR_RES,
+                "Связь с API не состоялась: ${e.message}",
+                ok = false,
+                ms = System.currentTimeMillis() - startedAt
+            )
+            throw e
         }
+        val elapsedMs = System.currentTimeMillis() - startedAt
+
+        val bodyText = response.bodyAsText()
+        ExchangeLog.record(DIR_RES, bodyText, ok = response.status.isSuccess(), ms = elapsedMs)
 
         // Проверка статуса ответа
         if (!response.status.isSuccess()) {
-            val errorBody = response.bodyAsText()
             throw IllegalStateException(
-                "API вернул ошибку ${response.status.value}: $errorBody"
+                "API вернул ошибку ${response.status.value}: $bodyText"
             )
         }
 
-        val parsed = response.body<OpenAIResponse>()
+        val parsed = json.decodeFromString<OpenAIResponse>(bodyText)
         val reply = parsed.choices.firstOrNull()?.message?.content
             ?: throw IllegalStateException("API вернул пустой ответ")
 
@@ -121,7 +143,11 @@ class AIClient(private val config: AppConfig) {
          * Условие завершения ответа (stop sequences): применяется безусловно (априори).
          * Модель прекращает генерацию при появлении этих последовательностей.
          */
-        private val STOP_SEQUENCES = listOf("<|endoftext|>", "\n\nAssistant:")
+        private val STOP_SEQUENCES = listOf("</s>", "\n\nAssistant:")
+
+        /** Метки направления записей самописца. */
+        const val DIR_REQ = "req"
+        const val DIR_RES = "res"
     }
 }
 

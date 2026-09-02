@@ -3,97 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Ассистент</title>
+    <title>Штурман — стенд рассуждений</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+          href="https://fonts.googleapis.com/css2?family=B612:wght@400;700&family=B612+Mono:wght@400;700&display=swap">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
     <div class="container">
-        <aside class="sidebar" id="settings">
-            <div class="sidebar-head">
-                <button type="button" class="sidebar-close" id="settingsClose" aria-label="Закрыть настройки">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
-                </button>
-                <h1>🤖 AI Ассистент</h1>
-                <p class="subtitle">Отправьте запрос — получите ответ от нейросети</p>
-            </div>
 
-            <div class="sidebar-body">
-                <h2 class="settings-title">Параметры модели</h2>
-
-                <div class="setting">
-                    <label class="setting-label" for="reasoningMode">Способ рассуждения</label>
-                    <select id="reasoningMode" class="select-input" autocomplete="off">
-                        <option value="direct">Прямой ответ</option>
-                        <option value="step_by_step">Пошаговое решение</option>
-                        <option value="prompt_to_prompt">Prompt-to-Prompt</option>
-                        <option value="team">Команда</option>
-                    </select>
-                    <p class="hint" id="reasoningHint">Сугубо сухой и прямолинейный ответ без лишних инструкций</p>
-                </div>
-
-                <div class="setting">
-                    <div class="setting-head">
-                        <label for="temperature">Температура</label>
-                        <input type="number" id="temperature" class="num"
-                               min="0" max="2" step="0.01" value="0.7">
-                    </div>
-                    <input type="range" id="temperatureRange" class="range"
-                           min="0" max="2" step="0.01" value="0.7"
-                           aria-label="Температура: ползунок">
-                    <p class="hint">Контроль случайности: меньше — предсказуемее; 0 — детерминированно</p>
-                </div>
-
-                <div class="setting">
-                    <div class="setting-head">
-                        <label for="maxTokens">Максимум токенов</label>
-                        <input type="number" id="maxTokens" class="num"
-                               min="200" max="1024000" step="1" value="1024">
-                    </div>
-                    <input type="range" id="maxTokensRange" class="range"
-                           min="200" max="1024000" step="200" value="1024"
-                           aria-label="Максимум токенов: ползунок">
-                    <p class="hint">Максимальное количество генерируемых токенов. Ограничено длиной контекста модели</p>
-                </div>
-
-                <div class="setting">
-                    <div class="setting-head">
-                        <label for="topP">Top P</label>
-                        <input type="number" id="topP" class="num"
-                               min="0" max="1" step="0.01" value="1">
-                    </div>
-                    <input type="range" id="topPRange" class="range"
-                           min="0" max="1" step="0.01" value="1"
-                           aria-label="Top P: ползунок">
-                    <p class="hint">Контроль разнообразия через ядерную выборку: 0.5 — половина вариантов</p>
-                </div>
-
-                <div class="setting">
-                    <label class="setting-label" for="stopSeq">Стоп-последовательность</label>
-                    <input type="text" id="stopSeq" class="text-input"
-                           placeholder="Не задана" autocomplete="off" spellcheck="false">
-                    <p class="hint">Генерация остановится, когда этот текст появится в выводе</p>
-                </div>
-            </div>
-
-            <div class="sidebar-foot">
-                <button type="button" class="reset" id="resetBtn">Сбросить</button>
-            </div>
-        </aside>
-        <main class="chat-column">
-            <div class="chat-header">
-                <button type="button" class="settings-toggle" id="settingsToggle"
-                        aria-expanded="false" aria-controls="settings">
+        <header class="top-strip">
+            <h1 class="brand">Штурман</h1>
+            <span class="repeater" id="modeRepeater">ПРЯМОЙ ОТВЕТ</span>
+            <div class="strip-right">
+                <span class="clock" id="clock">--:--:--</span>
+                <span class="fuel hidden" id="tokenCounter">Топливо 0</span>
+                <button type="button" class="drawer-toggle" id="settingsToggle"
+                        aria-expanded="false" aria-controls="settings" aria-label="Показать приборы">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                          stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false">
                         <line x1="4" y1="7" x2="20" y2="7"></line>
@@ -103,31 +35,197 @@
                         <circle cx="15" cy="12" r="2.2" fill="currentColor" stroke="none"></circle>
                         <circle cx="8" cy="17" r="2.2" fill="currentColor" stroke="none"></circle>
                     </svg>
-                    Настройки
+                    Приборы
                 </button>
-                <div id="tokenCounter" class="token-counter hidden">Токены за сессию: 0</div>
+            </div>
+        </header>
+
+        <aside class="sidebar" id="settings">
+            <div class="sidebar-head">
+                <button type="button" class="sidebar-close" id="settingsClose" aria-label="Закрыть приборы">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
             </div>
 
-            <div id="chat" class="chat">
+            <div class="sidebar-body">
+                <section class="panel-section">
+                    <h2 class="section-caption">Способ рассуждения</h2>
+                    <div class="annunciators" role="radiogroup" aria-label="Способ рассуждения" id="reasoningMode">
+                        <button type="button" class="annunciator" role="radio" aria-checked="true"
+                                data-mode="direct"
+                                data-caption="Сугубо сухой и прямолинейный ответ без лишних инструкций">Прямой ответ</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-mode="step_by_step"
+                                data-caption="Подробно расписывается способ решения и получения ответа">Пошаговое решение</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-mode="prompt_to_prompt"
+                                data-caption="Формирует промт, передаёт его в LLM и показывает промт и решение по нему">Prompt-to-Prompt</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-mode="team"
+                                data-caption="Архитектор, Инженер и Исследователь решают задачу, затем — сравнение ответов и саммари">Команда</button>
+                    </div>
+                    <p class="hint" id="reasoningHint">Сугубо сухой и прямолинейный ответ без лишних инструкций</p>
+                </section>
+
+                <section class="panel-section">
+                    <h2 class="section-caption">Параметры модели</h2>
+
+                    <div class="gauges">
+                        <div class="gauge">
+                            <div class="dial" data-setting="temperature">
+                                <svg class="dial-svg" viewBox="0 0 100 100" aria-hidden="true">
+                                    <circle class="dial-bezel" cx="50" cy="50" r="47"></circle>
+                                    <circle class="dial-face" cx="50" cy="50" r="42"></circle>
+                                    <g class="dial-ticks"></g>
+                                    <path class="dial-arc" d=""></path>
+                                    <line class="dial-needle" x1="50" y1="50" x2="50" y2="15"></line>
+                                    <circle class="dial-hub" cx="50" cy="50" r="4"></circle>
+                                </svg>
+                                <span class="dial-value">0.70</span>
+                                <input type="range" class="dial-kbd" min="0" max="100" step="1" value="35"
+                                       aria-label="Температура">
+                            </div>
+                            <div class="gauge-label">
+                                <span class="gauge-name">Температура</span>
+                                <button type="button" class="info-btn" aria-expanded="false"
+                                        aria-controls="tip-temperature" aria-describedby="tip-temperature"
+                                        aria-label="Описание параметра «Температура»">?</button>
+                            </div>
+                            <span class="tooltip" role="tooltip" id="tip-temperature">Контроль случайности: меньше — предсказуемее; 0 — детерминированно</span>
+                        </div>
+
+                        <div class="gauge">
+                            <div class="dial" data-setting="maxTokens">
+                                <svg class="dial-svg" viewBox="0 0 100 100" aria-hidden="true">
+                                    <circle class="dial-bezel" cx="50" cy="50" r="47"></circle>
+                                    <circle class="dial-face" cx="50" cy="50" r="42"></circle>
+                                    <g class="dial-ticks"></g>
+                                    <path class="dial-arc" d=""></path>
+                                    <line class="dial-needle" x1="50" y1="50" x2="50" y2="15"></line>
+                                    <circle class="dial-hub" cx="50" cy="50" r="4"></circle>
+                                </svg>
+                                <span class="dial-value">1024</span>
+                                <input type="range" class="dial-kbd" min="0" max="100" step="1" value="19"
+                                       aria-label="Топливо — бюджет ответа в токенах">
+                            </div>
+                            <div class="gauge-label">
+                                <span class="gauge-name">Топливо</span>
+                                <button type="button" class="info-btn" aria-expanded="false"
+                                        aria-controls="tip-fuel" aria-describedby="tip-fuel"
+                                        aria-label="Описание параметра «Топливо»">?</button>
+                            </div>
+                            <span class="tooltip" role="tooltip" id="tip-fuel">Бюджет всего ответа в токенах: у «Команды» делится на четыре вызова, у Prompt-to-Prompt — пополам</span>
+                        </div>
+
+                        <div class="gauge">
+                            <div class="dial" data-setting="topP">
+                                <svg class="dial-svg" viewBox="0 0 100 100" aria-hidden="true">
+                                    <circle class="dial-bezel" cx="50" cy="50" r="47"></circle>
+                                    <circle class="dial-face" cx="50" cy="50" r="42"></circle>
+                                    <g class="dial-ticks"></g>
+                                    <path class="dial-arc" d=""></path>
+                                    <line class="dial-needle" x1="50" y1="50" x2="50" y2="15"></line>
+                                    <circle class="dial-hub" cx="50" cy="50" r="4"></circle>
+                                </svg>
+                                <span class="dial-value">1.00</span>
+                                <input type="range" class="dial-kbd" min="0" max="100" step="1" value="100"
+                                       aria-label="Top P">
+                            </div>
+                            <div class="gauge-label">
+                                <span class="gauge-name">Top P</span>
+                                <button type="button" class="info-btn" aria-expanded="false"
+                                        aria-controls="tip-topp" aria-describedby="tip-topp"
+                                        aria-label="Описание параметра «Top P»">?</button>
+                            </div>
+                            <span class="tooltip" role="tooltip" id="tip-topp">Контроль разнообразия через ядерную выборку: 0.5 — половина вариантов. Минимум 0.01: ноль API отвергает</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-inline">
+                        <label class="setting-label" for="stopSeq">Стоп-фраза</label>
+                        <button type="button" class="info-btn" aria-expanded="false"
+                                aria-controls="tip-stop" aria-describedby="tip-stop"
+                                aria-label="Описание параметра «Стоп-фраза»">?</button>
+                        <input type="text" id="stopSeq" class="text-input"
+                               placeholder="Не задана" autocomplete="off" spellcheck="false">
+                        <span class="tooltip" role="tooltip" id="tip-stop">Стоп-последовательность: генерация остановится, когда этот текст появится в выводе</span>
+                    </div>
+                </section>
+
+                <section class="panel-section">
+                    <h2 class="section-caption">Обслуживание</h2>
+                    <div class="maint-grid">
+                        <button type="button" class="annunciator maint-toggle" id="maintToggle"
+                                aria-pressed="false">Режим ТО</button>
+                        <button type="button" class="annunciator maint-open" id="recorderBtn">Самописец</button>
+                    </div>
+                    <p class="hint" id="maintHint">Сырой JSON обмена с моделью: запросы и ответы — в бортовом журнале и в самописце</p>
+                </section>
+            </div>
+
+            <div class="sidebar-foot">
+                <button type="button" class="reset" id="resetBtn">Сбросить параметры</button>
+            </div>
+        </aside>
+
+        <main class="log-column">
+            <div id="chat" class="flight-log" aria-label="Бортовой журнал">
                 <div class="message bot">
-                    <div class="bubble">Здравствуйте! Задайте мне любой вопрос.</div>
+                    <div class="entry">
+                        <div class="entry-head"><span class="entry-tag">Бортовой журнал</span><span class="entry-sep">·</span><span>готов к работе</span></div>
+                        <div class="bubble md">
+                            <p>Способ рассуждения — на табло слева: <strong>Прямой ответ</strong>, <strong>Пошаговое решение</strong>, <strong>Prompt-to-Prompt</strong> или <strong>Команда</strong> из трёх специалистов.</p>
+                            <p>Запрос — в строку передачи внизу. Расход топлива покажу на каждом ответе.</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <form id="chatForm" class="input-row">
+            <div id="status" class="directive" data-kind="ready" aria-live="polite">
+                <span class="lamp" aria-hidden="true"></span>
+                <span class="directive-text" id="directiveText">Готов к передаче</span>
+            </div>
+
+            <form id="chatForm" class="tx-row">
                 <input
                     type="text"
                     id="messageInput"
-                    class="input"
-                    placeholder="Введите ваше сообщение..."
+                    class="tx-input"
+                    placeholder="Введите запрос…"
                     autocomplete="off"
+                    spellcheck="false"
                     required
                 >
-                <button type="submit" id="sendBtn" class="btn">Отправить</button>
+                <button type="submit" id="sendBtn" class="tx-btn">Передать</button>
             </form>
-
-            <div id="status" class="status hidden"></div>
         </main>
+    </div>
+
+    <!-- Самописец: протокол обмена с моделью -->
+    <div class="recorder-overlay" id="recorderOverlay" hidden>
+        <div class="recorder" role="dialog" aria-modal="true" aria-labelledby="recorderTitle">
+            <header class="recorder-head">
+                <div class="recorder-heading">
+                    <h2 class="recorder-title" id="recorderTitle">Самописец</h2>
+                    <span class="recorder-sub">протокол обмена с моделью</span>
+                </div>
+                <div class="recorder-actions">
+                    <button type="button" class="recorder-refresh" id="recorderRefresh">Обновить</button>
+                    <button type="button" class="recorder-close" id="recorderClose" aria-label="Закрыть самописец">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+            <div class="recorder-body" id="recorderBody"></div>
+        </div>
     </div>
 
     <script src="script.js"></script>

@@ -33,7 +33,32 @@ data class ChatResponse(
     val reply: String,
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
-    val totalTokens: Int? = null
+    val totalTokens: Int? = null,
+    /** Сырые обмены с LLM, совершённые при обработке этого сообщения (для режима ТО). */
+    val exchanges: List<ExchangeInfo> = emptyList()
+)
+
+/** Одна запись сырого обмена с LLM: запрос или ответ (режим ТО и самописец). */
+@Serializable
+data class ExchangeInfo(
+    /** Сквозной номер записи в самописце. */
+    val seq: Long,
+    /** Момент записи, epoch millis. */
+    val ts: Long,
+    /** Направление: req — запрос к модели, res — ответ модели. */
+    val dir: String,
+    /** Признак успеха (только для ответов; null — для запросов). */
+    val ok: Boolean? = null,
+    /** Длительность обмена, мс (только для ответов). */
+    val ms: Long? = null,
+    /** Тело обмена: JSON запроса или ответа (либо текст ошибки связи). */
+    val payload: String
+)
+
+/** Ответ GET /api/log — содержимое бортового самописца. */
+@Serializable
+data class ExchangeLogResponse(
+    val entries: List<ExchangeInfo> = emptyList()
 )
 
 // --- Модели для OpenAI-совместимого API (Chat Completions) ---
