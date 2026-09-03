@@ -6,6 +6,9 @@ package com.example.aiweb.model
  * @param id строковый идентификатор, который передаётся в ChatRequest.reasoningMode
  */
 enum class ReasoningMode(val id: String) {
+    /** Без дополнительных модификаций: вопрос уходит в LLM как есть, без режимного system-промта. */
+    DEFAULT("default"),
+
     /** Сугубо сухой и прямолинейный ответ без лишних инструкций. */
     DIRECT("direct"),
 
@@ -21,9 +24,9 @@ enum class ReasoningMode(val id: String) {
     companion object {
         /**
          * Разбирает значение из запроса. Null, пустое или неизвестное значение
-         * трактуется как базовый режим [DIRECT].
+         * трактуется как базовый режим [DEFAULT].
          */
         fun fromId(raw: String?): ReasoningMode =
-            values().firstOrNull { it.id == raw?.trim()?.lowercase() } ?: DIRECT
+            values().firstOrNull { it.id == raw?.trim()?.lowercase() } ?: DEFAULT
     }
 }

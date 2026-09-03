@@ -5,6 +5,7 @@ import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.OpenAIRequest
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIResponse
+import com.example.aiweb.model.OpenAIThinking
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -50,13 +51,16 @@ class AIClient(private val config: AppConfig) {
      * @param topP (необязательно) ядро выборки по кумулятивной вероятности
      * @param stop (необязательно) пользовательская стоп-последовательность;
      *              если указана и не пуста — применяется вместо стандартных STOP_SEQUENCES
+     * @param thinkingEnabled (необязательно) управление цепочкой рассуждений модели:
+     *              true → thinking {type: enabled}, false → {type: disabled}, null — не передавать
      */
     suspend fun ask(
         messages: List<OpenAIMessage>,
         maxTokens: Int? = null,
         temperature: Double? = null,
         topP: Double? = null,
-        stop: String? = null
+        stop: String? = null,
+        thinkingEnabled: Boolean? = null
     ): ChatResult {
         val finalStop = if (stop.isNullOrBlank()) STOP_SEQUENCES else listOf(stop.trim())
         val request = OpenAIRequest(
@@ -65,7 +69,8 @@ class AIClient(private val config: AppConfig) {
             temperature = temperature ?: 0.7,
             topP = topP,
             maxTokens = maxTokens,
-            stop = finalStop
+            stop = finalStop,
+            thinking = thinkingEnabled?.let { OpenAIThinking(type = if (it) "enabled" else "disabled") }
         )
         return execute(request)
     }

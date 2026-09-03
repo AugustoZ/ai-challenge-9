@@ -79,6 +79,7 @@ object ReasoningPrompts {
     """.trimIndent()
 
     fun systemFor(mode: ReasoningMode): String = when (mode) {
+        ReasoningMode.DEFAULT -> ""
         ReasoningMode.DIRECT -> DIRECT
         ReasoningMode.STEP_BY_STEP -> STEP_BY_STEP
         ReasoningMode.PROMPT_TO_PROMPT -> PROMPT_TO_PROMPT

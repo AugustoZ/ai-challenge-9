@@ -20,7 +20,7 @@
 
         <header class="top-strip">
             <h1 class="brand">Штурман</h1>
-            <span class="repeater" id="modeRepeater">ПРЯМОЙ ОТВЕТ</span>
+            <span class="repeater" id="modeRepeater">ПО УМОЛЧАНИЮ</span>
             <div class="strip-right">
                 <span class="clock" id="clock">--:--:--</span>
                 <span class="fuel hidden" id="tokenCounter">Топливо 0</span>
@@ -56,6 +56,9 @@
                     <h2 class="section-caption">Способ рассуждения</h2>
                     <div class="annunciators" role="radiogroup" aria-label="Способ рассуждения" id="reasoningMode">
                         <button type="button" class="annunciator" role="radio" aria-checked="true"
+                                data-mode="default"
+                                data-caption="Вопрос передаётся в LLM без дополнительных модификаций">По умолчанию</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
                                 data-mode="direct"
                                 data-caption="Сугубо сухой и прямолинейный ответ без лишних инструкций">Прямой ответ</button>
                         <button type="button" class="annunciator" role="radio" aria-checked="false"
@@ -68,7 +71,7 @@
                                 data-mode="team"
                                 data-caption="Архитектор, Инженер и Исследователь решают задачу, затем — сравнение ответов и саммари">Команда</button>
                     </div>
-                    <p class="hint" id="reasoningHint">Сугубо сухой и прямолинейный ответ без лишних инструкций</p>
+                    <p class="hint" id="reasoningHint">Вопрос передаётся в LLM без дополнительных модификаций</p>
                 </section>
 
                 <section class="panel-section">
@@ -154,6 +157,16 @@
                                placeholder="Не задана" autocomplete="off" spellcheck="false">
                         <span class="tooltip" role="tooltip" id="tip-stop">Стоп-последовательность: генерация остановится, когда этот текст появится в выводе</span>
                     </div>
+
+                    <div class="setting-inline">
+                        <span class="setting-label">Рассуждения</span>
+                        <button type="button" class="info-btn" aria-expanded="false"
+                                aria-controls="tip-thinking" aria-describedby="tip-thinking"
+                                aria-label="Описание параметра «Рассуждения»">?</button>
+                        <button type="button" class="annunciator thinking-toggle" id="thinkingToggle"
+                                aria-pressed="true">Рассуждения: ВКЛ</button>
+                        <span class="tooltip" role="tooltip" id="tip-thinking">Цепочка рассуждений модели (параметр thinking): ВКЛ → {"type":"enabled"}, ВЫКЛ → {"type":"disabled"}</span>
+                    </div>
                 </section>
 
                 <section class="panel-section">
@@ -178,7 +191,7 @@
                     <div class="entry">
                         <div class="entry-head"><span class="entry-tag">Бортовой журнал</span><span class="entry-sep">·</span><span>готов к работе</span></div>
                         <div class="bubble md">
-                            <p>Способ рассуждения — на табло слева: <strong>Прямой ответ</strong>, <strong>Пошаговое решение</strong>, <strong>Prompt-to-Prompt</strong> или <strong>Команда</strong> из трёх специалистов.</p>
+                            <p>Способ рассуждения — на табло слева: <strong>По умолчанию</strong>, <strong>Прямой ответ</strong>, <strong>Пошаговое решение</strong>, <strong>Prompt-to-Prompt</strong> или <strong>Команда</strong> из трёх специалистов.</p>
                             <p>Запрос — в строку передачи внизу. Расход топлива покажу на каждом ответе.</p>
                         </div>
                     </div>

@@ -72,9 +72,10 @@ fun Route.aiRoutes(config: AppConfig) {
 }
 
 /**
- * Режимы с одним обращением к модели: прямой ответ и пошаговое решение.
- * Лимит maxTokens передаётся в API и дополнительно указывается модели в системной
- * инструкции, чтобы ответ не обрывался на середине.
+ * Режимы с одним обращением к модели: по умолчанию, прямой ответ и пошаговое решение.
+ * DEFAULT передаёт вопрос как есть — без системного промта режима (только при заданном
+ * лимите токенов указывается бюджет ответа). Лимит maxTokens передаётся в API и
+ * дополнительно указывается модели в системной инструкции, чтобы ответ не обрывался.
  */
 private suspend fun handleSingle(
     aiClient: AIClient,
@@ -83,20 +84,30 @@ private suspend fun handleSingle(
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
-    val context = listOf(
-        OpenAIMessage(
-            role = "system",
-            content = ReasoningPrompts.withBudget(ReasoningPrompts.systemFor(mode), body.maxTokens)
-        ),
-        OpenAIMessage(role = "user", content = body.message)
-    )
+    val context = if (mode == ReasoningMode.DEFAULT) {
+        buildList {
+            ReasoningPrompts.budgetNote(body.maxTokens)?.let {
+                add(OpenAIMessage(role = "system", content = it))
+            }
+            add(OpenAIMessage(role = "user", content = body.message))
+        }
+    } else {
+        listOf(
+            OpenAIMessage(
+                role = "system",
+                content = ReasoningPrompts.withBudget(ReasoningPrompts.systemFor(mode), body.maxTokens)
+            ),
+            OpenAIMessage(role = "user", content = body.message)
+        )
+    }
 
     val result = aiClient.ask(
         messages = context,
         maxTokens = body.maxTokens,
         temperature = body.temperature,
         topP = body.topP,
-        stop = body.stop
+        stop = body.stop,
+        thinkingEnabled = body.thinkingEnabled
     )
 
     return result.toResponse().copy(exchanges = ExchangeLog.since(startSeq))
@@ -131,7 +142,8 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
                             maxTokens = perCallBudget,
                             temperature = body.temperature,
                             topP = body.topP,
-                            stop = body.stop
+                            stop = body.stop,
+                            thinkingEnabled = body.thinkingEnabled
                         )
                     }
                 }
@@ -164,7 +176,8 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
                 maxTokens = perCallBudget,
                 temperature = body.temperature,
                 topP = body.topP,
-                stop = body.stop
+                stop = body.stop,
+                thinkingEnabled = body.thinkingEnabled
             )
         }
 
@@ -222,7 +235,8 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
         maxTokens = stageBudget,
         temperature = body.temperature,
         topP = body.topP,
-        stop = body.stop
+        stop = body.stop,
+        thinkingEnabled = body.thinkingEnabled
     )
 
     val generatedPrompt = extractPrompt(stage1.reply)
@@ -239,7 +253,8 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
             maxTokens = stageBudget,
             temperature = body.temperature,
             topP = body.topP,
-            stop = body.stop
+            stop = body.stop,
+            thinkingEnabled = body.thinkingEnabled
         )
     }
 

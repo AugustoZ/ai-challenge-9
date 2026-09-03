@@ -14,6 +14,7 @@ const clock = document.getElementById('clock');
 /* Панель параметров. Значение каждой шкалы — источник истины;
    скрытый range хранит позицию на дуге (0..100) и обслуживает клавиатуру. */
 const stopInput = document.getElementById('stopSeq');
+const thinkingToggle = document.getElementById('thinkingToggle');
 const resetBtn = document.getElementById('resetBtn');
 
 /* Табло-аннунциаторы способа рассуждения */
@@ -23,6 +24,7 @@ const reasoningHint = document.getElementById('reasoningHint');
 const modeRepeater = document.getElementById('modeRepeater');
 
 const MODE_LABELS = {
+    default: 'По умолчанию',
     direct: 'Прямой ответ',
     step_by_step: 'Пошаговое решение',
     prompt_to_prompt: 'Prompt-to-Prompt',
@@ -30,7 +32,9 @@ const MODE_LABELS = {
 };
 
 const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
-const DEFAULTS = { reasoningMode: 'direct', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '' };
+const DEFAULTS = {
+    reasoningMode: 'default', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '', thinking: true,
+};
 
 let currentMode = DEFAULTS.reasoningMode;
 let sessionTotalTokens = 0;
@@ -417,6 +421,7 @@ document.addEventListener('click', (e) => {
 function readSettings() {
     return {
         reasoningMode: currentMode,
+        thinking: thinkingToggle.getAttribute('aria-pressed') === 'true',
         temperature: settingsControls.temperature.value,
         maxTokens: Math.round(settingsControls.maxTokens.value),
         topP: settingsControls.topP.value,
@@ -446,10 +451,25 @@ function loadSettings() {
     }
     stopInput.value = stored && typeof stored.stop === 'string' ? stored.stop : '';
 
+    const thinking = stored && typeof stored.thinking === 'boolean' ? stored.thinking : DEFAULTS.thinking;
+    setThinking(thinking, { save: false });
+
     setMode(stored && stored.reasoningMode, { save: false });
 }
 
 /* ---------- Табло режимов ---------- */
+
+/* Тумблер «Рассуждения»: ВКЛ → модели уходит {"type":"enabled"}, ВЫКЛ → {"type":"disabled"}. */
+function setThinking(on, { save = true } = {}) {
+    const enabled = Boolean(on);
+    thinkingToggle.setAttribute('aria-pressed', String(enabled));
+    thinkingToggle.textContent = enabled ? 'Рассуждения: ВКЛ' : 'Рассуждения: ВЫКЛ';
+    if (save) saveSettings();
+}
+
+thinkingToggle.addEventListener('click', () => {
+    setThinking(thinkingToggle.getAttribute('aria-pressed') !== 'true');
+});
 
 function setMode(rawMode, { save = true } = {}) {
     currentMode = rawMode && Object.prototype.hasOwnProperty.call(MODE_LABELS, rawMode)
@@ -503,6 +523,7 @@ resetBtn.addEventListener('click', () => {
         setControlValue(ctrl, DEFAULTS[key]);
     }
     stopInput.value = '';
+    setThinking(DEFAULTS.thinking);
     setMode(DEFAULTS.reasoningMode);
 });
 
@@ -739,7 +760,7 @@ form.addEventListener('submit', async (e) => {
     showTyping();
     setDirective('busy', `Идёт обработка · ${MODE_LABELS[currentMode]}`);
 
-    const { reasoningMode, temperature, maxTokens, topP, stop } = readSettings();
+    const { reasoningMode, thinking, temperature, maxTokens, topP, stop } = readSettings();
 
     try {
         const res = await fetch('/api/chat', {
@@ -748,6 +769,7 @@ form.addEventListener('submit', async (e) => {
             body: JSON.stringify({
                 message,
                 reasoningMode,
+                thinkingEnabled: thinking,
                 maxTokens,
                 temperature,
                 topP,

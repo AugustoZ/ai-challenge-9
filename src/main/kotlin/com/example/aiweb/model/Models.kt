@@ -19,8 +19,10 @@ data class FileConfig(
 @Serializable
 data class ChatRequest(
     val message: String,
-    /** Способ рассуждения: direct | step_by_step | prompt_to_prompt | team (null — как direct). */
+    /** Способ рассуждения: default | direct | step_by_step | prompt_to_prompt | team (null — default). */
     val reasoningMode: String? = null,
+    /** Управление цепочкой рассуждений модели: true → thinking {type: enabled}, false → {type: disabled}, null — не передавать. */
+    val thinkingEnabled: Boolean? = null,
     val maxTokens: Int? = null,
     val temperature: Double? = null,
     val topP: Double? = null,
@@ -76,7 +78,15 @@ data class OpenAIRequest(
     val temperature: Double = 0.7,
     @SerialName("top_p") val topP: Double? = null,
     @SerialName("max_tokens") val maxTokens: Int? = null,
-    val stop: List<String>? = null
+    val stop: List<String>? = null,
+    /** Управление цепочкой рассуждений модели (thinking). */
+    val thinking: OpenAIThinking? = null
+)
+
+/** Значение параметра thinking: {"type":"enabled"} — рассуждения включены, {"type":"disabled"} — выключены. */
+@Serializable
+data class OpenAIThinking(
+    val type: String
 )
 
 @Serializable
