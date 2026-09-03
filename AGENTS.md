@@ -66,14 +66,14 @@ ai-challenge-9/
 ## COMMANDS
 ```bash
 ./gradlew run                      # дефолтный порт 8080
-PORT=8082 ./gradlew run            # переопределение порта через env
+PORT=8080 ./gradlew run            # переопределение порта через env
 ./gradlew processResources         # см. NOTES — обязателен после правки статики
 node --check src/main/resources/static/script.js   # быстрая проверка синтаксиса JS
 docker compose up                  # контейнерный запуск
 ```
 
 ## NOTES
-- Гоча №1: Ktor отдаёт статику из `build/resources/main`, а не из `src/main/resources`. После правки static/* запусти `./gradlew processResources` (или перезапусти `run`), иначе изменения невидимы.
-- Тестов нет (src/test отсутствует): проверка = `processResources` + `node --check` + живой прогон.
+- Ktor отдаёт статику из `build/resources/main`, а не из `src/main/resources`. После правки static/* запусти `./gradlew processResources` (или перезапусти `run`), иначе изменения невидимы.
+- Тестов нет (src/test отсутствует)
 - `/api/modes` НЕ существует — режимы не отдаются бэком по HTTP; фронт знает их сам (script.js), промпты — в ReasoningPrompts.kt.
 - Настройки фронта хранятся в localStorage ключ `ai-assistant.settings.v1`.
