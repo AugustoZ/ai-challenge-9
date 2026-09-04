@@ -2,5 +2,23 @@
   "port": 8080,
   "apiUrl": "https://api.openai.com/v1/chat/completions",
   "apiKey": "ВАШ_API_КЛЮЧ",
-  "model": "gpt-3.5-turbo"
+  "model": "gpt-3.5-turbo",
+  "allowedModels": ["deepseek-v4-flash", "glm-5.3-flash", "qwen3.8-27b"],
+  "providers": [
+    {
+      "id": "opencode",
+      "name": "OpenCode Zen (бесплатные)",
+      "type": "opencode",
+      "apiUrl": "https://opencode.ai/zen/v1/chat/completions",
+      "apiKey": "ВАШ_API_КЛЮЧ_OPENCODE_ZEN",
+      "upstream": "opencode",
+      "models": [
+        "big-pickle",
+        "ling-3.0-flash-fin-free",
+        "mimo-v2.5-free",
+        "nemotron-3.5-lightning-free",
+        "nemotron-3-ultra-free"
+      ]
+    }
+  ]
 }

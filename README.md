@@ -16,9 +16,10 @@
 src/main/kotlin/com/example/aiweb/
 ├── Application.kt          # Точка входа, настройка Ktor-сервера
 ├── config/AppConfig.kt     # Конфигурация (конфиг-файл / переменные окружения)
-├── client/AIClient.kt      # HTTP-клиент для вызова внешнего AI API
-├── routes/Routes.kt        # HTTP-маршруты (POST /api/chat)
-└── model/Models.kt         # DTO-классы (ChatRequest, OpenAI, FileConfig)
+├── client/AIClient.kt      # HTTP-клиент для вызова внешнего AI API (+ список моделей)
+├── client/JudgePrompts.kt  # Промт режима «Судья» и разбор JSON-заключения
+├── routes/Routes.kt        # HTTP-маршруты (POST /api/chat, GET /api/models, GET /api/log)
+└── model/Models.kt         # DTO-классы (ChatRequest, OpenAI, JudgeReport, FileConfig)
 
 src/main/resources/static/  # Веб-интерфейс (index.html, style.css, script.js)
 
@@ -164,13 +165,90 @@ docker run -p 8080:8080 -v "$(pwd)/config.json:/app/config.json:ro" aiweb
 Prompt-to-Prompt — пополам между генерацией промта и решением. Токены в метаданных
 ответа суммируются по всем вызовам.
 
+### Выбор модели и провайдера
+
+В разделе «Параметры модели» панели есть селект **«Модель»**: модели сгруппированы
+по провайдерам. Сервер получает списки от каждого провайдера (`GET /api/models`);
+выбранная пара «провайдер + модель» передаётся в каждом запросе
+(`ChatRequest.provider` + `ChatRequest.model`), выбор сохраняется в localStorage.
+
+### Провайдеры LLM
+
+Провайдеры настраиваются в `config.json`. Поля верхнего уровня `apiUrl`/`apiKey`/`model`
+задают **провайдер по умолчанию** (OpenAI-совместимый); массив `providers` добавляет
+дополнительных. Поддерживаются два протокола:
+
+| `type` | Протокол | Пример |
+|---|---|---|
+| `openai` (по умолчанию) | OpenAI-совместимый Chat Completions (`{base}/chat/completions`, список — `{base}/models`) | OpenAI, vLLM/GPUStack, LocalAI, Ollama-шлюзы |
+| `opencode` | API локального экземпляра OpenCode: модели — `GET /api/model`, генерация — сессии `POST /session` → `POST /session/{id}/message` (на серверах v2 сначала пробуется одноразовый `POST /api/generate`) | `opencode serve` с бесплатными моделями |
+
+```json
+{
+  "apiUrl": "https://gpustack.example/v1/chat/completions",
+  "apiKey": "...",
+  "model": "deepseek-v4-flash",
+  "allowedModels": ["deepseek-v4-flash", "glm-5.3-flash", "qwen3.8-27b"],
+  "providers": [
+    {
+      "id": "opencode",
+      "name": "OpenCode (бесплатные)",
+      "type": "opencode",
+      "apiUrl": "http://localhost:4096",
+      "apiKey": "пароль_сервера_opencode",
+      "upstream": "opencode",
+      "models": ["big-pickle", "nemotron-3.5-lightning-free"]
+    }
+  ]
+}
+```
+
+- `allowedModels` — белый список моделей провайдера по умолчанию (порядок сохраняется);
+  остальные провайдеры показывают список из своего `models` (явный список) или от API.
+- `apiKey` провайдера `opencode` — пароль сервера (задаётся при запуске
+  `OPENCODE_SERVER_PASSWORD=... opencode serve --port 4096`; имя пользователя — `opencode`).
+- `upstream` — id провайдера внутри OpenCode для адресации модели (например, `opencode`
+  для бесплатных моделей zen).
+- **Бесплатные модели OpenCode zen** требуют zen-ключ (OpenCode Console → API keys).
+  Шлюз подключается как обычный `openai`-провайдер с `apiUrl: "https://opencode.ai/zen/v1/chat/completions"`.
+  Нюансы бесплатного тарифа: лимит запросов (ошибка `429 FreeUsageLimitError` — подождать
+  и повторить), часть моделей закрыта геоблокировкой (`403 RegionError`), отдельные
+  модели могут быть недоступны на upstream (`400 server_error`).
+- **Альтернатива — локальный экземпляр OpenCode**: провайдер типа `opencode` с `apiUrl`,
+  указывающим на КОРЕНЬ сервера (например, `http://localhost:4096`; запуск —
+  `OPENCODE_SERVER_PASSWORD=... opencode serve --port 4096`, apiKey — пароль сервера).
+  Важно: apiUrl у провайдера `opencode` — это корень сервера, а не endpoint
+  chat/completions; запросы идут на сессии `POST /session → POST /session/{id}/message`.
+- OpenCode — агент, а не сырой API: каждый запрос проходит цикл агента, поэтому время
+  ответа больше, а токены включают его системный контекст. Параметры генерации
+  (temperature, max_tokens, стоп-фраза, рассуждения) протоколом OpenCode не передаются.
+
+### Замер скорости
+
+Каждый ответ фиксирует приборные показания (в шапке записи журнала):
+
+- **время** — полное время обработки на сервере (все вызовы LLM), `ChatResponse.elapsedMs`;
+- **скорость** — токенов в секунду (completionTokens / время);
+- **топливо** — токены запрос/ответ/всего, как раньше.
+
+### Режим Судья
+
+Тумблер **«Судья»** (раздел «Приёмка») включает контрольную проверку: после получения
+ответа сервер отдельным вызовом LLM оценивает его по четырём критериям — корректность
+фактов, качество ответа, скорость (по замерам времени и токенов/с) и ресурсоёмкость
+(оправданы ли потраченные токены). Каждый критерий получает балл 1–10 с комментарием,
+итоговый балл и вердикт; заключение раскрывается под ответом (свернуть/развернуть).
+Срыв проверки не роняет основной ответ — вместо баллов покажут причину.
+
 ## Пример использования API напрямую
 
 ```bash
 curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message":"Привет, как дела?","reasoningMode":"default","thinkingEnabled":false}'
+  -d '{"message":"Привет, как дела?","reasoningMode":"default","thinkingEnabled":false,"judgeEnabled":true,"provider":"default","model":"deepseek-v4-flash"}'
 ```
+
+Список моделей по провайдерам: `curl http://localhost:8080/api/models`
 
 ## Совместимость
 

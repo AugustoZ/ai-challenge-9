@@ -641,6 +641,18 @@ body {
     position: relative;
 }
 
+/* Селект модели ведёт себя как текстовое поле; тёмная схема — иначе выпадающий
+   список рендерится светлым и выбивается из приборки */
+.select-input {
+    color-scheme: dark;
+    cursor: pointer;
+}
+
+.select-input option {
+    background: var(--panel-deep);
+    color: var(--ink);
+}
+
 .setting-inline .setting-label {
     font-size: 11.5px;
     font-weight: 700;
@@ -1324,6 +1336,120 @@ body.maint-on .raw-exchange {
 .raw-item.fault > summary .raw-meta {
     color: var(--red);
     border-color: rgba(255, 107, 94, 0.45);
+}
+
+/* ---------- Заключение судьи (режим «Приёмка») ---------- */
+
+.judge-report {
+    margin-top: 10px;
+}
+
+.judge-report > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--amber);
+    background: transparent;
+    border: 1px solid rgba(var(--lamp-warm), 0.35);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.judge-report > summary::-webkit-details-marker {
+    display: none;
+}
+
+.judge-report > summary::before {
+    content: '+';
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.judge-report[open] > summary::before {
+    content: '−';
+}
+
+.judge-report > summary:hover {
+    color: var(--lamp-text);
+    border-color: rgba(var(--lamp-warm), 0.6);
+}
+
+.judge-report > summary:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.judge-body {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    display: grid;
+    gap: 8px;
+}
+
+.judge-row {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.judge-name {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+.judge-score {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--green);
+}
+
+.judge-score.mid { color: var(--amber); }
+.judge-score.low { color: var(--red); }
+
+.judge-comment {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+}
+
+.judge-verdict {
+    margin: 0;
+    padding-top: 8px;
+    border-top: 1px solid var(--bezel);
+    font-size: 12.5px;
+    color: var(--ink);
+}
+
+.judge-raw {
+    margin: 0;
+    padding: 10px 12px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    overflow: auto;
+    max-height: 240px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .json-view {

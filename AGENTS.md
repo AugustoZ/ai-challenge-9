@@ -18,20 +18,23 @@ ai-challenge-9/
 └── src/main/
     ├── kotlin/com/example/aiweb/
     │   ├── Application.kt         # старт Ktor, конфиг, регистрация маршрутов и статики
-    │   ├── client/AIClient.kt     # OpenAI-совместимый клиент к DeepSeek (тонкий клиент)
+    │   ├── client/AIClient.kt     # клиент к провайдерам LLM: openai (chat/completions) и opencode (сессии v1 + generate v2)
     │   ├── client/ExchangeLog.kt  # in-memory журнал обменов запрос↔ответ (питает «Самописец»/«Режим ТО», JSON-просмотр)
+    │   ├── client/JudgePrompts.kt # режим «Судья»: промт проверки ответа + разбор JSON-заключения
     │   ├── client/ReasoningPrompts.kt # системные промпты 4 режимов рассуждения
-    │   ├── config/AppConfig.kt    # разбор config.json
+    │   ├── config/AppConfig.kt    # разбор config.json: провайдеры (ProviderConfig), allowedModels
     │   ├── model/Models.kt, ReasoningMode.kt # DTO и enum режимов
-    │   └── routes/Routes.kt       # POST /api/chat, GET /api/log (единственные API-эндпоинты)
+    │   └── routes/Routes.kt       # POST /api/chat, GET /api/models, GET /api/log
     └── resources/static/          # фронт (см. AGENTS.md в этой папке)
 ```
 
 ## WHERE TO LOOK
 | Задача | Location | Notes |
 |---|---|---|
-| Новый API-эндпоинт | routes/Routes.kt | сейчас их ровно два: /api/chat, /api/log |
+| Новый API-эндпоинт | routes/Routes.kt | сейчас их три: /api/chat, /api/models, /api/log |
 | Смена поведения модели | client/AIClient.kt + ReasoningPrompts.kt | промпты режимов — в ReasoningPrompts |
+| Добавить провайдера LLM | config.json (providers) + client/AIClient.kt | типы протоколов: openai, opencode |
+| Проверка ответа (Судья) | client/JudgePrompts.kt + Routes.kt (runJudge) | отчёт — JudgeReport в Models.kt |
 | Логи запросов/ответов | client/ExchangeLog.kt | без персистентности, живёт в памяти процесса |
 | Ключ/модель/лимиты | config.json | структура — в config/AppConfig.kt |
 | Дизайн-система | DESIGN.md | источник правды по палитре/типографике |
@@ -43,7 +46,8 @@ ai-challenge-9/
 | Application | object | kotlin/Application.kt | точка входа, `PORT` env → порт |
 | Routes | — | kotlin/routes/Routes.kt (290 стр.) | /api/chat (прокси+лимиты), /api/log (журнал) |
 | ReasoningMode | enum | kotlin/model/ReasoningMode.kt | 4 режима: Прямой ответ, Пошаговое решение, Команда, Анализ |
-| AIClient | class | kotlin/client/AIClient.kt | POST к DeepSeek, учёт max_tokens |
+| AIClient | class | kotlin/client/AIClient.kt | POST к DeepSeek, учёт max_tokens, GET {base}/models |
+| JudgePrompts | object | kotlin/client/JudgePrompts.kt | промт судьи, извлечение и разбор JSON-отчёта |
 | ExchangeLog | class | kotlin/client/ExchangeLog.kt | журнал обменов для UI |
 
 Фронтенд (~2600 строк без сборки): index.html — разметка приборки; script.js — движок шкал, тултипы, самописец; style.css — вся визуальная система. Детали — `src/main/resources/static/AGENTS.md`.

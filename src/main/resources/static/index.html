@@ -77,6 +77,17 @@
                 <section class="panel-section">
                     <h2 class="section-caption">Параметры модели</h2>
 
+                    <div class="setting-inline">
+                        <label class="setting-label" for="modelSelect">Модель</label>
+                        <button type="button" class="info-btn" aria-expanded="false"
+                                aria-controls="tip-model" aria-describedby="tip-model"
+                                aria-label="Описание параметра «Модель»">?</button>
+                        <select id="modelSelect" class="text-input select-input" autocomplete="off">
+                            <option value="">Загрузка…</option>
+                        </select>
+                        <span class="tooltip" role="tooltip" id="tip-model">Модели LLM по провайдерам: группы — провайдеры, запросы уходят выбранной модели её провайдера</span>
+                    </div>
+
                     <div class="gauges">
                         <div class="gauge">
                             <div class="dial" data-setting="temperature">
@@ -170,6 +181,20 @@
                 </section>
 
                 <section class="panel-section">
+                    <h2 class="section-caption">Приёмка</h2>
+                    <div class="setting-inline">
+                        <span class="setting-label">Судья</span>
+                        <button type="button" class="info-btn" aria-expanded="false"
+                                aria-controls="tip-judge" aria-describedby="tip-judge"
+                                aria-label="Описание режима «Судья»">?</button>
+                        <button type="button" class="annunciator judge-toggle" id="judgeToggle"
+                                aria-pressed="false">Судья: ВЫКЛ</button>
+                        <span class="tooltip" role="tooltip" id="tip-judge">Контрольная проверка ответа отдельным вызовом LLM: факты, качество, скорость и ресурсоёмкость; заключение появится под ответом</span>
+                    </div>
+                    <p class="hint">Каждый ответ перепроверяется судёй; под ответом появится его заключение</p>
+                </section>
+
+                <section class="panel-section">
                     <h2 class="section-caption">Обслуживание</h2>
                     <div class="maint-grid">
                         <button type="button" class="annunciator maint-toggle" id="maintToggle"
@@ -192,7 +217,7 @@
                         <div class="entry-head"><span class="entry-tag">Бортовой журнал</span><span class="entry-sep">·</span><span>готов к работе</span></div>
                         <div class="bubble md">
                             <p>Способ рассуждения — на табло слева: <strong>По умолчанию</strong>, <strong>Прямой ответ</strong>, <strong>Пошаговое решение</strong>, <strong>Prompt-to-Prompt</strong> или <strong>Команда</strong> из трёх специалистов.</p>
-                            <p>Запрос — в строку передачи внизу. Расход топлива покажу на каждом ответе.</p>
+                            <p>Модель LLM выбирайте в «Параметрах модели». Запрос — в строку передачи внизу: покажу время и расход топлива на каждом ответе, а режим <strong>Судья</strong> добавит под ответом заключение о фактах, качестве, скорости и ресурсоёмкости.</p>
                         </div>
                     </div>
                 </div>

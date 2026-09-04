@@ -3,13 +3,18 @@ package com.example.aiweb.routes
 import com.example.aiweb.client.AIClient
 import com.example.aiweb.client.ChatResult
 import com.example.aiweb.client.ExchangeLog
+import com.example.aiweb.client.JudgePrompts
 import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.client.TeamRole
 import com.example.aiweb.config.AppConfig
+import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.ExchangeLogResponse
+import com.example.aiweb.model.JudgeReport
+import com.example.aiweb.model.ModelsResponse
 import com.example.aiweb.model.OpenAIMessage
+import com.example.aiweb.model.ProviderModels
 import com.example.aiweb.model.ReasoningMode
 import io.ktor.server.application.*
 import io.ktor.http.*
@@ -21,14 +26,40 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 /**
- * Определяет HTTP-маршруты приложения.
+ * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
+ * собственный AIClient; выбор провайдера — по ChatRequest.provider.
  */
 fun Route.aiRoutes(config: AppConfig) {
-    val aiClient = AIClient(config)
+    val clients: Map<ProviderConfig, AIClient> =
+        config.providers.associateWith { AIClient(it) }
 
     // GET /api/log — сырой протокол обменов с моделью (самописец)
     get("/api/log") {
         call.respond(ExchangeLogResponse(entries = ExchangeLog.all()))
+    }
+
+    // GET /api/models — модели по провайдерам: у провайдера по умолчанию применяется
+    // белый список allowedModels (в порядке конфига), у остальных — их явный список
+    // или список от API
+    get("/api/models") {
+        val groups = config.providers.map { provider ->
+            val fetched = runCatching { clients.getValue(provider).listModels() }
+                .onFailure { println("Не удалось получить список моделей «${provider.id}»: ${it.message}") }
+                .getOrDefault(emptyList())
+            val models = if (provider.id == AppConfig.DEFAULT_PROVIDER_ID && config.allowedModels.isNotEmpty()) {
+                keepOrder(config.allowedModels, fetched.ifEmpty { config.allowedModels })
+            } else {
+                provider.models.ifEmpty { fetched }
+            }
+            ProviderModels(id = provider.id, name = provider.name, models = models)
+        }
+        call.respond(
+            ModelsResponse(
+                providers = groups,
+                defaultProvider = config.default.id,
+                default = config.default.model
+            )
+        )
     }
 
     // POST /api/chat — принимает сообщение и возвращает ответ AI
@@ -53,6 +84,9 @@ fun Route.aiRoutes(config: AppConfig) {
         }
 
         val mode = ReasoningMode.fromId(body.reasoningMode)
+        val provider = config.provider(body.provider)
+        val aiClient = clients.getValue(provider)
+        val startedAt = System.currentTimeMillis()
 
         try {
             val response = when (mode) {
@@ -60,7 +94,16 @@ fun Route.aiRoutes(config: AppConfig) {
                 ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(aiClient, body)
                 else -> handleSingle(aiClient, body, mode)
             }
-            call.respond(response)
+            val elapsedMs = System.currentTimeMillis() - startedAt
+            val judged = if (body.judgeEnabled == true) {
+                response.copy(
+                    elapsedMs = elapsedMs,
+                    judge = runJudge(aiClient, body, response, elapsedMs)
+                )
+            } else {
+                response.copy(elapsedMs = elapsedMs)
+            }
+            call.respond(judged)
         } catch (e: Exception) {
             println("Ошибка при обращении к API: ${e.message}")
             call.respond(
@@ -69,6 +112,12 @@ fun Route.aiRoutes(config: AppConfig) {
             )
         }
     }
+}
+
+/** Оставляет в списке только разрешённые модели, сохраняя порядок white-списка. */
+private fun keepOrder(allowed: List<String>, fetched: List<String>): List<String> {
+    val present = fetched.toSet()
+    return allowed.filter { it in present }
 }
 
 /**
@@ -103,6 +152,7 @@ private suspend fun handleSingle(
 
     val result = aiClient.ask(
         messages = context,
+        model = body.model,
         maxTokens = body.maxTokens,
         temperature = body.temperature,
         topP = body.topP,
@@ -139,6 +189,7 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
                                 ),
                                 OpenAIMessage(role = "user", content = body.message)
                             ),
+                            model = body.model,
                             maxTokens = perCallBudget,
                             temperature = body.temperature,
                             topP = body.topP,
@@ -173,6 +224,7 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
                         content = ReasoningPrompts.teamSynthesisUser(body.message, answersBlock)
                     )
                 ),
+                model = body.model,
                 maxTokens = perCallBudget,
                 temperature = body.temperature,
                 topP = body.topP,
@@ -232,6 +284,7 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
             ),
             OpenAIMessage(role = "user", content = body.message)
         ),
+        model = body.model,
         maxTokens = stageBudget,
         temperature = body.temperature,
         topP = body.topP,
@@ -250,6 +303,7 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
     val stage2 = runCatching {
         aiClient.ask(
             messages = stage2Messages + OpenAIMessage(role = "user", content = generatedPrompt),
+            model = body.model,
             maxTokens = stageBudget,
             temperature = body.temperature,
             topP = body.topP,
@@ -297,9 +351,55 @@ private fun extractPrompt(reply: String): String =
 private fun sumTokens(values: List<Int?>): Int? =
     values.filterNotNull().takeIf { it.isNotEmpty() }?.sum()
 
+/**
+ * Режим «Судья»: готовый ответ перепроверяется отдельным вызовом LLM.
+ * Судья получает вопрос, ответ и приборные замеры (время, токены) и оценивает
+ * факты, качество, скорость и ресурсоёмкость. Срыв проверки не роняет основной
+ * ответ — вместо заключения возвращается отчёт с указанием причины.
+ */
+private suspend fun runJudge(
+    aiClient: AIClient,
+    body: ChatRequest,
+    response: ChatResponse,
+    elapsedMs: Long
+): JudgeReport {
+    val startedAt = System.currentTimeMillis()
+    val outcome = runCatching {
+        val result = aiClient.ask(
+            messages = JudgePrompts.buildMessages(
+                question = body.message,
+                answer = response.reply,
+                elapsedMs = elapsedMs,
+                promptTokens = response.promptTokens,
+                completionTokens = response.completionTokens,
+                totalTokens = response.totalTokens
+            ),
+            model = body.model,
+            temperature = 0.1,
+            thinkingEnabled = body.thinkingEnabled
+        )
+        JudgePrompts.parseReport(result.reply)
+    }
+
+    return outcome.fold(
+        onSuccess = { report ->
+            report.copy(elapsedMs = System.currentTimeMillis() - startedAt)
+        },
+        onFailure = { error ->
+            println("Режим «Судья»: проверка не удалась: ${error.message}")
+            JudgeReport(
+                verdict = "Проверка не выполнена",
+                raw = error.message,
+                elapsedMs = System.currentTimeMillis() - startedAt
+            )
+        }
+    )
+}
+
 private fun ChatResult.toResponse(): ChatResponse = ChatResponse(
     reply = reply,
     promptTokens = promptTokens,
     completionTokens = completionTokens,
-    totalTokens = totalTokens
+    totalTokens = totalTokens,
+    elapsedMs = elapsedMs
 )

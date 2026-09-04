@@ -15,6 +15,8 @@ const clock = document.getElementById('clock');
    скрытый range хранит позицию на дуге (0..100) и обслуживает клавиатуру. */
 const stopInput = document.getElementById('stopSeq');
 const thinkingToggle = document.getElementById('thinkingToggle');
+const judgeToggle = document.getElementById('judgeToggle');
+const modelSelect = document.getElementById('modelSelect');
 const resetBtn = document.getElementById('resetBtn');
 
 /* Табло-аннунциаторы способа рассуждения */
@@ -33,7 +35,7 @@ const MODE_LABELS = {
 
 const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
 const DEFAULTS = {
-    reasoningMode: 'default', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '', thinking: true,
+    reasoningMode: 'default', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '', thinking: true, judge: false,
 };
 
 let currentMode = DEFAULTS.reasoningMode;
@@ -80,6 +82,17 @@ function highlightCode(container) {
 
 function nowStamp() {
     return new Date().toLocaleTimeString('ru-RU', { hour12: false }).slice(0, 5);
+}
+
+/* Приборные показания: время ответа и скорость генерации (токенов в секунду) */
+function fmtElapsed(ms) {
+    return `${(ms / 1000).toFixed(2).replace('.', ',')} с`;
+}
+
+function fmtRate(tokenData) {
+    const seconds = tokenData.elapsedMs / 1000;
+    if (!seconds || tokenData.completionTokens == null) return null;
+    return `${Math.round(tokenData.completionTokens / seconds)} т/с`;
 }
 
 function buildEntryHead(tag, parts) {
@@ -136,6 +149,12 @@ function addBotMessage(text, tokenData, exchanges = []) {
     entry.className = 'entry';
 
     const parts = [{ text: MODE_LABELS[currentMode] || currentMode }, { text: nowStamp() }];
+    if (tokenData && tokenData.elapsedMs != null) {
+        const bits = [fmtElapsed(tokenData.elapsedMs)];
+        const rate = fmtRate(tokenData);
+        if (rate) bits.push(rate);
+        parts.push({ fuel: true, text: bits.join(' · ') });
+    }
     if (tokenData && tokenData.totalTokens != null) {
         parts.push({ fuel: true, text: `Топливо ${tokenData.promptTokens ?? 0}/${tokenData.completionTokens ?? 0}/${tokenData.totalTokens}` });
     }
@@ -147,6 +166,10 @@ function addBotMessage(text, tokenData, exchanges = []) {
     highlightCode(bubble);
 
     entry.appendChild(bubble);
+
+    if (tokenData && tokenData.judge) {
+        entry.appendChild(buildJudgeReport(tokenData.judge));
+    }
 
     if (exchanges.length) {
         entry.appendChild(buildRawExchange(exchanges));
@@ -167,6 +190,81 @@ function addBotMessage(text, tokenData, exchanges = []) {
 function updateTokenCounter() {
     tokenCounter.textContent = `Топливо ${sessionTotalTokens}`;
     tokenCounter.classList.remove('hidden');
+}
+
+/* ---------- Заключение судьи ---------- */
+
+/* Оценка судьи: 7..10 — показание в допуске (зелёный), 4..6 — на грани (янтарь),
+   1..3 — брак (красный). Роли цветов — по DESIGN.md. */
+function judgeScoreClass(score) {
+    if (!Number.isFinite(score)) return '';
+    if (score >= 7) return ' ok';
+    if (score >= 4) return ' mid';
+    return ' low';
+}
+
+function buildJudgeReport(judge) {
+    const wrap = document.createElement('details');
+    wrap.className = 'judge-report';
+
+    const summary = document.createElement('summary');
+    summary.textContent = Number.isFinite(judge.overall)
+        ? `Заключение судьи · ${judge.overall}/10`
+        : 'Заключение судьи · без итоговой оценки';
+    wrap.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'judge-body';
+
+    const criteria = [
+        ['facts', 'Факты'],
+        ['quality', 'Качество'],
+        ['speed', 'Скорость'],
+        ['efficiency', 'Ресурсоёмкость'],
+    ];
+    for (const [key, label] of criteria) {
+        const criterion = judge[key];
+        if (!criterion || (criterion.score == null && !criterion.comment)) continue;
+
+        const row = document.createElement('div');
+        row.className = 'judge-row';
+
+        const name = document.createElement('span');
+        name.className = 'judge-name';
+        name.textContent = label;
+
+        const score = document.createElement('span');
+        score.className = 'judge-score' + judgeScoreClass(criterion.score);
+        score.textContent = criterion.score != null ? `${criterion.score}/10` : '—';
+
+        row.appendChild(name);
+        row.appendChild(score);
+
+        if (criterion.comment) {
+            const comment = document.createElement('p');
+            comment.className = 'judge-comment';
+            comment.textContent = criterion.comment;
+            row.appendChild(comment);
+        }
+        body.appendChild(row);
+    }
+
+    if (judge.verdict) {
+        const verdict = document.createElement('p');
+        verdict.className = 'judge-verdict';
+        verdict.textContent = judge.verdict;
+        body.appendChild(verdict);
+    }
+
+    if (judge.raw && !judge.facts && !judge.quality && !judge.speed && !judge.efficiency) {
+        const raw = document.createElement('pre');
+        raw.className = 'judge-raw';
+        raw.textContent = judge.raw;
+        body.appendChild(raw);
+    }
+
+    wrap.appendChild(body);
+    return wrap;
 }
 
 /* ---------- Индикатор обработки: лампы ---------- */
@@ -419,14 +517,18 @@ document.addEventListener('click', (e) => {
 });
 
 function readSettings() {
-    return {
+    const settings = {
         reasoningMode: currentMode,
         thinking: thinkingToggle.getAttribute('aria-pressed') === 'true',
+        judge: judgeToggle.getAttribute('aria-pressed') === 'true',
         temperature: settingsControls.temperature.value,
         maxTokens: Math.round(settingsControls.maxTokens.value),
         topP: settingsControls.topP.value,
         stop: stopInput.value.trim(),
     };
+    // Селект ещё не заполнен (идёт загрузка) — храним выбор только когда он есть
+    if (modelSelect.value) settings.model = modelSelect.value;
+    return settings;
 }
 
 function saveSettings() {
@@ -454,7 +556,68 @@ function loadSettings() {
     const thinking = stored && typeof stored.thinking === 'boolean' ? stored.thinking : DEFAULTS.thinking;
     setThinking(thinking, { save: false });
 
+    const judge = stored && typeof stored.judge === 'boolean' ? stored.judge : DEFAULTS.judge;
+    setJudge(judge, { save: false });
+
     setMode(stored && stored.reasoningMode, { save: false });
+    loadModels(stored && typeof stored.model === 'string' ? stored.model : '');
+}
+
+/* ---------- Выбор модели LLM ---------- */
+
+/* Модели приходят группами по провайдерам (/api/models). Значение селекта —
+   составное «providerId/modelId», чтобы одинаковые id у разных провайдеров
+   не конфликтовали; перед отправкой значение разбирается на два поля. */
+async function loadModels(savedModel) {
+    let providers = [];
+    let defaultProvider = '';
+    let defaultModel = '';
+    try {
+        const res = await fetch('/api/models');
+        if (res.ok) {
+            const data = await res.json();
+            providers = Array.isArray(data.providers) ? data.providers : [];
+            defaultProvider = typeof data.defaultProvider === 'string' ? data.defaultProvider : '';
+            defaultModel = typeof data.default === 'string' ? data.default : '';
+        }
+    } catch (err) {
+        // Список недоступен — селект останется с плейсхолдером, запрос уйдёт дефолтному провайдеру
+    }
+
+    const fallbackValue = defaultProvider && defaultModel ? `${defaultProvider}/${defaultModel}` : '';
+    modelSelect.replaceChildren();
+
+    for (const group of providers) {
+        if (!group || !Array.isArray(group.models) || !group.models.length) continue;
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.name || group.id;
+        for (const id of group.models) {
+            if (typeof id !== 'string' || !id) continue;
+            optgroup.appendChild(new Option(id, `${group.id}/${id}`));
+        }
+        if (optgroup.children.length) modelSelect.appendChild(optgroup);
+    }
+
+    // Если ни одна группа не загрузилась — один вариант «по умолчанию» без выбора
+    if (!modelSelect.options.length && fallbackValue) {
+        modelSelect.appendChild(new Option(defaultModel, fallbackValue));
+    }
+
+    const values = Array.from(modelSelect.options).map((opt) => opt.value);
+    const chosen = savedModel && values.includes(savedModel) ? savedModel : fallbackValue;
+    if (chosen && values.includes(chosen)) modelSelect.value = chosen;
+    if (directive.dataset.kind === 'ready' && !providers.length) {
+        setDirective('ready', 'Список моделей недоступен — работает провайдер по умолчанию');
+    }
+}
+
+modelSelect.addEventListener('change', saveSettings);
+
+/* «providerId/modelId» → { provider, model } для ChatRequest */
+function splitModelValue(value) {
+    const sep = value.indexOf('/');
+    if (sep <= 0) return { provider: null, model: value || null };
+    return { provider: value.slice(0, sep), model: value.slice(sep + 1) || null };
 }
 
 /* ---------- Табло режимов ---------- */
@@ -469,6 +632,18 @@ function setThinking(on, { save = true } = {}) {
 
 thinkingToggle.addEventListener('click', () => {
     setThinking(thinkingToggle.getAttribute('aria-pressed') !== 'true');
+});
+
+/* Тумблер «Судья»: ВКЛ → каждый ответ перепроверяется отдельным вызовом LLM. */
+function setJudge(on, { save = true } = {}) {
+    const enabled = Boolean(on);
+    judgeToggle.setAttribute('aria-pressed', String(enabled));
+    judgeToggle.textContent = enabled ? 'Судья: ВКЛ' : 'Судья: ВЫКЛ';
+    if (save) saveSettings();
+}
+
+judgeToggle.addEventListener('click', () => {
+    setJudge(judgeToggle.getAttribute('aria-pressed') !== 'true');
 });
 
 function setMode(rawMode, { save = true } = {}) {
@@ -524,7 +699,10 @@ resetBtn.addEventListener('click', () => {
     }
     stopInput.value = '';
     setThinking(DEFAULTS.thinking);
+    setJudge(DEFAULTS.judge);
     setMode(DEFAULTS.reasoningMode);
+    if (modelSelect.options.length) modelSelect.selectedIndex = 0;
+    saveSettings();
 });
 
 /* ---------- Мобильное меню (drawer) ---------- */
@@ -758,9 +936,9 @@ form.addEventListener('submit', async (e) => {
     sendBtn.disabled = true;
     input.disabled = true;
     showTyping();
-    setDirective('busy', `Идёт обработка · ${MODE_LABELS[currentMode]}`);
-
-    const { reasoningMode, thinking, temperature, maxTokens, topP, stop } = readSettings();
+    const { reasoningMode, thinking, judge, temperature, maxTokens, topP, stop, model } = readSettings();
+    const selected = splitModelValue(model || '');
+    setDirective('busy', `Идёт обработка · ${MODE_LABELS[currentMode]}${judge ? ' · проверка судьёй' : ''}`);
 
     try {
         const res = await fetch('/api/chat', {
@@ -769,6 +947,9 @@ form.addEventListener('submit', async (e) => {
             body: JSON.stringify({
                 message,
                 reasoningMode,
+                provider: selected.provider,
+                model: selected.model,
+                judgeEnabled: judge,
                 thinkingEnabled: thinking,
                 maxTokens,
                 temperature,
