@@ -4,6 +4,8 @@
   "apiKey": "ВАШ_API_КЛЮЧ",
   "model": "gpt-3.5-turbo",
   "allowedModels": ["deepseek-v4-flash", "glm-5.3-flash", "qwen3.8-27b"],
+  "dataDir": "/app/data",
+  "supportsTools": false,
   "providers": [
     {
       "id": "opencode",

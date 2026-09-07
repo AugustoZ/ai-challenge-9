@@ -21,7 +21,13 @@ data class ProviderConfig(
     /** Явный список моделей; пусто — список запрашивается у API провайдера. */
     val models: List<String> = emptyList(),
     /** id провайдера внутри OpenCode для Model.Ref (type = "opencode"). */
-    val upstream: String = ""
+    val upstream: String = "",
+    /**
+     * Поддержка провайдером нативного function calling; false (по умолчанию) —
+     * инструменты вызываются через промт-протокол (fallback), т.к. серверы без
+     * флагов tools молча игнорируют их.
+     */
+    val supportsTools: Boolean = false
 ) {
     companion object {
         const val TYPE_OPENAI = "openai"
@@ -33,7 +39,8 @@ data class ProviderConfig(
  * Конфигурация приложения.
  *
  * Значения подставляются по приоритету (от высшего к низшему):
- *  1. Переменные окружения (PORT, AI_API_URL, AI_API_KEY, AI_MODEL, CONFIG_FILE)
+ *  1. Переменные окружения (PORT, AI_API_URL, AI_API_KEY, AI_MODEL, AI_DATA_DIR,
+ *     AI_SUPPORTS_TOOLS, CONFIG_FILE)
  *  2. Конфиг-файл в формате JSON (путь задаётся через CONFIG_FILE)
  *  3. Значения по умолчанию
  *
@@ -46,7 +53,13 @@ data class AppConfig(
     val port: Int,
     val default: ProviderConfig,
     val extraProviders: List<ProviderConfig> = emptyList(),
-    val allowedModels: List<String> = emptyList()
+    val allowedModels: List<String> = emptyList(),
+    /**
+     * Каталог для данных (P1-персистентность сессий); null — только in-memory.
+     * Приоритет: env AI_DATA_DIR > config.json > null. В P0 каталог монтируется,
+     * но пуст — SessionStore остаётся InMemorySessionStore.
+     */
+    val dataDir: String? = null
 ) {
     val providers: List<ProviderConfig> get() = listOf(default) + extraProviders
 
@@ -80,17 +93,11 @@ data class AppConfig(
          * и конфиг-файла.
          */
         fun fromEnv(): AppConfig {
-            // 1. Начинаем с значений по умолчанию
-            var config = defaultConfig
-
-            // 2. Применяем значения из конфиг-файла (если он существует)
+            // 1. Значения по умолчанию + конфиг-файл
             val configPath = System.getenv("CONFIG_FILE") ?: DEFAULT_CONFIG_FILE
-            val fileConfig = loadFile(configPath)
-            if (fileConfig != null) {
-                config = config.applyFile(fileConfig)
-            }
+            var config = fromFile(configPath)
 
-            // 3. Переменные окружения имеют высший приоритет
+            // 2. Переменные окружения имеют высший приоритет
             System.getenv("PORT")?.toIntOrNull()?.let { config = config.copy(port = it) }
             System.getenv("AI_API_URL")?.takeIf { it.isNotBlank() }
                 ?.let { config = config.withDefaultApiUrl(it) }
@@ -99,6 +106,32 @@ data class AppConfig(
             System.getenv("AI_MODEL")?.takeIf { it.isNotBlank() }
                 ?.let { config = config.withDefaultModel(it) }
 
+            // Каталог данных: env перекрывает config.json
+            System.getenv("AI_DATA_DIR")?.takeIf { it.isNotBlank() }
+                ?.let { config = config.copy(dataDir = it) }
+
+            // Поддержка нативного function calling: env включает её только у провайдера
+            // по умолчанию ("true"/"1", регистр не важен); отключить из env нельзя —
+            // приоритет env > config.json.
+            System.getenv("AI_SUPPORTS_TOOLS")
+                ?.takeIf { it.equals("true", ignoreCase = true) || it == "1" }
+                ?.let { config = config.copy(default = config.default.copy(supportsTools = true)) }
+
+            return config
+        }
+
+        /**
+         * Загружает конфигурацию только из конфиг-файла (без переменных окружения),
+         * начиная со значений по умолчанию. Отдельная точка входа для тестов:
+         * System.getenv в JVM подменить нельзя, поэтому файловый уровень
+         * проверяется напрямую через эту функцию (в fromEnv вызывается до наложения env).
+         */
+        internal fun fromFile(path: String): AppConfig {
+            var config = defaultConfig
+            val fileConfig = loadFile(path)
+            if (fileConfig != null) {
+                config = config.applyFile(fileConfig)
+            }
             return config
         }
 
@@ -125,7 +158,8 @@ data class AppConfig(
             val defaultProvider = default.copy(
                 apiUrl = fc.apiUrl ?: default.apiUrl,
                 apiKey = fc.apiKey ?: default.apiKey,
-                model = fc.model ?: default.model
+                model = fc.model ?: default.model,
+                supportsTools = fc.supportsTools ?: default.supportsTools
             )
             val extras = fc.providers.orEmpty()
                 .map { it.toProviderConfig() }
@@ -134,7 +168,8 @@ data class AppConfig(
                 port = fc.port ?: port,
                 default = defaultProvider,
                 extraProviders = extras,
-                allowedModels = fc.allowedModels.orEmpty().filter { it.isNotBlank() }
+                allowedModels = fc.allowedModels.orEmpty().filter { it.isNotBlank() },
+                dataDir = fc.dataDir?.takeIf { it.isNotBlank() } ?: dataDir
             )
         }
 
@@ -158,5 +193,6 @@ private fun FileProvider.toProviderConfig(): ProviderConfig = ProviderConfig(
     apiKey = apiKey.orEmpty(),
     model = model.orEmpty().trim(),
     models = models.orEmpty().map { it.trim() }.filter { it.isNotEmpty() },
-    upstream = upstream.orEmpty().trim()
+    upstream = upstream.orEmpty().trim(),
+    supportsTools = supportsTools ?: false
 )

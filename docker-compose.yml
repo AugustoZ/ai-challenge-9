@@ -9,8 +9,14 @@ services:
     restart: unless-stopped
     # Конфиг-файл подключается через bind mount.
     # Скопируйте config.example.json в config.json и заполните своими значениями.
+    #
+    # Каталог данных — named volume под P1-персистентность сессий.
+    # В P0 каталог /app/data смонтирован, но пуст: сессии живут в памяти
+    # (InMemorySessionStore). P1-реализация (файл/SQLite) начнёт писать в
+    # AI_DATA_DIR=/app/data без единой правки этого compose-файла.
     volumes:
       - ./config.json:/app/config.json:ro
+      - aiweb-data:/app/data
     # Переменные окружения имеют ПРИОРИТЕТ над значениями из config.json.
     # Чтобы использовать только файл config.json — закомментируйте блок environment.
     environment:
@@ -18,3 +24,34 @@ services:
       - AI_API_URL=${AI_API_URL}
       - AI_API_KEY=${AI_API_KEY}
       - AI_MODEL=${AI_MODEL}
+
+  # --- Sandbox для инструментов с эффектами (P1; в P0 — только спецификация-скелет) ---
+  #
+  # НЕ стартует по умолчанию: запуск только вручную —
+  #   docker compose --profile sandbox up
+  #
+  # Требования P1-реализации (Фаза 5, PLAN.md):
+  #  - отдельный образ с рантаймом для run_code/read_file (вместо голого alpine);
+  #  - связь с aiweb по внутренней docker-сети (internal: true) + явный egress
+  #    allowlist; порты наружу НЕ публикуются;
+  #  - docker socket НЕ монтируется;
+  #  - таймаут HTTP-вызова к sandbox — на стороне оркестратора (aiweb);
+  #  - сейчас сети между aiweb и sandbox намеренно НЕ связаны: оркестратор ещё
+  #    не вызывает sandbox, а aiweb нужен интернет для LLM API.
+  tool-sandbox:
+    profiles: ["sandbox"]
+    image: alpine:3.20
+    container_name: tool-sandbox
+    command: ["sleep", "infinity"]
+    user: "65534:65534"          # nobody — non-root
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 100
+    # ports НЕ публикуются — только внутренняя сеть (P1)
+
+# Named volume: данные сессий (P1-персистентность). В P0 монтируется, но пуст.
+volumes:
+  aiweb-data:
