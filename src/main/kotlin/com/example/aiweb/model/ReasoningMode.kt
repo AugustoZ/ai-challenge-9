@@ -15,6 +15,9 @@ enum class ReasoningMode(val id: String) {
     /** Подробное пошаговое решение с обоснованием каждого шага. */
     STEP_BY_STEP("step_by_step"),
 
+    /** Агент сам разбивает задачу на шаги и пользуется инструментами. */
+    AGENT("agent"),
+
     /** Вывод — готовый промт, который передаётся в LLM для решения задачи. */
     PROMPT_TO_PROMPT("prompt_to_prompt"),
 

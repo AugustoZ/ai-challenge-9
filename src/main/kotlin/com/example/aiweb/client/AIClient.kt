@@ -6,6 +6,7 @@ import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIModelsResponse
 import com.example.aiweb.model.OpenAIResponse
 import com.example.aiweb.model.OpenAIThinking
+import com.example.aiweb.model.OpenAIToolCall
 import com.example.aiweb.model.OpenCodeGenerateRequest
 import com.example.aiweb.model.OpenCodeGenerateResponse
 import com.example.aiweb.model.OpenCodeMessagePart
@@ -42,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
  *    OpenCode не принимает параметры генерации (temperature, max_tokens, stop,
  *    thinking) — они игнорируются, а сообщения склеиваются в один промт.
  */
-class AIClient(private val provider: ProviderConfig) {
+class AIClient(private val provider: ProviderConfig) : LLMClient {
 
     /** Единый Json-инстанс: им сериализуется и трафик, и копия тела для самописца. */
     private val json = Json {
@@ -70,31 +71,27 @@ class AIClient(private val provider: ProviderConfig) {
      * Отправляет запрос в AI API с готовым контекстом (набором сообщений)
      * и возвращает ответ вместе с информацией о потраченных токенах.
      *
-     * @param messages полный контекст для отправки модели
-     * @param model (необязательно) модель LLM; null или пусто — модель из конфигурации провайдера
-     * @param maxTokens (необязательно) ограничение на длину ответа, либо null
-     * @param temperature (необязательно) параметр случайности генерации
-     * @param topP (необязательно) ядро выборки по кумулятивной вероятности
-     * @param stop (необязательно) пользовательская стоп-последовательность;
-     *              если указана и не пуста — применяется вместо стандартных STOP_SEQUENCES
-     * @param thinkingEnabled (необязательно) управление цепочкой рассуждений модели:
-     *              true → thinking {type: enabled}, false → {type: disabled}, null — не передавать
+     * Содержимое [LLMCall]:
+     *  - messages — полный контекст для отправки модели;
+     *  - model — (необязательно) модель LLM; null или пусто — модель из конфигурации провайдера;
+     *  - maxTokens — (необязательно) ограничение на длину ответа, либо null;
+     *  - temperature — (необязательно) параметр случайности генерации;
+     *  - topP — (необязательно) ядро выборки по кумулятивной вероятности;
+     *  - stop — (необязательно) пользовательская стоп-последовательность;
+     *          если указана и не пуста — применяется вместо стандартных STOP_SEQUENCES;
+     *  - thinkingEnabled — (необязательно) управление цепочкой рассуждений модели:
+     *          true → thinking {type: enabled}, false → {type: disabled}, null — не передавать;
+     *  - tools — (необязательно) описания инструментов для function calling.
      */
-    suspend fun ask(
-        messages: List<OpenAIMessage>,
-        model: String? = null,
-        maxTokens: Int? = null,
-        temperature: Double? = null,
-        topP: Double? = null,
-        stop: String? = null,
-        thinkingEnabled: Boolean? = null
-    ): ChatResult {
-        val chosenModel = model?.trim()?.takeIf { it.isNotEmpty() }
+    override suspend fun ask(call: LLMCall): ChatResult {
+        val chosenModel = call.model?.trim()?.takeIf { it.isNotEmpty() }
             ?: provider.model.takeIf { it.isNotBlank() }
         return if (provider.type == ProviderConfig.TYPE_OPENCODE) {
-            executeOpenCode(messages, chosenModel)
+            // OpenCode — one-shot промт-склейка: параметры генерации и инструменты
+            // протоколом не предусмотрены и молча игнорируются (агентный цикл — P1)
+            executeOpenCode(call.messages, chosenModel)
         } else {
-            executeOpenAI(messages, chosenModel, maxTokens, temperature, topP, stop, thinkingEnabled)
+            executeOpenAI(call, chosenModel)
         }
     }
 
@@ -146,23 +143,19 @@ class AIClient(private val provider: ProviderConfig) {
 
     /** OpenAI-совместимый Chat Completions (провайдер по умолчанию). */
     private suspend fun executeOpenAI(
-        messages: List<OpenAIMessage>,
-        model: String?,
-        maxTokens: Int?,
-        temperature: Double?,
-        topP: Double?,
-        stop: String?,
-        thinkingEnabled: Boolean?
+        call: LLMCall,
+        model: String?
     ): ChatResult {
-        val finalStop = if (stop.isNullOrBlank()) STOP_SEQUENCES else listOf(stop.trim())
+        val finalStop = if (call.stop.isNullOrBlank()) STOP_SEQUENCES else listOf(call.stop.trim())
         val request = OpenAIRequest(
             model = model ?: provider.model.takeIf { it.isNotBlank() } ?: "gpt-3.5-turbo",
-            messages = messages,
-            temperature = temperature ?: 0.7,
-            topP = topP,
-            maxTokens = maxTokens,
+            messages = call.messages,
+            temperature = call.temperature ?: 0.7,
+            topP = call.topP,
+            maxTokens = call.maxTokens,
             stop = finalStop,
-            thinking = thinkingEnabled?.let { OpenAIThinking(type = if (it) "enabled" else "disabled") }
+            thinking = call.thinkingEnabled?.let { OpenAIThinking(type = if (it) "enabled" else "disabled") },
+            tools = call.tools
         )
 
         ExchangeLog.record(DIR_REQ, json.encodeToString(request), ok = null, ms = null)
@@ -194,13 +187,36 @@ class AIClient(private val provider: ProviderConfig) {
             )
         }
 
+        return parseOpenAIResponse(bodyText, startedAt)
+    }
+
+    /**
+     * Разбор успешного ответа OpenAI-совместимого API: декодирование тела,
+     * извлечение текста ответа (с fallback на reasoning) и вызовов инструментов.
+     *
+     * ВАЖНО: tool_calls разбирается ДО проверки пустого контента — ответ модели,
+     * запрашивающей вызов инструмента, содержит content=null, и это валидный ответ,
+     * а не «пустой» (ошибка выдаётся, только когда нет ни текста, ни reasoning,
+     * ни tool_calls).
+     *
+     * @param bodyText тело успешного HTTP-ответа (JSON)
+     * @param startedAt момент отправки запроса — для расчёта elapsedMs (по умолчанию «сейчас»,
+     *        чтобы разбор можно было вызывать в тестах отдельно)
+     */
+    internal fun parseOpenAIResponse(bodyText: String, startedAt: Long = System.currentTimeMillis()): ChatResult {
         val parsed = json.decodeFromString<OpenAIResponse>(bodyText)
         val message = parsed.choices.firstOrNull()?.message
+        val toolCalls = message?.toolCalls.orEmpty()
         val reply = message?.content?.trim().takeUnless { it.isNullOrEmpty() }
             ?: message?.reasoning?.trim().takeUnless { it.isNullOrEmpty() }
-            ?: throw IllegalStateException(
-                "API вернул пустой ответ: модель не вернула текст (проверьте лимит токенов и выбранную модель)"
-            )
+            ?: if (toolCalls.isNotEmpty()) {
+                // Ответ — только запрос вызова инструмента: текста нет, это не ошибка
+                ""
+            } else {
+                throw IllegalStateException(
+                    "API вернул пустой ответ: модель не вернула текст (проверьте лимит токенов и выбранную модель)"
+                )
+            }
 
         val usage = parsed.usage
         return ChatResult(
@@ -208,7 +224,9 @@ class AIClient(private val provider: ProviderConfig) {
             promptTokens = usage?.promptTokens,
             completionTokens = usage?.completionTokens,
             totalTokens = usage?.totalTokens,
-            elapsedMs = System.currentTimeMillis() - startedAt
+            elapsedMs = System.currentTimeMillis() - startedAt,
+            toolCalls = toolCalls,
+            finishReason = parsed.choices.firstOrNull()?.finishReason
         )
     }
 
@@ -424,11 +442,19 @@ class AIClient(private val provider: ProviderConfig) {
     }
 }
 
-/** Результат обращения к AI API: ответ, сведения о потраченных токенах и время обмена. */
+/**
+ * Результат обращения к AI API: ответ, сведения о потраченных токенах и время обмена.
+ * Поля toolCalls/finishReason заполняются только провайдерами с поддержкой function calling
+ * (OpenAI-совместимый протокол); для остальных они пустые.
+ */
 data class ChatResult(
     val reply: String,
     val promptTokens: Int?,
     val completionTokens: Int?,
     val totalTokens: Int?,
-    val elapsedMs: Long
+    val elapsedMs: Long,
+    /** Вызовы инструментов, запрошенные моделью; пусто, если вызовов не было. */
+    val toolCalls: List<OpenAIToolCall> = emptyList(),
+    /** Причина завершения генерации: "stop", "tool_calls", "length" и т.п.; null — неизвестна. */
+    val finishReason: String? = null
 )

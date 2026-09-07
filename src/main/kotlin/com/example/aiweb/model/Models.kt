@@ -2,6 +2,7 @@ package com.example.aiweb.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /**
  * JSON-конфигурация из файла. Все поля опциональны.
@@ -18,6 +19,13 @@ data class FileConfig(
     val apiKey: String? = null,
     val model: String? = null,
     val allowedModels: List<String>? = null,
+    /**
+     * Каталог для данных (P1-персистентность сессий); null/пусто — только in-memory.
+     * Приоритет: env AI_DATA_DIR выше этого значения.
+     */
+    val dataDir: String? = null,
+    /** Поддержка нативного function calling — для провайдера по умолчанию. */
+    val supportsTools: Boolean? = null,
     val providers: List<FileProvider>? = null
 )
 
@@ -37,7 +45,13 @@ data class FileProvider(
     /** Явный список моделей; пусто — список запрашивается у API провайдера. */
     val models: List<String>? = null,
     /** id провайдера внутри OpenCode для Model.Ref. */
-    val upstream: String? = null
+    val upstream: String? = null,
+    /**
+     * Поддержка провайдером нативного function calling; null (по умолчанию) —
+     * инструменты вызываются через промт-протокол (fallback), т.к. серверы без
+     * флагов tools молча игнорируют их.
+     */
+    val supportsTools: Boolean? = null
 )
 
 /** Тело запроса, который приходит от веб-интерфейса на наш сервер. */
@@ -48,6 +62,8 @@ data class ChatRequest(
     val reasoningMode: String? = null,
     /** Провайдер LLM (id из /api/models); null или неизвестный — провайдер по умолчанию. */
     val provider: String? = null,
+    /** Идентификатор серверной сессии диалога; null — сервер создаст новую сессию для одиночных режимов. */
+    val sessionId: String? = null,
     /** Выбранная в интерфейсе модель LLM (null или пусто — модель из конфигурации провайдера). */
     val model: String? = null,
     /** Режим «Судья»: true → после ответа выполняется контрольная проверка отдельным вызовом LLM. */
@@ -71,8 +87,12 @@ data class ChatResponse(
     val elapsedMs: Long? = null,
     /** Заключение судьи (режим «Судья»); null — проверка не выполнялась. */
     val judge: JudgeReport? = null,
+    /** Идентификатор серверной сессии диалога; null — режим stateless (TEAM, Prompt-to-Prompt), история не ведётся. */
+    val sessionId: String? = null,
     /** Сырые обмены с LLM, совершённые при обработке этого сообщения (для режима ТО). */
-    val exchanges: List<ExchangeInfo> = emptyList()
+    val exchanges: List<ExchangeInfo> = emptyList(),
+    /** События хода работы агента (режим «Агент»); у остальных режимов пусто. */
+    val events: List<AgentEvent> = emptyList()
 )
 
 /** Одна запись сырого обмена с LLM: запрос или ответ (режим ТО и самописец). */
@@ -106,7 +126,11 @@ data class OpenAIMessage(
     /** API некоторых моделей возвращает null при пустом содержимом ответа. */
     val content: String? = null,
     /** Цепочка рассуждений (vLLM-совместимые серверы); fallback при пустом content. */
-    val reasoning: String? = null
+    val reasoning: String? = null,
+    /** Вызовы инструментов, запрошенные моделью (роль assistant). */
+    @SerialName("tool_calls") val toolCalls: List<OpenAIToolCall>? = null,
+    /** Идентификатор вызова инструмента — обязателен в сообщениях с ролью "tool". */
+    @SerialName("tool_call_id") val toolCallId: String? = null
 )
 
 @Serializable
@@ -118,13 +142,47 @@ data class OpenAIRequest(
     @SerialName("max_tokens") val maxTokens: Int? = null,
     val stop: List<String>? = null,
     /** Управление цепочкой рассуждений модели (thinking). */
-    val thinking: OpenAIThinking? = null
+    val thinking: OpenAIThinking? = null,
+    /** Описания инструментов, доступных модели (null — параметры не передаются). */
+    val tools: List<OpenAIToolSpec>? = null
 )
 
 /** Значение параметра thinking: {"type":"enabled"} — рассуждения включены, {"type":"disabled"} — выключены. */
 @Serializable
 data class OpenAIThinking(
     val type: String
+)
+
+/** Функция внутри вызова инструмента: имя и аргументы. */
+@Serializable
+data class OpenAIToolCallFunction(
+    val name: String = "",
+    /** Аргументы — JSON-строка (так в протоколе OpenAI), не объект. */
+    val arguments: String = ""
+)
+
+/** Один вызов инструмента, запрошенный моделью (элемент message.tool_calls). */
+@Serializable
+data class OpenAIToolCall(
+    val id: String = "",
+    val type: String = "function",
+    val function: OpenAIToolCallFunction? = null
+)
+
+/** Описание параметров функции — JSON-Schema в виде произвольного JSON. */
+@Serializable
+data class OpenAIFunctionSpec(
+    val name: String,
+    val description: String = "",
+    /** JSON-Schema параметров в виде произвольного JSON. */
+    val parameters: JsonElement? = null
+)
+
+/** Описание инструмента для OpenAIRequest.tools (протокол function calling). */
+@Serializable
+data class OpenAIToolSpec(
+    val type: String = "function",
+    val function: OpenAIFunctionSpec
 )
 
 @Serializable
@@ -135,7 +193,9 @@ data class OpenAIResponse(
 
 @Serializable
 data class OpenAIChoice(
-    val message: OpenAIMessage? = null
+    val message: OpenAIMessage? = null,
+    /** Причина завершения генерации: "stop", "tool_calls", "length" и т.п. */
+    @SerialName("finish_reason") val finishReason: String? = null
 )
 
 /** Информация об использовании токенов, которую возвращает API. */
