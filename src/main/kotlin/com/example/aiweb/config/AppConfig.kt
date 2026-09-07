@@ -2,6 +2,7 @@ package com.example.aiweb.config
 
 import com.example.aiweb.model.FileConfig
 import com.example.aiweb.model.FileProvider
+import com.example.aiweb.model.FileToolsConfig
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -59,7 +60,13 @@ data class AppConfig(
      * Приоритет: env AI_DATA_DIR > config.json > null. В P0 каталог монтируется,
      * но пуст — SessionStore остаётся InMemorySessionStore.
      */
-    val dataDir: String? = null
+    val dataDir: String? = null,
+    /**
+     * Раздел инструментов: вкл/выкл встроенных и подключение sandbox-инструментов.
+     * null — сегодняшнее поведение (три встроенных инструмента, sandbox выключены).
+     * Только конфиг-файл: переменных окружения для инструментов нет.
+     */
+    val tools: FileToolsConfig? = null
 ) {
     val providers: List<ProviderConfig> get() = listOf(default) + extraProviders
 
@@ -169,7 +176,8 @@ data class AppConfig(
                 default = defaultProvider,
                 extraProviders = extras,
                 allowedModels = fc.allowedModels.orEmpty().filter { it.isNotBlank() },
-                dataDir = fc.dataDir?.takeIf { it.isNotBlank() } ?: dataDir
+                dataDir = fc.dataDir?.takeIf { it.isNotBlank() } ?: dataDir,
+                tools = fc.tools ?: tools
             )
         }
 

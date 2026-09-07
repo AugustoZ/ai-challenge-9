@@ -26,7 +26,51 @@ data class FileConfig(
     val dataDir: String? = null,
     /** Поддержка нативного function calling — для провайдера по умолчанию. */
     val supportsTools: Boolean? = null,
+    /**
+     * Раздел инструментов: вкл/выкл встроенных и подключение sandbox-инструментов
+     * (исполнение кода и чтение файлов в изолированном контейнере).
+     * null/отсутствие раздела — сегодняшнее поведение: три встроенных инструмента,
+     * sandbox-инструменты выключены.
+     */
+    val tools: FileToolsConfig? = null,
     val providers: List<FileProvider>? = null
+)
+
+/**
+ * Конфигурация инструментов из раздела "tools" конфиг-файла.
+ *
+ * Логические поля включают/выключают встроенные инструменты; null трактуется
+ * как true (поведение по умолчанию без раздела). Sandbox-инструменты
+ * ([runCode]/[readFile]) выключены по умолчанию — включаются только явным
+ * {"enabled": true} в конфиге; отключённый инструмент не виден модели вообще
+ * (не попадает в список спецификаций function calling).
+ *
+ * Переменных окружения для инструментов нет — конфигурируется только файлом.
+ */
+@Serializable
+data class FileToolsConfig(
+    @SerialName("current_datetime") val currentDatetime: Boolean? = null,
+    val calculator: Boolean? = null,
+    @SerialName("http_get") val httpGet: Boolean? = null,
+    /** Исполнение Python-кода в sandbox-контейнере (инструмент run_code). */
+    @SerialName("run_code") val runCode: SandboxToolConfig? = null,
+    /** Чтение файлов из рабочей папки через sandbox-контейнер (инструмент read_file). */
+    @SerialName("read_file") val readFile: SandboxToolConfig? = null
+)
+
+/**
+ * Параметры одного sandbox-инструмента: адрес HTTP-сервиса песочницы, признак
+ * включения и клиентский таймаут исполнения (отправляется в теле запроса
+ * POST {url}/run после зажима в диапазон 1..60 на стороне оркестратора).
+ */
+@Serializable
+data class SandboxToolConfig(
+    /** true — инструмент регистрируется в реестре и виден модели. */
+    val enabled: Boolean = false,
+    /** Базовый адрес sandbox-сервиса (внутреннее имя docker-compose). */
+    val url: String = "http://tool-sandbox:8080",
+    /** Таймаут исполнения кода, секунды (только run_code; зажимается в 1..60). */
+    val timeoutSeconds: Int = 30
 )
 
 /** Дополнительный провайдер в конфиг-файле. */
@@ -73,7 +117,9 @@ data class ChatRequest(
     val maxTokens: Int? = null,
     val temperature: Double? = null,
     val topP: Double? = null,
-    val stop: String? = null
+    val stop: String? = null,
+    /** Клиентский UUID запроса для отмены через POST /api/cancel (стриминг); null/пусто — отменить нельзя. */
+    val requestId: String? = null
 )
 
 /** Ответ, который сервер возвращает веб-интерфейсу. */
