@@ -6,6 +6,13 @@
   "allowedModels": ["deepseek-v4-flash", "glm-5.3-flash", "qwen3.8-27b"],
   "dataDir": "/app/data",
   "supportsTools": false,
+  "tools": {
+    "current_datetime": true,
+    "calculator": true,
+    "http_get": true,
+    "run_code": {"enabled": false, "url": "http://tool-sandbox:8080", "timeoutSeconds": 30},
+    "read_file": {"enabled": false, "url": "http://tool-sandbox:8080"}
+  },
   "providers": [
     {
       "id": "opencode",
