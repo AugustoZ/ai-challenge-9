@@ -60,8 +60,6 @@ class InMemorySessionStore(
 
         /** Жёсткий кап сообщений одной сессии. */
         const val MAX_MESSAGES = 200
-
-        private const val ROLE_USER = "user"
     }
 
     /** Изменяемое внутреннее состояние сессии; [Session] — его снимок. */
@@ -93,7 +91,7 @@ class InMemorySessionStore(
         val entry = sessions[sessionId] ?: return
         synchronized(entry) {
             entry.messages.add(message)
-            trimOverflow(entry.messages)
+            trimSessionHistory(entry.messages)
             entry.updatedAt = now()
         }
     }
@@ -113,23 +111,6 @@ class InMemorySessionStore(
             .forEach { sessions.remove(it.key) }
     }
 
-    /**
-     * Обрезает историю одной сессии до [MAX_MESSAGES]: лишние старые ходы
-     * сбрасываются целиком, срез проходит только перед user-сообщением.
-     * Если границ user-сообщений не осталось (вырожденная история), кап
-     * нарушается — резать дальше, рискуя разорвать пару
-     * assistant(tool_calls) → role="tool", нельзя.
-     */
-    private fun trimOverflow(messages: MutableList<OpenAIMessage>) {
-        while (messages.size > MAX_MESSAGES) {
-            // Первое user-сообщение со второй позиции — начало второго хода;
-            // всё, что до него, удаляется одним куском
-            val nextTurn = messages.subList(1, messages.size).indexOfFirst { it.role == ROLE_USER } + 1
-            if (nextTurn == 0) return
-            messages.subList(0, nextTurn).clear()
-        }
-    }
-
     /** Потокобезопасный снимок записи в неизменяемую [Session]. */
     private fun Entry.snapshot(): Session = synchronized(this) {
         Session(
@@ -140,3 +121,32 @@ class InMemorySessionStore(
         )
     }
 }
+
+/**
+ * Выбирает реализацию [SessionStore] в точке сборки маршрутов: без каталога данных
+ * (null/пусто/пробелы) — память процесса [InMemorySessionStore] (P0-поведение),
+ * с каталогом — файловое хранилище [FileSessionStore] (P1-персистентность,
+ * `<dataDir>/sessions/<id>.json`). Маршруты при замене реализации не меняются.
+ */
+fun sessionStoreFor(dataDir: String?): SessionStore =
+    if (dataDir.isNullOrBlank()) InMemorySessionStore() else FileSessionStore(dataDir)
+
+/**
+ * Обрезает историю одной сессии до [InMemorySessionStore.MAX_MESSAGES]: лишние
+ * старые ходы сбрасываются целиком, срез проходит только перед user-сообщением.
+ * Если границ user-сообщений не осталось (вырожденная история), кап нарушается —
+ * резать дальше, рискуя разорвать пару assistant(tool_calls) → role="tool", нельзя.
+ *
+ * Общая логика [InMemorySessionStore] и [FileSessionStore].
+ */
+internal fun trimSessionHistory(messages: MutableList<OpenAIMessage>) {
+    while (messages.size > InMemorySessionStore.MAX_MESSAGES) {
+        // Первое user-сообщение со второй позиции — начало второго хода;
+        // всё, что до него, удаляется одним куском
+        val nextTurn = messages.subList(1, messages.size).indexOfFirst { it.role == ROLE_USER } + 1
+        if (nextTurn == 0) return
+        messages.subList(0, nextTurn).clear()
+    }
+}
+
+private const val ROLE_USER = "user"
