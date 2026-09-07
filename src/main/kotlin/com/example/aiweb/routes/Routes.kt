@@ -1,13 +1,16 @@
 package com.example.aiweb.routes
 
+import com.example.aiweb.agent.AgentLoop
 import com.example.aiweb.client.AIClient
 import com.example.aiweb.client.ChatResult
 import com.example.aiweb.client.ExchangeLog
 import com.example.aiweb.client.JudgePrompts
+import com.example.aiweb.client.LLMCall
 import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.client.TeamRole
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
+import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.ExchangeLogResponse
@@ -16,6 +19,13 @@ import com.example.aiweb.model.ModelsResponse
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.ProviderModels
 import com.example.aiweb.model.ReasoningMode
+import com.example.aiweb.session.InMemorySessionStore
+import com.example.aiweb.session.Session
+import com.example.aiweb.session.SessionHistory
+import com.example.aiweb.session.SessionStore
+import com.example.aiweb.tools.NativeToolTransport
+import com.example.aiweb.tools.PromptToolTransport
+import com.example.aiweb.tools.ToolRegistry
 import io.ktor.server.application.*
 import io.ktor.http.*
 import io.ktor.server.request.*
@@ -25,6 +35,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
+/** Режимы, ведущие серверную историю диалога; «Команда» и Prompt-to-Prompt остаются stateless. */
+private val HISTORY_MODES = setOf(
+    ReasoningMode.DEFAULT,
+    ReasoningMode.DIRECT,
+    ReasoningMode.STEP_BY_STEP,
+    ReasoningMode.AGENT
+)
+
 /**
  * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
  * собственный AIClient; выбор провайдера — по ChatRequest.provider.
@@ -32,6 +50,9 @@ import kotlinx.coroutines.coroutineScope
 fun Route.aiRoutes(config: AppConfig) {
     val clients: Map<ProviderConfig, AIClient> =
         config.providers.associateWith { AIClient(it) }
+
+    // Серверная память диалога для одиночных режимов (P1-персистентность = замена реализации)
+    val sessions: SessionStore = InMemorySessionStore()
 
     // GET /api/log — сырой протокол обменов с моделью (самописец)
     get("/api/log") {
@@ -88,12 +109,28 @@ fun Route.aiRoutes(config: AppConfig) {
         val aiClient = clients.getValue(provider)
         val startedAt = System.currentTimeMillis()
 
+        // Память диалога — только у одиночных режимов: без sessionId создаётся новая
+        // сессия, неизвестный/выселенный id тоже начинает диалог заново
+        val session = if (mode in HISTORY_MODES) {
+            sessions.get(body.sessionId) ?: sessions.create()
+        } else {
+            null
+        }
+
         try {
             val response = when (mode) {
                 ReasoningMode.TEAM -> handleTeam(aiClient, body)
                 ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(aiClient, body)
-                else -> handleSingle(aiClient, body, mode)
+                ReasoningMode.AGENT -> handleAgent(aiClient, body, provider, session)
+                else -> handleSingle(aiClient, body, mode, session)
             }
+
+            // История пополняется только после успешного ответа модели
+            if (session != null) {
+                sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
+                sessions.append(session.id, OpenAIMessage(role = "assistant", content = response.reply))
+            }
+
             val elapsedMs = System.currentTimeMillis() - startedAt
             val judged = if (body.judgeEnabled == true) {
                 response.copy(
@@ -112,6 +149,12 @@ fun Route.aiRoutes(config: AppConfig) {
             )
         }
     }
+
+    // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно)
+    delete("/api/session/{id}") {
+        sessions.delete(call.parameters["id"] ?: "")
+        call.respond(HttpStatusCode.NoContent)
+    }
 }
 
 /** Оставляет в списке только разрешённые модели, сохраняя порядок white-списка. */
@@ -125,42 +168,113 @@ private fun keepOrder(allowed: List<String>, fetched: List<String>): List<String
  * DEFAULT передаёт вопрос как есть — без системного промта режима (только при заданном
  * лимите токенов указывается бюджет ответа). Лимит maxTokens передаётся в API и
  * дополнительно указывается модели в системной инструкции, чтобы ответ не обрывался.
+ *
+ * Если передана серверная сессия [session], между system-промтом и новым вопросом
+ * вставляется обрезанная история диалога (SessionHistory.trim с запасом под «Топливо»);
+ * идентификатор сессии возвращается в ChatResponse.sessionId. System-сообщения в
+ * сессии не живут — они собираются в момент запроса.
  */
 private suspend fun handleSingle(
     aiClient: AIClient,
     body: ChatRequest,
-    mode: ReasoningMode
+    mode: ReasoningMode,
+    session: Session?
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
+
+    val history = session
+        ?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) }
+        ?: emptyList()
 
     val context = if (mode == ReasoningMode.DEFAULT) {
         buildList {
             ReasoningPrompts.budgetNote(body.maxTokens)?.let {
                 add(OpenAIMessage(role = "system", content = it))
             }
+            addAll(history)
             add(OpenAIMessage(role = "user", content = body.message))
         }
     } else {
-        listOf(
-            OpenAIMessage(
-                role = "system",
-                content = ReasoningPrompts.withBudget(ReasoningPrompts.systemFor(mode), body.maxTokens)
-            ),
-            OpenAIMessage(role = "user", content = body.message)
-        )
+        buildList {
+            add(
+                OpenAIMessage(
+                    role = "system",
+                    content = ReasoningPrompts.withBudget(ReasoningPrompts.systemFor(mode), body.maxTokens)
+                )
+            )
+            addAll(history)
+            add(OpenAIMessage(role = "user", content = body.message))
+        }
     }
 
     val result = aiClient.ask(
-        messages = context,
-        model = body.model,
+        LLMCall(
+            messages = context,
+            model = body.model,
+            maxTokens = body.maxTokens,
+            temperature = body.temperature,
+            topP = body.topP,
+            stop = body.stop,
+            thinkingEnabled = body.thinkingEnabled
+        )
+    )
+
+    return result.toResponse().copy(
+        sessionId = session?.id,
+        exchanges = ExchangeLog.since(startSeq)
+    )
+}
+
+/**
+ * Режим «Агент»: AgentLoop итерирует модель с инструментами до финального ответа.
+ * Транспорт выбирается по возможностям провайдера: нативный function calling
+ * (supportsTools = true) либо промт-протокол. История сессии и цель пользователя
+ * передаются в цикл как seed — system-промт агента добавляет сам AgentLoop.
+ *
+ * События хода работы собираются через sink в ChatResponse.events; в историю сессии
+ * попадают только пользовательское сообщение и финальный ответ — промежуточный
+ * трафик инструментов (общий пост-when блок после ответа) в память не пишет.
+ */
+private suspend fun handleAgent(
+    aiClient: AIClient,
+    body: ChatRequest,
+    provider: ProviderConfig,
+    session: Session?
+): ChatResponse {
+    val startSeq = ExchangeLog.mark()
+
+    val loop = AgentLoop(
+        client = aiClient,
+        transport = if (provider.supportsTools) NativeToolTransport() else PromptToolTransport(),
+        registry = ToolRegistry.withBuiltIns()
+    )
+
+    val history = session
+        ?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) }
+        ?: emptyList()
+    val seed = history + OpenAIMessage(role = "user", content = body.message)
+
+    val events = mutableListOf<AgentEvent>()
+    val outcome = loop.run(
+        seed = seed,
         maxTokens = body.maxTokens,
+        onEvent = { events.add(it) },
+        model = body.model,
         temperature = body.temperature,
         topP = body.topP,
         stop = body.stop,
         thinkingEnabled = body.thinkingEnabled
     )
 
-    return result.toResponse().copy(exchanges = ExchangeLog.since(startSeq))
+    return ChatResponse(
+        reply = outcome.reply,
+        promptTokens = outcome.promptTokens,
+        completionTokens = outcome.completionTokens,
+        totalTokens = outcome.totalTokens,
+        sessionId = session?.id,
+        events = events,
+        exchanges = ExchangeLog.since(startSeq)
+    )
 }
 
 /**
@@ -182,19 +296,21 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
                 async {
                     teamRole to runCatching {
                         aiClient.ask(
-                            messages = listOf(
-                                OpenAIMessage(
-                                    role = "system",
-                                    content = ReasoningPrompts.withBudget(teamRole.prompt, perCallBudget)
+                            LLMCall(
+                                messages = listOf(
+                                    OpenAIMessage(
+                                        role = "system",
+                                        content = ReasoningPrompts.withBudget(teamRole.prompt, perCallBudget)
+                                    ),
+                                    OpenAIMessage(role = "user", content = body.message)
                                 ),
-                                OpenAIMessage(role = "user", content = body.message)
-                            ),
-                            model = body.model,
-                            maxTokens = perCallBudget,
-                            temperature = body.temperature,
-                            topP = body.topP,
-                            stop = body.stop,
-                            thinkingEnabled = body.thinkingEnabled
+                                model = body.model,
+                                maxTokens = perCallBudget,
+                                temperature = body.temperature,
+                                topP = body.topP,
+                                stop = body.stop,
+                                thinkingEnabled = body.thinkingEnabled
+                            )
                         )
                     }
                 }
@@ -214,22 +330,24 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
 
         val synthesis = runCatching {
             aiClient.ask(
-                messages = listOf(
-                    OpenAIMessage(
-                        role = "system",
-                        content = ReasoningPrompts.withBudget(ReasoningPrompts.TEAM_SYNTHESIS_SYSTEM, perCallBudget)
+                LLMCall(
+                    messages = listOf(
+                        OpenAIMessage(
+                            role = "system",
+                            content = ReasoningPrompts.withBudget(ReasoningPrompts.TEAM_SYNTHESIS_SYSTEM, perCallBudget)
+                        ),
+                        OpenAIMessage(
+                            role = "user",
+                            content = ReasoningPrompts.teamSynthesisUser(body.message, answersBlock)
+                        )
                     ),
-                    OpenAIMessage(
-                        role = "user",
-                        content = ReasoningPrompts.teamSynthesisUser(body.message, answersBlock)
-                    )
-                ),
-                model = body.model,
-                maxTokens = perCallBudget,
-                temperature = body.temperature,
-                topP = body.topP,
-                stop = body.stop,
-                thinkingEnabled = body.thinkingEnabled
+                    model = body.model,
+                    maxTokens = perCallBudget,
+                    temperature = body.temperature,
+                    topP = body.topP,
+                    stop = body.stop,
+                    thinkingEnabled = body.thinkingEnabled
+                )
             )
         }
 
@@ -274,22 +392,24 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
     val stageBudget = body.maxTokens?.let { (it / 2).coerceAtLeast(1) }
 
     val stage1 = aiClient.ask(
-        messages = listOf(
-            OpenAIMessage(
-                role = "system",
-                content = ReasoningPrompts.withBudget(
-                    ReasoningPrompts.systemFor(ReasoningMode.PROMPT_TO_PROMPT),
-                    stageBudget
-                )
+        LLMCall(
+            messages = listOf(
+                OpenAIMessage(
+                    role = "system",
+                    content = ReasoningPrompts.withBudget(
+                        ReasoningPrompts.systemFor(ReasoningMode.PROMPT_TO_PROMPT),
+                        stageBudget
+                    )
+                ),
+                OpenAIMessage(role = "user", content = body.message)
             ),
-            OpenAIMessage(role = "user", content = body.message)
-        ),
-        model = body.model,
-        maxTokens = stageBudget,
-        temperature = body.temperature,
-        topP = body.topP,
-        stop = body.stop,
-        thinkingEnabled = body.thinkingEnabled
+            model = body.model,
+            maxTokens = stageBudget,
+            temperature = body.temperature,
+            topP = body.topP,
+            stop = body.stop,
+            thinkingEnabled = body.thinkingEnabled
+        )
     )
 
     val generatedPrompt = extractPrompt(stage1.reply)
@@ -302,13 +422,15 @@ private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest):
 
     val stage2 = runCatching {
         aiClient.ask(
-            messages = stage2Messages + OpenAIMessage(role = "user", content = generatedPrompt),
-            model = body.model,
-            maxTokens = stageBudget,
-            temperature = body.temperature,
-            topP = body.topP,
-            stop = body.stop,
-            thinkingEnabled = body.thinkingEnabled
+            LLMCall(
+                messages = stage2Messages + OpenAIMessage(role = "user", content = generatedPrompt),
+                model = body.model,
+                maxTokens = stageBudget,
+                temperature = body.temperature,
+                topP = body.topP,
+                stop = body.stop,
+                thinkingEnabled = body.thinkingEnabled
+            )
         )
     }
 
@@ -366,17 +488,19 @@ private suspend fun runJudge(
     val startedAt = System.currentTimeMillis()
     val outcome = runCatching {
         val result = aiClient.ask(
-            messages = JudgePrompts.buildMessages(
-                question = body.message,
-                answer = response.reply,
-                elapsedMs = elapsedMs,
-                promptTokens = response.promptTokens,
-                completionTokens = response.completionTokens,
-                totalTokens = response.totalTokens
-            ),
-            model = body.model,
-            temperature = 0.1,
-            thinkingEnabled = body.thinkingEnabled
+            LLMCall(
+                messages = JudgePrompts.buildMessages(
+                    question = body.message,
+                    answer = response.reply,
+                    elapsedMs = elapsedMs,
+                    promptTokens = response.promptTokens,
+                    completionTokens = response.completionTokens,
+                    totalTokens = response.totalTokens
+                ),
+                model = body.model,
+                temperature = 0.1,
+                thinkingEnabled = body.thinkingEnabled
+            )
         )
         JudgePrompts.parseReport(result.reply)
     }

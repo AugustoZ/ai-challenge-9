@@ -85,6 +85,8 @@ object ReasoningPrompts {
         ReasoningMode.PROMPT_TO_PROMPT -> PROMPT_TO_PROMPT
         ReasoningMode.TEAM ->
             error("Для режима TEAM используйте оркестрацию ролей, а не одиночный system-промт")
+        ReasoningMode.AGENT ->
+            error("Для режима AGENT используйте AgentLoop, а не одиночный system-промт")
     }
 
     /**
