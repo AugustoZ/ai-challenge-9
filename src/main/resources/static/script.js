@@ -1096,26 +1096,249 @@ recorderOverlay.addEventListener('click', (e) => {
 
 const newChatBtn = document.getElementById('newChatBtn');
 
-/* Сброс диалога: сначала локально (сессия забывается, журнал возвращается
-   к приветствию), затем удаляем серверную сессию — её мог уже не быть,
-   и неуспех запроса не важен. */
-newChatBtn.addEventListener('click', async () => {
-    const obsolete = sessionId;
+/* Сброс диалога: сессия забывается локально, журнал возвращается к приветствию.
+   Серверную сессию больше не удаляем — прежние диалоги остаются в панели
+   «Сессии» и доступны для переключения. */
+newChatBtn.addEventListener('click', () => {
     sessionId = null;
     saveSettings();
     chat.innerHTML = WELCOME_MARKUP;
     setDirective('ready', 'Готов к передаче');
-    if (obsolete) {
-        try {
-            await fetch(`/api/session/${encodeURIComponent(obsolete)}`, { method: 'DELETE' });
-        } catch (err) {
-            // Сервер недоступен или сессия уже забыта — локальный сброс уже выполнен
-        }
-    }
+    /* Прежняя сессия остаётся в перечне, лампа активной записи гаснет */
+    loadSessions();
     input.focus();
 });
 
+/* ---------- Очистка всех сессий ---------- */
+
+const clearAllBtn = document.getElementById('clearAllBtn');
+const CLEAR_ALL_LABEL = 'Очистить все';
+const CLEAR_ALL_ARMED_LABEL = 'Точно стереть?';
+
+/* Таймер автоматического взведения/снятия: одно на клавишу */
+let clearAllTimer = null;
+
+/* Возврат клавиши в исходное состояние: гаснет лампа, возвращается надпись */
+function disarmClearAll() {
+    clearTimeout(clearAllTimer);
+    clearAllTimer = null;
+    clearAllBtn.classList.remove('armed');
+    clearAllBtn.setAttribute('aria-pressed', 'false');
+    clearAllBtn.textContent = CLEAR_ALL_LABEL;
+}
+
+/* Клавиша требует двух нажатий — подтверждения на борту вместо диалога браузера:
+   первое взводит её (красная лампа, «Точно стереть?»), второе стирает все сессии
+   на сервере. Без нажатия через 4 секунды клавиша гаснет сама. */
+clearAllBtn.addEventListener('click', async () => {
+    if (!clearAllBtn.classList.contains('armed')) {
+        clearAllBtn.classList.add('armed');
+        clearAllBtn.setAttribute('aria-pressed', 'true');
+        clearAllBtn.textContent = CLEAR_ALL_ARMED_LABEL;
+        clearAllTimer = setTimeout(disarmClearAll, 4000);
+        return;
+    }
+
+    disarmClearAll();
+    try {
+        const res = await fetch('/api/sessions', { method: 'DELETE' });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json().catch(() => ({}));
+        const deleted = Number(data && data.deleted) || 0;
+
+        /* Локальный сброс как у «Новый диалог»: серверные сессии уже стёрты */
+        sessionId = null;
+        saveSettings();
+        chat.innerHTML = WELCOME_MARKUP;
+        setDirective('ready', `Все сессии стёрты (${deleted})`);
+        loadSessions();
+        input.focus();
+    } catch (err) {
+        /* Состояние диалога не трогаем — только директива об отказе */
+        setDirective('fault', 'Не удалось стереть сессии');
+    }
+});
+
+/* ---------- Панель сессий ---------- */
+
+const sessionsList = document.getElementById('sessionsList');
+
+/* Кэш последнего перечня: подсветка активной записи обновляется без запроса */
+let sessionsCache = [];
+
+/* Время обновления сессии: сегодня — «ЧЧ:ММ», вчера — «вчера»,
+   старше — дата «ДД.ММ». Узкая панель не вмещает большего. */
+function sessionTimeLabel(updatedAt) {
+    const ts = Number(updatedAt);
+    if (!Number.isFinite(ts)) return '';
+    const stamp = new Date(ts);
+    const now = new Date();
+    const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((startOfDay(now) - startOfDay(stamp)) / (24 * 60 * 60 * 1000));
+    if (days <= 0) return stamp.toLocaleTimeString('ru-RU', { hour12: false }).slice(0, 5);
+    if (days === 1) return 'вчера';
+    return stamp.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+}
+
+function renderSessions() {
+    const frag = document.createDocumentFragment();
+
+    for (const session of sessionsCache) {
+        if (!session || typeof session.id !== 'string' || !session.id) continue;
+
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'session-item';
+        if (session.id === sessionId) item.setAttribute('aria-current', 'true');
+
+        const title = document.createElement('span');
+        title.className = 'session-title';
+        title.textContent = typeof session.title === 'string' && session.title.trim()
+            ? session.title
+            : 'Без сообщений';
+
+        const meta = document.createElement('span');
+        meta.className = 'session-meta';
+        const bits = [];
+        const time = sessionTimeLabel(session.updatedAt);
+        if (time) bits.push(time);
+        const count = Number(session.messageCount);
+        if (Number.isFinite(count) && count > 0) bits.push(`${count} ${entriesWord(count)}`);
+        meta.textContent = bits.join(' · ');
+
+        item.appendChild(title);
+        item.appendChild(meta);
+        item.addEventListener('click', () => switchToSession(session.id));
+        frag.appendChild(item);
+    }
+
+    if (!frag.children.length) {
+        const empty = document.createElement('p');
+        empty.className = 'sessions-empty';
+        empty.textContent = 'Пока нет сессий';
+        sessionsList.replaceChildren(empty);
+        return;
+    }
+    sessionsList.replaceChildren(frag);
+}
+
+/* Перечень сессий для панели: запрос не awaited — панель обновится сама */
+async function loadSessions() {
+    try {
+        const res = await fetch('/api/sessions');
+        if (!res.ok) return;
+        const data = await res.json();
+        sessionsCache = Array.isArray(data && data.sessions) ? data.sessions : [];
+    } catch (err) {
+        return;
+    }
+    renderSessions();
+}
+
+/* Переключение на выбранную сессию: идентификатор запоминается, история
+   отрисовывается тем же помощником, что и при восстановлении после
+   перезагрузки; лампа активной записи переезжает на выбранную строку */
+async function switchToSession(id) {
+    if (!id || id === sessionId) return;
+    const previous = sessionId;
+    sessionId = id;
+    saveSettings();
+
+    let data = null;
+    try {
+        const res = await fetch(`/api/session/${encodeURIComponent(id)}`);
+        if (!res.ok) {
+            /* Сессия не дожила до переключения: возвращаем прежнюю активную
+               и перечитываем перечень — исчезнувшая из него уйдёт */
+            sessionId = previous;
+            saveSettings();
+            loadSessions();
+            return;
+        }
+        data = await res.json();
+    } catch (err) {
+        // Сервер недоступен — историю не достать, остаёмся на прежней сессии
+        sessionId = previous;
+        saveSettings();
+        return;
+    }
+
+    const messages = Array.isArray(data && data.messages) ? data.messages : [];
+    if (!renderHistory(messages)) {
+        // Истории нет — журнал возвращается к исходному виду
+        chat.innerHTML = WELCOME_MARKUP;
+    }
+    renderSessions();
+    input.focus();
+}
+
+/* ---------- Восстановление журнала и переключение сессий ---------- */
+
+/* Общая отрисовка истории — для восстановления после перезагрузки и для
+   переключения сессий из панели: правила одни. Служебный трафик агента
+   (role «tool») и пустые записи не восстанавливаем — он эфемерен.
+   Ответы — без приборных показаний (они остались в прошлом полёте).
+   Возвращает true, если журнал был перезаполнен. */
+function renderHistory(messages) {
+    // Пустые записи и служебный трафик агента пропускаем молча
+    const restorable = messages.filter((m) =>
+        m
+        && (m.role === 'user' || m.role === 'assistant')
+        && typeof m.content === 'string'
+        && m.content.trim()
+    );
+
+    // Показывать нечего — журнал не трогаем
+    if (!restorable.length) return false;
+
+    // Журнал расчищается под восстановленные записи — обратное WELCOME_MARKUP
+    chat.innerHTML = '';
+
+    for (const m of restorable) {
+        if (m.role === 'user') {
+            addMessage(m.content);
+        } else {
+            // Без tokenData: ни топлива, ни времени, ни протокола агента, ни судьи
+            addBotMessage(m.content, null);
+        }
+    }
+    chat.scrollTop = chat.scrollHeight;
+    return true;
+}
+
+/* Идентификатор сессии переживает перезагрузку в настройках, а журнал — нет.
+   Запрашиваем историю у сервера (GET /api/session/{id}) и отрисовываем её
+   общим помощником renderHistory. */
+async function restoreSession() {
+    if (!sessionId) return;
+
+    let data = null;
+    try {
+        const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}`);
+        if (!res.ok) {
+            /* 404 — сессия не дожила до перезагрузки (или прочий неуспех):
+               считаем идентификатор протухшим и остаёмся на приветствии */
+            sessionId = null;
+            saveSettings();
+            return;
+        }
+        data = await res.json();
+    } catch (err) {
+        // Сервер недоступен — истории не достать, идентификатор считаем протухшим
+        sessionId = null;
+        saveSettings();
+        return;
+    }
+
+    const messages = Array.isArray(data && data.messages) ? data.messages : [];
+    /* Показывать нечего — приветствие остаётся, сессия продолжится
+       следующими запросами (идентификатор сохранён) */
+    renderHistory(messages);
+}
+
 loadSettings();
+restoreSession();
+loadSessions();
 
 /* ---------- Клавиша «Стоп» ---------- */
 
@@ -1168,6 +1391,9 @@ function applyChatResponse(data) {
         saveSettings();
     }
     setDirective('ready', 'Передача завершена');
+    /* Перечень сессий устарел — время и число записей изменились.
+       Итог потока приходит сюда же, отдельный вызов не нужен. */
+    loadSessions();
 }
 
 /* Резервный путь: старый блокирующий запрос, когда поток событий недоступен */

@@ -66,6 +66,26 @@ class FileSessionStoreTest {
     }
 
     @Test
+    fun `clear на пустом хранилище возвращает ноль`() {
+        assertEquals(0, newStore().clear())
+    }
+
+    @Test
+    fun `clear стирает все сессии, их файлы и возвращает их число`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        repeat(3) { store.create() }
+        val sessionsDir = File(dir, "sessions")
+        assertEquals(3, sessionsDir.listFiles()!!.size)
+
+        assertEquals(3, store.clear())
+
+        assertTrue(store.list().isEmpty())
+        assertTrue(sessionsDir.listFiles()!!.isEmpty())
+        assertTrue(newStore(dir).list().isEmpty())
+    }
+
+    @Test
     fun `выселение старейших сессий удаляет их файлы`() {
         val dir = newDir()
         val store = newStore(dir)
@@ -124,6 +144,38 @@ class FileSessionStoreTest {
         assertEquals("user", loaded.messages.first().role)
         assertEquals("ход 1", loaded.messages.first().content)
         assertEquals("ответ 100", loaded.messages.last().content)
+    }
+
+    @Test
+    fun `list на пустом хранилище — пустой список`() {
+        assertTrue(newStore().list().isEmpty())
+    }
+
+    @Test
+    fun `list отдаёт сессии по updatedAt по убыванию`() {
+        val store = newStore()
+        val oldest = store.create()
+        val middle = store.create()
+        val newest = store.create()
+
+        // Обновление старой сессии поднимает её наверх списка
+        store.append(oldest.id, user("вопрос"))
+
+        assertEquals(listOf(oldest.id, newest.id, middle.id), store.list().map { it.id })
+        assertEquals(1, store.list().first().messages.size)
+    }
+
+    @Test
+    fun `list отражает создание и удаление сессий`() {
+        val store = newStore()
+        val first = store.create()
+        val second = store.create()
+
+        assertEquals(listOf(second.id, first.id), store.list().map { it.id })
+
+        store.delete(first.id)
+
+        assertEquals(listOf(second.id), store.list().map { it.id })
     }
 
     @Test

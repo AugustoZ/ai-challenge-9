@@ -84,6 +84,20 @@ class SessionStoreTest {
     }
 
     @Test
+    fun `clear на пустом хранилище возвращает ноль`() {
+        assertEquals(0, newStore().clear())
+    }
+
+    @Test
+    fun `clear стирает все сессии и возвращает их число`() {
+        val store = newStore()
+        repeat(3) { store.create() }
+
+        assertEquals(3, store.clear())
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
     fun `выселение старейших сессий за пределами MAX_SESSIONS`() {
         val store = newStore()
         val oldest = store.create()
@@ -111,6 +125,43 @@ class SessionStoreTest {
         assertEquals("user", loaded.messages.first().role)
         assertEquals("ход 1", loaded.messages.first().content)
         assertEquals("ответ 100", loaded.messages.last().content)
+    }
+
+    @Test
+    fun `list на пустом хранилище — пустой список`() {
+        assertTrue(newStore().list().isEmpty())
+    }
+
+    @Test
+    fun `list отдаёт сессии по updatedAt по убыванию`() {
+        val store = newStore()
+        val oldest = store.create()
+        val middle = store.create()
+        val newest = store.create()
+
+        // Обновление старой сессии поднимает её наверх списка
+        store.append(oldest.id, user("вопрос"))
+
+        assertEquals(listOf(oldest.id, newest.id, middle.id), store.list().map { it.id })
+        assertEquals(1, store.list().first().messages.size)
+    }
+
+    @Test
+    fun `list отражает создание, дописывание и удаление сессий`() {
+        val store = newStore()
+        val first = store.create()
+        store.append(first.id, user("вопрос"))
+        val second = store.create()
+
+        val listed = store.list()
+
+        assertEquals(2, listed.size)
+        assertEquals(listOf(second.id, first.id), listed.map { it.id })
+        assertEquals(1, listed.last().messages.size)
+
+        store.delete(first.id)
+
+        assertEquals(listOf(second.id), store.list().map { it.id })
     }
 
     @Test

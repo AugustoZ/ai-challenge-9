@@ -19,6 +19,9 @@ import com.example.aiweb.model.ModelsResponse
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.ProviderModels
 import com.example.aiweb.model.ReasoningMode
+import com.example.aiweb.model.SessionSummary
+import com.example.aiweb.model.SessionsCleared
+import com.example.aiweb.model.SessionsResponse
 import com.example.aiweb.model.StreamEvent
 import com.example.aiweb.session.Session
 import com.example.aiweb.session.SessionHistory
@@ -224,10 +227,40 @@ fun Route.aiRoutes(config: AppConfig) {
         call.respond(buildJsonObject { put("cancelled", activeRequests.cancel(requestId)) })
     }
 
+    // GET /api/sessions — список сессий пользователя для панели справа, самые свежие первыми
+    get("/api/sessions") {
+        val summaries = sessions.list().map { session ->
+            SessionSummary(
+                id = session.id,
+                title = sessionTitle(session),
+                updatedAt = session.updatedAt,
+                messageCount = session.messages.size
+            )
+        }
+        call.respond(SessionsResponse(sessions = summaries))
+    }
+
+    // GET /api/session/{id} — возвращает ход диалога сессии для восстановления
+    // журнала после перезагрузки страницы; system-сообщения в истории не живут —
+    // только user/assistant/tool. Неизвестный id — 404
+    get("/api/session/{id}") {
+        val session = sessions.get(call.parameters["id"] ?: "")
+        if (session == null) {
+            call.respond(HttpStatusCode.NotFound)
+        } else {
+            call.respond(session)
+        }
+    }
+
     // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно)
     delete("/api/session/{id}") {
         sessions.delete(call.parameters["id"] ?: "")
         call.respond(HttpStatusCode.NoContent)
+    }
+
+    // DELETE /api/sessions — стирает все сессии пользователя
+    delete("/api/sessions") {
+        call.respond(SessionsCleared(deleted = sessions.clear()))
     }
 }
 
@@ -235,6 +268,22 @@ fun Route.aiRoutes(config: AppConfig) {
 private fun keepOrder(allowed: List<String>, fetched: List<String>): List<String> {
     val present = fetched.toSet()
     return allowed.filter { it in present }
+}
+
+/** Максимум символов в заголовке сессии в списке; длиннее — обрезается с «…». */
+private const val SESSION_TITLE_LIMIT = 80
+
+/**
+ * Заголовок сессии для списка: первое user-сообщение с непустым текстом, без
+ * пробелов по краям и обрезанное до [SESSION_TITLE_LIMIT]; если user-сообщений
+ * нет — пустая строка.
+ */
+private fun sessionTitle(session: Session): String {
+    val text = session.messages
+        .firstOrNull { it.role == "user" && !it.content.isNullOrBlank() }
+        ?.content?.trim()
+        ?: return ""
+    return if (text.length <= SESSION_TITLE_LIMIT) text else text.take(SESSION_TITLE_LIMIT) + "…"
 }
 
 /**

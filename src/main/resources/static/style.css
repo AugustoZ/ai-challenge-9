@@ -71,9 +71,9 @@ body {
 .container {
     display: grid;
     grid-template:
-        "strip strip" auto
-        "side  main" minmax(0, 1fr)
-        / 320px minmax(0, 1fr);
+        "strip strip strip" auto
+        "side  main  sessions" minmax(0, 1fr)
+        / 320px minmax(0, 1fr) 216px;
     height: 100vh;
     height: 100dvh;
 }
@@ -181,7 +181,7 @@ body {
 .sidebar-head {
     position: relative;
     flex-shrink: 0;
-    height: 10px;
+    height: 8px;
     border-bottom: 1px solid var(--bezel);
 }
 
@@ -212,14 +212,16 @@ body {
     outline-offset: 2px;
 }
 
+/* Вертикальный ритм сжат: приборная доска целиком умещается на экране
+   ноутбука без прокрутки (расчёт на высоту окна от 700px) */
 .sidebar-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 16px 16px 8px;
+    padding: 6px 14px 4px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 6px;
     scrollbar-width: thin;
     scrollbar-color: var(--bezel) transparent;
 }
@@ -236,22 +238,22 @@ body {
 .panel-section {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 6px;
 }
 
 .section-caption {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--ink-faint);
-    padding-bottom: 8px;
+    padding-bottom: 3px;
     border-bottom: 1px solid var(--bezel);
 }
 
 .hint {
-    font-size: 11.5px;
-    line-height: 1.5;
+    font-size: 10px;
+    line-height: 1.3;
     color: var(--ink-faint);
 }
 
@@ -260,20 +262,20 @@ body {
 .annunciators {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 6px;
 }
 
 /* Клавиша-кнопка: объёмная, сидит в гнезде панели; лампа под клавишей
    подсвечивает активные постоянно и нажимаемые — пока их держат */
 .annunciator {
     width: 100%;
-    min-height: 46px;
+    min-height: 30px;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 6px;
+    padding: 3px 6px;
     font-family: var(--sans);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.03em;
     text-align: center;
@@ -323,25 +325,33 @@ body {
     outline-offset: 2px;
 }
 
+/* Вооружённая «Очистить все»: лампа клавиши гаснет в красный — следующий нажим
+   сотрёт все сессии; формула та же, цвет лампы переопределён через --lamp-rgb */
+.annunciator.armed {
+    --lamp-rgb: 255, 107, 94;
+
+    color: var(--lamp-red);
+}
+
 /* --- Круглые шкалы параметров --- */
 
 .gauges {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
+    gap: 5px;
 }
 
 .gauge {
     position: relative;
     display: grid;
     justify-items: center;
-    gap: 7px;
+    gap: 3px;
 }
 
 .dial {
     position: relative;
-    width: 84px;
-    height: 84px;
+    width: 56px;
+    height: 56px;
     touch-action: none;
     cursor: grab;
 }
@@ -425,7 +435,7 @@ body {
     top: 61%;
     text-align: center;
     font-family: var(--mono);
-    font-size: 12.5px;
+    font-size: 10.5px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
@@ -493,7 +503,7 @@ body {
 }
 
 .gauge-name {
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-weight: 700;
     letter-spacing: 0.01em;
     color: var(--ink-dim);
@@ -637,7 +647,7 @@ body {
     display: grid;
     grid-template-columns: auto auto 1fr;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     position: relative;
 }
 
@@ -654,7 +664,7 @@ body {
 }
 
 .setting-inline .setting-label {
-    font-size: 11.5px;
+    font-size: 10.5px;
     font-weight: 700;
     color: var(--ink-dim);
     letter-spacing: 0.01em;
@@ -662,8 +672,8 @@ body {
 }
 
 .setting-inline .text-input {
-    padding: 7px 10px;
-    font-size: 12px;
+    padding: 6px 9px;
+    font-size: 11.5px;
 }
 
 /* Стоп-фраза набрана — текст горит лампой, как надписи на активных клавишах;
@@ -675,7 +685,7 @@ body {
 
 .sidebar-foot {
     flex-shrink: 0;
-    padding: 14px 18px 16px;
+    padding: 4px 14px 6px;
     border-top: 1px solid var(--bezel);
 }
 
@@ -685,9 +695,9 @@ body {
     --lamp-rgb: 255, 107, 94;
 
     width: 100%;
-    padding: 9px 12px;
+    padding: 6px 12px;
     font-family: var(--sans);
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -1263,6 +1273,142 @@ body {
     display: none;
 }
 
+/* ---------- Панель сессий ---------- */
+
+/* Узкая панель справа от журнала: перечень сессий диалога. Приборная лексика
+   та же, что у доски слева: пластины, гравировки и лампа активной записи. */
+
+.sessions-panel {
+    grid-area: sessions;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--panel);
+    border-left: 1px solid var(--bezel);
+}
+
+.sessions-panel .section-caption {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 10px 12px 8px;
+}
+
+/* Прокрутка живёт внутри списка: колонка журнала и приборы не скроллятся */
+.sessions-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.sessions-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.sessions-list::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+/* Строка сессии: клавиша в гнезде, как аннунциатор, но выровнена по левому краю */
+.session-item {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    width: 100%;
+    padding: 7px 9px;
+    text-align: left;
+    font-family: var(--sans);
+    background: linear-gradient(180deg, var(--panel) 0%, var(--well) 100%);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), background 0.1s var(--ease-snap),
+                border-color 0.1s var(--ease-snap), box-shadow 0.1s var(--ease-snap),
+                filter 0.1s var(--ease-snap), transform 0.05s var(--ease-snap);
+}
+
+.session-item:hover {
+    border-color: var(--bezel-lit);
+    filter: brightness(1.18);
+}
+
+.session-item:active {
+    transform: translateY(1px);
+}
+
+.session-item:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* Активная сессия: та же лампа, что у клавиш-табло (аннунциаторы в чеке) */
+.session-item[aria-current="true"] {
+    background: var(--lamp-face);
+    border-color: rgba(var(--lamp-rgb), 0.6);
+    box-shadow: var(--lamp-glow);
+}
+
+/* Заголовок сессии: до двух строк, затем многоточие */
+.session-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--ink-dim);
+}
+
+.session-item:hover .session-title {
+    color: var(--ink);
+}
+
+.session-item[aria-current="true"] .session-title {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+}
+
+/* Мета-строка: время обновления и число записей */
+.session-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-item[aria-current="true"] .session-meta {
+    color: var(--lamp-text);
+    opacity: 0.72;
+    text-shadow: none;
+}
+
+/* Пустой перечень: гравировка вместо записей */
+.sessions-empty {
+    padding: 16px 8px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--ink-faint);
+}
+
 /* ---------- Мобильная вёрстка: приборы — выдвижная панель ---------- */
 
 .sidebar-backdrop {
@@ -1285,11 +1431,12 @@ body {
 .maint-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 6px;
 }
 
-/* «Новый диалог» — третья клавиша секции, на всю ширину сетки */
-.maint-grid .new-chat {
+/* «Новый диалог» и «Очистить все» — широкие клавиши секции, на всю ширину сетки */
+.maint-grid .new-chat,
+.maint-grid #clearAllBtn {
     grid-column: 1 / -1;
 }
 
@@ -1959,6 +2106,12 @@ body.maint-on .raw-exchange {
 
     .flight-log {
         padding: 16px;
+    }
+
+    /* Панель сессий на узких экранах скрыта: приборы уже уходят в выдвижную
+       панель, вторая выдвижная колонка перегородила бы журнал */
+    .sessions-panel {
+        display: none;
     }
 
     .entry,

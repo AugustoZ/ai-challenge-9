@@ -204,8 +204,10 @@
                                 aria-pressed="false">Режим ТО</button>
                         <button type="button" class="annunciator maint-open" id="recorderBtn">Самописец</button>
                         <button type="button" class="annunciator new-chat" id="newChatBtn">Новый диалог</button>
+                        <button type="button" class="annunciator maint-toggle" id="clearAllBtn"
+                                aria-pressed="false">Очистить все</button>
                     </div>
-                    <p class="hint" id="maintHint">Сырой JSON обмена с моделью — в бортовом журнале и в самописце; «Новый диалог» сбрасывает память разговора</p>
+                    <p class="hint" id="maintHint">Сырой JSON обмена с моделью — в бортовом журнале и в самописце; «Новый диалог» сбрасывает память разговора, «Очистить все» стирает все сессии на сервере</p>
                 </section>
             </div>
 
@@ -246,6 +248,11 @@
                 <button type="submit" id="sendBtn" class="tx-btn">Передать</button>
             </form>
         </main>
+
+        <aside class="sessions-panel" aria-label="Сессии">
+            <h2 class="section-caption">Сессии</h2>
+            <div class="sessions-list" id="sessionsList" role="list"></div>
+        </aside>
     </div>
 
     <!-- Самописец: протокол обмена с моделью -->

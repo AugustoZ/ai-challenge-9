@@ -78,11 +78,23 @@ class FileSessionStore(
     }
 
     @Synchronized
+    override fun list(): List<Session> =
+        sessions.values.sortedByDescending { it.updatedAt }
+
+    @Synchronized
     override fun delete(id: String) {
         if (id.isNullOrBlank()) return
         val trimmed = id.trim()
         sessions.remove(trimmed)
         deleteFile(trimmed)
+    }
+
+    @Synchronized
+    override fun clear(): Int {
+        val count = sessions.size
+        sessions.keys.forEach { deleteFile(it) }
+        sessions.clear()
+        return count
     }
 
     /**

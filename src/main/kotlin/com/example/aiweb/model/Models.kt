@@ -284,6 +284,35 @@ data class ModelsResponse(
     val default: String = ""
 )
 
+// --- Список сессий (GET /api/sessions) ---
+
+/** Краткое описание одной сессии для панели списка сессий. */
+@Serializable
+data class SessionSummary(
+    /** Идентификатор сессии — передаётся в ChatRequest.sessionId и GET /api/session/{id}. */
+    val id: String,
+    /** Заголовок: первое осмысленное user-сообщение (до 80 символов); пусто, если его нет. */
+    val title: String,
+    /** Момент последнего изменения сессии, epoch millis. */
+    val updatedAt: Long,
+    /** Число сообщений в истории сессии. */
+    val messageCount: Int
+)
+
+/** Ответ GET /api/sessions: сессии пользователя, самые свежие первыми. */
+@Serializable
+data class SessionsResponse(
+    // Без значения по умолчанию: иначе kotlinx при encodeDefaults=false опустит
+    // поле для пустого списка, и ответом будет {} вместо {"sessions":[]}
+    val sessions: List<SessionSummary>
+)
+
+/** Ответ DELETE /api/sessions: сколько сессий стёрто. */
+@Serializable
+data class SessionsCleared(
+    val deleted: Int
+)
+
 // --- Протокол OpenCode (локальный экземпляр opencode serve) ---
 
 /** Ссылка на модель в API OpenCode. */

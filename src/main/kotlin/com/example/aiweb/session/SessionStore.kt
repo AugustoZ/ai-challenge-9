@@ -20,8 +20,14 @@ interface SessionStore {
     /** Дописывает сообщение в историю сессии; неизвестный идентификатор игнорируется. */
     fun append(sessionId: String, message: OpenAIMessage)
 
+    /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
+    fun list(): List<Session>
+
     /** Удаляет сессию; вызов для неизвестного идентификатора ошибкой не является (идемпотентно). */
     fun delete(id: String)
+
+    /** Стирает все сессии; возвращает число удалённых. */
+    fun clear(): Int
 }
 
 /**
@@ -96,9 +102,18 @@ class InMemorySessionStore(
         }
     }
 
+    override fun list(): List<Session> =
+        sessions.values.map { it.snapshot() }.sortedByDescending { it.updatedAt }
+
     override fun delete(id: String) {
         if (id.isNullOrBlank()) return
         sessions.remove(id.trim())
+    }
+
+    override fun clear(): Int {
+        val count = sessions.size
+        sessions.clear()
+        return count
     }
 
     /** Выселяет старейшие по updatedAt сессии при превышении лимита [MAX_SESSIONS]. */
