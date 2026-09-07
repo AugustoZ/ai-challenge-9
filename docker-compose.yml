@@ -24,34 +24,61 @@ services:
       - AI_API_URL=${AI_API_URL}
       - AI_API_KEY=${AI_API_KEY}
       - AI_MODEL=${AI_MODEL}
+    # Две сети (P2): default — интернет для LLM API, sandbox — внутренняя
+    # сеть для вызова tool-sandbox (internal: true, без egress).
+    networks:
+      - default
+      - sandbox
 
-  # --- Sandbox для инструментов с эффектами (P1; в P0 — только спецификация-скелет) ---
+  # --- Sandbox для инструментов с эффектами (P2, волна 1) ---
   #
   # НЕ стартует по умолчанию: запуск только вручную —
   #   docker compose --profile sandbox up
   #
-  # Требования P1-реализации (Фаза 5, PLAN.md):
-  #  - отдельный образ с рантаймом для run_code/read_file (вместо голого alpine);
-  #  - связь с aiweb по внутренней docker-сети (internal: true) + явный egress
-  #    allowlist; порты наружу НЕ публикуются;
-  #  - docker socket НЕ монтируется;
+  # P2-реализация (PLAN.md, «Sandbox-требования к инструментам»):
+  #  - собственный образ (sandbox/Dockerfile): python:3.12-alpine + HTTP-сервер
+  #    sandbox/server.py (POST /run — исполнение кода, POST /read — чтение файлов
+  #    из /sandbox/workspace), слушает 0.0.0.0:8080 КОНТЕЙНЕРНОЙ сети;
+  #  - egress запрещён ЦЕЛИКОМ: сеть sandbox объявлена internal: true —
+  #    строжайший «allowlist» (пустой); aiweb при этом сохраняет интернет
+  #    через сеть default (LLM API);
+  #  - порты наружу НЕ публикуются, docker socket НЕ монтируется;
   #  - таймаут HTTP-вызова к sandbox — на стороне оркестратора (aiweb);
-  #  - сейчас сети между aiweb и sandbox намеренно НЕ связаны: оркестратор ещё
-  #    не вызывает sandbox, а aiweb нужен интернет для LLM API.
+  #    сервер дополнительно капит таймаут кода на 60 с.
   tool-sandbox:
     profiles: ["sandbox"]
-    image: alpine:3.20
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
     container_name: tool-sandbox
-    command: ["sleep", "infinity"]
     user: "65534:65534"          # nobody — non-root
-    read_only: true
-    tmpfs: ["/tmp"]
+    read_only: true              # корневая ФС только для чтения
+    tmpfs: ["/tmp"]              # HOME дочерних процессов — записываемый tmpfs
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    mem_limit: 256m
+    # 768 МиБ > RLIMIT_AS 512 МиБ дочернего процесса: контейнерный лимит не
+    # должен срабатывать раньше серверного, иначе OOM-убийство вместо
+    # контролируемого MemoryError в коде.
+    mem_limit: 768m
     pids_limit: 100
-    # ports НЕ публикуются — только внутренняя сеть (P1)
+    volumes:
+      - sandbox-work:/sandbox/workspace
+    networks:
+      - sandbox
+    # ports НЕ публикуются — доступ только по внутренней сети sandbox.
 
-# Named volume: данные сессий (P1-персистентность). В P0 монтируется, но пуст.
+# Сети (P2):
+#  - default (неявная) — обычная сеть с интернетом: aiweb ходит в LLM API;
+#  - sandbox — internal: true: полный запрет egress, доступ только между
+#    aiweb и tool-sandbox; у sandbox других сетей нет вовсе.
+networks:
+  sandbox:
+    internal: true
+
+# Named volumes:
+#  - aiweb-data: данные сессий (P1-персистентность);
+#  - sandbox-work: рабочая папка sandbox — сюда run_code пишет файлы,
+#    оттуда read_file их читает; переживает пересоздание контейнера.
 volumes:
   aiweb-data:
+  sandbox-work:
