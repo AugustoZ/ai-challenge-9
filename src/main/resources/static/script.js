@@ -31,6 +31,7 @@ const MODE_LABELS = {
     step_by_step: 'Пошаговое решение',
     prompt_to_prompt: 'Prompt-to-Prompt',
     team: 'Команда',
+    agent: 'Агент',
 };
 
 const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
@@ -38,8 +39,15 @@ const DEFAULTS = {
     reasoningMode: 'default', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '', thinking: true, judge: false,
 };
 
+/* Исходный вид бортового журнала — «Новый диалог» возвращает его на место */
+const WELCOME_MARKUP = chat.innerHTML;
+
 let currentMode = DEFAULTS.reasoningMode;
 let sessionTotalTokens = 0;
+/* Идентификатор сессии диалога: выдаёт сервер (ChatResponse.sessionId),
+   хранится в настройках. Одиночные режимы продолжают диалог, «Команда» и
+   Prompt-to-Prompt отвечают null — сессия у них не ведётся. */
+let sessionId = null;
 
 /* ---------- Часы полосы состояния ---------- */
 
@@ -167,6 +175,12 @@ function addBotMessage(text, tokenData, exchanges = []) {
 
     entry.appendChild(bubble);
 
+    /* Протокол агентного цикла — часть ответа: идёт сразу под ним,
+       до заключения судьи и сырого обмена */
+    if (tokenData && Array.isArray(tokenData.events) && tokenData.events.length) {
+        entry.appendChild(buildAgentTrace(tokenData.events));
+    }
+
     if (tokenData && tokenData.judge) {
         entry.appendChild(buildJudgeReport(tokenData.judge));
     }
@@ -261,6 +275,98 @@ function buildJudgeReport(judge) {
         raw.className = 'judge-raw';
         raw.textContent = judge.raw;
         body.appendChild(raw);
+    }
+
+    wrap.appendChild(body);
+    return wrap;
+}
+
+/* ---------- Ход работы агента ---------- */
+
+/* Хвосты длинных значений обрезаются: аргументы и тексты приходят от модели
+   и могут быть сколь угодно длинными. */
+function truncateText(value, limit) {
+    const str = String(value ?? '');
+    return str.length > limit ? `${str.slice(0, limit)}…` : str;
+}
+
+function eventsWord(n) {
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return 'событие';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'события';
+    return 'событий';
+}
+
+/* Протокол агентного цикла под ответом: по строке на событие AgentLoop.
+   Аргументы инструментов и промежуточные тексты — ненадёжный ввод от LLM,
+   поэтому всё рендерится через textContent, без innerHTML. */
+function buildAgentTrace(events) {
+    const wrap = document.createElement('details');
+    wrap.className = 'agent-trace';
+
+    const summary = document.createElement('summary');
+    summary.textContent = `Ход работы агента · ${events.length} ${eventsWord(events.length)}`;
+    wrap.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'agent-trace-body';
+
+    for (const ev of events) {
+        if (!ev || typeof ev !== 'object') continue;
+        const step = ev.step != null ? ev.step : '—';
+
+        const row = document.createElement('div');
+        row.className = 'agent-event';
+
+        const label = document.createElement('span');
+        label.className = 'agent-step';
+        label.textContent = `Шаг ${step}`;
+        row.appendChild(label);
+
+        const text = (value) => {
+            const span = document.createElement('span');
+            span.textContent = value;
+            row.appendChild(span);
+        };
+        const code = (value) => {
+            const el = document.createElement('code');
+            el.className = 'agent-args';
+            el.textContent = value;
+            row.appendChild(el);
+        };
+        const flag = (ok) => {
+            const el = document.createElement('span');
+            el.className = 'agent-flag' + (ok ? ' ok' : ' fault');
+            el.textContent = ok ? '✓' : '✗';
+            row.appendChild(el);
+        };
+
+        switch (ev.type) {
+            case 'step_started':
+                text('— обдумываю задачу');
+                break;
+            case 'tool_call':
+                text('— вызов инструмента: ');
+                code(`${ev.tool ?? '?'}(${truncateText(ev.arguments ?? '', 200)})`);
+                break;
+            case 'tool_result':
+                text(`— результат ${ev.tool ?? '?'}: `);
+                flag(ev.ok);
+                text(truncateText(ev.content ?? '', 300));
+                if (ev.ok === false) row.classList.add('fault');
+                break;
+            case 'assistant_message':
+                text(`— промежуточный ответ: ${truncateText(ev.text ?? '', 300)}`);
+                break;
+            case 'final':
+                text(`— итог (${ev.reason ?? 'без причины'}): ${truncateText(ev.text ?? '', 300)}`);
+                row.classList.add('final');
+                break;
+            default:
+                text(`— событие ${ev.type ?? 'неизвестного типа'}`);
+        }
+        body.appendChild(row);
     }
 
     wrap.appendChild(body);
@@ -528,6 +634,8 @@ function readSettings() {
     };
     // Селект ещё не заполнен (идёт загрузка) — храним выбор только когда он есть
     if (modelSelect.value) settings.model = modelSelect.value;
+    // Сессию диалога выдаёт сервер — храним, только когда она есть
+    if (sessionId) settings.sessionId = sessionId;
     return settings;
 }
 
@@ -552,6 +660,7 @@ function loadSettings() {
         setControlValue(ctrl, Number.isFinite(value) ? value : DEFAULTS[key]);
     }
     stopInput.value = stored && typeof stored.stop === 'string' ? stored.stop : '';
+    sessionId = stored && typeof stored.sessionId === 'string' && stored.sessionId ? stored.sessionId : null;
 
     const thinking = stored && typeof stored.thinking === 'boolean' ? stored.thinking : DEFAULTS.thinking;
     setThinking(thinking, { save: false });
@@ -921,6 +1030,29 @@ recorderOverlay.addEventListener('click', (e) => {
     if (e.target === recorderOverlay) closeRecorder();
 });
 
+/* ---------- Новый диалог ---------- */
+
+const newChatBtn = document.getElementById('newChatBtn');
+
+/* Сброс диалога: сначала локально (сессия забывается, журнал возвращается
+   к приветствию), затем удаляем серверную сессию — её мог уже не быть,
+   и неуспех запроса не важен. */
+newChatBtn.addEventListener('click', async () => {
+    const obsolete = sessionId;
+    sessionId = null;
+    saveSettings();
+    chat.innerHTML = WELCOME_MARKUP;
+    setDirective('ready', 'Готов к передаче');
+    if (obsolete) {
+        try {
+            await fetch(`/api/session/${encodeURIComponent(obsolete)}`, { method: 'DELETE' });
+        } catch (err) {
+            // Сервер недоступен или сессия уже забыта — локальный сброс уже выполнен
+        }
+    }
+    input.focus();
+});
+
 loadSettings();
 
 /* ---------- Передача запроса ---------- */
@@ -947,6 +1079,7 @@ form.addEventListener('submit', async (e) => {
             body: JSON.stringify({
                 message,
                 reasoningMode,
+                sessionId: sessionId || null,
                 provider: selected.provider,
                 model: selected.model,
                 judgeEnabled: judge,
@@ -965,6 +1098,11 @@ form.addEventListener('submit', async (e) => {
         } else {
             hideTyping();
             addBotMessage(data.reply, data, data.exchanges || []);
+            // Сервер подтвердил сессию диалога — запоминаем для следующих запросов
+            if (data.sessionId) {
+                sessionId = data.sessionId;
+                saveSettings();
+            }
             setDirective('ready', 'Передача завершена');
         }
     } catch (err) {

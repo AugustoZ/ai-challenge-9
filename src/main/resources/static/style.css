@@ -1236,12 +1236,17 @@ body {
     pointer-events: auto;
 }
 
-/* ---------- Обслуживание: Режим ТО и Самописец ---------- */
+/* ---------- Обслуживание: Режим ТО, Самописец и Новый диалог ---------- */
 
 .maint-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
+}
+
+/* «Новый диалог» — третья клавиша секции, на всю ширину сетки */
+.maint-grid .new-chat {
+    grid-column: 1 / -1;
 }
 
 /* Сырой обмен в записях журнала виден только в Режиме ТО */
@@ -1450,6 +1455,104 @@ body.maint-on .raw-exchange {
     color: var(--ink-dim);
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+/* ---------- Ход работы агента (режим «Агент») ---------- */
+
+.agent-trace {
+    margin-top: 10px;
+}
+
+.agent-trace > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--green);
+    background: transparent;
+    border: 1px solid rgba(var(--lamp-cool), 0.35);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.agent-trace > summary::-webkit-details-marker {
+    display: none;
+}
+
+.agent-trace > summary::before {
+    content: '+';
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.agent-trace[open] > summary::before {
+    content: '−';
+}
+
+.agent-trace > summary:hover {
+    color: var(--lamp-green);
+    border-color: rgba(var(--lamp-cool), 0.6);
+}
+
+.agent-trace > summary:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.agent-trace-body {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    display: grid;
+    gap: 6px;
+}
+
+.agent-event {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.agent-event .agent-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    flex-shrink: 0;
+}
+
+.agent-event.final {
+    color: var(--ink);
+}
+
+.agent-event .agent-args {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+}
+
+.agent-event .agent-flag {
+    font-family: var(--mono);
+    font-weight: 700;
+}
+
+.agent-event .agent-flag.ok { color: var(--green); }
+.agent-event .agent-flag.fault { color: var(--red); }
+
+.agent-event.fault {
+    color: var(--red);
 }
 
 .json-view {

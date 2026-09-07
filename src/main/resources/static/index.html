@@ -70,6 +70,9 @@
                         <button type="button" class="annunciator" role="radio" aria-checked="false"
                                 data-mode="team"
                                 data-caption="Архитектор, Инженер и Исследователь решают задачу, затем — сравнение ответов и саммари">Команда</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-mode="agent"
+                                data-caption="Агент сам разбивает задачу на шаги, вызывает инструменты и докладывает ход работы">Агент</button>
                     </div>
                     <p class="hint" id="reasoningHint">Вопрос передаётся в LLM без дополнительных модификаций</p>
                 </section>
@@ -200,8 +203,9 @@
                         <button type="button" class="annunciator maint-toggle" id="maintToggle"
                                 aria-pressed="false">Режим ТО</button>
                         <button type="button" class="annunciator maint-open" id="recorderBtn">Самописец</button>
+                        <button type="button" class="annunciator new-chat" id="newChatBtn">Новый диалог</button>
                     </div>
-                    <p class="hint" id="maintHint">Сырой JSON обмена с моделью: запросы и ответы — в бортовом журнале и в самописце</p>
+                    <p class="hint" id="maintHint">Сырой JSON обмена с моделью — в бортовом журнале и в самописце; «Новый диалог» сбрасывает память разговора</p>
                 </section>
             </div>
 
@@ -216,7 +220,7 @@
                     <div class="entry">
                         <div class="entry-head"><span class="entry-tag">Бортовой журнал</span><span class="entry-sep">·</span><span>готов к работе</span></div>
                         <div class="bubble md">
-                            <p>Способ рассуждения — на табло слева: <strong>По умолчанию</strong>, <strong>Прямой ответ</strong>, <strong>Пошаговое решение</strong>, <strong>Prompt-to-Prompt</strong> или <strong>Команда</strong> из трёх специалистов.</p>
+                            <p>Способ рассуждения — на табло слева: <strong>По умолчанию</strong>, <strong>Прямой ответ</strong>, <strong>Пошаговое решение</strong>, <strong>Prompt-to-Prompt</strong>, <strong>Команда</strong> из трёх специалистов или <strong>Агент</strong>, который сам разбивает задачу на шаги, вызывает инструменты и докладывает ход работы.</p>
                             <p>Модель LLM выбирайте в «Параметрах модели». Запрос — в строку передачи внизу: покажу время и расход топлива на каждом ответе, а режим <strong>Судья</strong> добавит под ответом заключение о фактах, качестве, скорости и ресурсоёмкости.</p>
                         </div>
                     </div>
