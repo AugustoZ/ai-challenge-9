@@ -247,6 +247,68 @@ class SandboxToolsTest {
         assertEquals(0, fake.calls)
     }
 
+    // --- write_file ---
+
+    @Test
+    fun `запись файла возвращает текст с именем и размером`() = runBlocking {
+        val fake = FakeSandboxClient(SandboxReply(ok = true, bytes = 12596))
+        val result = WriteFileTool(fake).execute("""{"path": "snake.py", "content": "print('змея')"}""")
+
+        assertEquals("/write", fake.lastPath)
+        assertEquals(true, result.ok)
+        assertTrue(result.content.contains("Файл snake.py записан"), "Текст: ${result.content}")
+        assertTrue(result.content.contains("12,3 КиБ"), "Текст: ${result.content}")
+    }
+
+    @Test
+    fun `путь и содержимое попадают в тело запроса`() = runBlocking {
+        val fake = FakeSandboxClient(SandboxReply(ok = true, bytes = 5))
+        WriteFileTool(fake).execute("""{"path": "out/game.py", "content": "hello"}""")
+
+        assertEquals(1, fake.calls)
+        assertEquals("out/game.py", fake.bodyJson()["path"]?.jsonPrimitive?.content)
+        assertEquals("hello", fake.bodyJson()["content"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `отказ записи уходит текстом без исключения`() = runBlocking {
+        val fake = FakeSandboxClient(SandboxReply(ok = false, error = "Путь вне рабочей папки запрещён"))
+        val result = WriteFileTool(fake).execute("""{"path": "x.py", "content": "y"}""")
+
+        assertEquals(false, result.ok)
+        assertEquals("Путь вне рабочей папки запрещён", result.content)
+    }
+
+    @Test
+    fun `путь с точка-точка на записи отклоняется без вызова песочницы`() = runBlocking {
+        val fake = FakeSandboxClient()
+        val result = WriteFileTool(fake).execute("""{"path": "../evil.py", "content": "y"}""")
+
+        assertEquals(false, result.ok)
+        assertTrue(result.content.contains("Некорректные аргументы"))
+        assertEquals(0, fake.calls)
+    }
+
+    @Test
+    fun `пустое содержимое отклоняется без вызова песочницы`() = runBlocking {
+        val fake = FakeSandboxClient()
+        val result = WriteFileTool(fake).execute("""{"path": "a.py", "content": ""}""")
+
+        assertEquals(false, result.ok)
+        assertTrue(result.content.contains("Некорректные аргументы"))
+        assertEquals(0, fake.calls)
+    }
+
+    @Test
+    fun `содержимое длиннее капа отклоняется без вызова песочницы`() = runBlocking {
+        val fake = FakeSandboxClient()
+        val result = WriteFileTool(fake).execute("""{"path": "a.py", "content": "${"x".repeat(2_000_001)}"}""")
+
+        assertEquals(false, result.ok)
+        assertTrue(result.content.contains("Некорректные аргументы"))
+        assertEquals(0, fake.calls)
+    }
+
     @Test
     fun `не json-объект аргументы дают ошибку без исключения`() = runBlocking {
         val fake = FakeSandboxClient(SandboxReply(ok = true, content = ""))

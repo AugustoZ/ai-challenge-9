@@ -60,12 +60,18 @@ class AgentLoopTest {
     )
 
     /** Заготовленный ответ обычным текстом (финальный ответ модели). */
-    private fun textResult(text: String, prompt: Int = 7, completion: Int = 2) = ChatResult(
+    private fun textResult(
+        text: String,
+        prompt: Int = 7,
+        completion: Int = 2,
+        finishReason: String? = null
+    ) = ChatResult(
         reply = text,
         promptTokens = prompt,
         completionTokens = completion,
         totalTokens = prompt + completion,
-        elapsedMs = 0L
+        elapsedMs = 0L,
+        finishReason = finishReason
     )
 
     private fun seed() = listOf(OpenAIMessage(role = "user", content = "задача"))
@@ -98,8 +104,8 @@ class AgentLoopTest {
         assertEquals(17, outcome.promptTokens)
         assertEquals(5, outcome.completionTokens)
         assertEquals(22, outcome.totalTokens)
-        // Бюджет шага: 800 / MAX_STEPS
-        assertEquals(100, fake.calls.first().maxTokens)
+        // Бюджет шага: 800 / MAX_STEPS = 100, но нижняя граница удерживает 1024 на шаг
+        assertEquals(1024, fake.calls.first().maxTokens)
         // Второй вызов получил пару assistant(tool_calls) → role="tool" в контексте
         val followUp = fake.calls[1].messages
         val assistant = followUp[followUp.size - 2]
@@ -202,6 +208,52 @@ class AgentLoopTest {
         // MAX_STEPS вызовов с инструментами + один принудительный финал
         assertEquals(AgentLoop.MAX_STEPS + 1, fake.calls.size)
         assertNull(fake.calls.last().tools)
+    }
+
+    @Test
+    fun `бюджет шага не опускается ниже нижней границы`() = runBlocking {
+        val fake = FakeLLMClient(
+            listOf(
+                toolCallResult(CalculatorTool.NAME, "{\"expression\":\"2+2\"}"),
+                textResult("Ответ: 4")
+            )
+        )
+
+        AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
+            .run(seed(), maxTokens = 1024, onEvent = {})
+
+        // 1024 / MAX_STEPS = 128, но нижняя граница удерживает полный 1024 на шаг
+        assertEquals(1024, fake.calls.first().maxTokens)
+    }
+
+    @Test
+    fun `обрыв по лимиту токенов включает принудительный финал`() = runBlocking {
+        val forcedReply = "Готовое решение из уже проделанных шагов."
+        val fake = FakeLLMClient(
+            listOf(
+                textResult("Сначала рассмотрим постановку задачи и начнём", finishReason = "length"),
+                textResult(forcedReply)
+            )
+        )
+        val events = mutableListOf<AgentEvent>()
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
+            .run(seed(), maxTokens = 2048, onEvent = { events.add(it) })
+
+        assertEquals("ответ обрезан", outcome.reason)
+        assertEquals(forcedReply, outcome.reply)
+        assertEquals(
+            listOf(
+                AgentEvent.StepStarted(1),
+                AgentEvent.Final(1, forcedReply, "ответ обрезан")
+            ),
+            events
+        )
+        // Усечённый шаг, затем финал без инструментов с ПОЛНЫМ бюджетом «Топлива»
+        assertEquals(2, fake.calls.size)
+        assertNull(fake.calls.last().tools)
+        assertEquals(2048, fake.calls.last().maxTokens)
+        assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("Инструменты больше недоступны"))
     }
 
     @Test

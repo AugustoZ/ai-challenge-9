@@ -1,5 +1,7 @@
 package com.example.aiweb.model
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -55,7 +57,9 @@ data class FileToolsConfig(
     /** Исполнение Python-кода в sandbox-контейнере (инструмент run_code). */
     @SerialName("run_code") val runCode: SandboxToolConfig? = null,
     /** Чтение файлов из рабочей папки через sandbox-контейнер (инструмент read_file). */
-    @SerialName("read_file") val readFile: SandboxToolConfig? = null
+    @SerialName("read_file") val readFile: SandboxToolConfig? = null,
+    /** Запись файлов в рабочую папку через sandbox-контейнер (инструмент write_file). */
+    @SerialName("write_file") val writeFile: SandboxToolConfig? = null
 )
 
 /**
@@ -176,7 +180,20 @@ data class OpenAIMessage(
     /** Вызовы инструментов, запрошенные моделью (роль assistant). */
     @SerialName("tool_calls") val toolCalls: List<OpenAIToolCall>? = null,
     /** Идентификатор вызова инструмента — обязателен в сообщениях с ролью "tool". */
-    @SerialName("tool_call_id") val toolCallId: String? = null
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    /**
+     * Трейс хода работы агента ([AgentEvent] с дискриминатором "type": "tool_call",
+     * "final" и т.д.); живёт только на assistant-сообщениях в истории сессии —
+     * фронтенд восстанавливает блок «Ход работы агента» после перезагрузки страницы.
+     *
+     * НЕ поле протокола OpenAI: AIClient строит запросы с encodeDefaults = true,
+     * поэтому [EncodeDefault] с Mode.NEVER — иначе даже пустой список уезжал бы
+     * в каждый запрос к API. Непустой трейс из повторенной истории сессии
+     * дополнительно срезается при сборке запроса (см. AIClient.executeOpenAI).
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val events: List<AgentEvent> = emptyList()
 )
 
 @Serializable

@@ -12,7 +12,11 @@ import com.example.aiweb.model.SandboxToolConfig
  * @param tools инструменты по имени; порядок связанного словаря определяет
  *              порядок в списке спецификаций и в промт-протоколе
  */
-class ToolRegistry(private val tools: Map<String, Tool>) {
+class ToolRegistry(
+    private val tools: Map<String, Tool>,
+    /** Клиент песочницы файлового инструмента (read_file/write_file); null — файловые выключены. */
+    private val fileSandboxClient: SandboxClient? = null
+) {
 
     /** Описания инструментов для поля tools запроса (нативный function calling). */
     fun specs(): List<OpenAIToolSpec> = tools.values.map { tool ->
@@ -28,6 +32,12 @@ class ToolRegistry(private val tools: Map<String, Tool>) {
 
     /** Инструмент по имени; неизвестное имя — null. */
     fun get(name: String): Tool? = tools[name]
+
+    /**
+     * Клиент песочницы, привязанный к файловому инструменту (read_file или write_file) —
+     * маршруту скачивания файлов пользователем. Файловые инструменты выключены — null.
+     */
+    fun fileClient(): SandboxClient? = fileSandboxClient
 
     companion object {
         /** Реестр со встроенными инструментами: current_datetime, calculator, http_get. */
@@ -46,12 +56,14 @@ class ToolRegistry(private val tools: Map<String, Tool>) {
          * Встроенные инструменты (current_datetime, calculator, http_get)
          * регистрируются по логическим флагам; null трактуется как true —
          * отсутствие раздела в конфиге даёт сегодняшнее поведение
-         * ([withBuiltIns]). Sandbox-инструменты run_code/read_file подключаются
-         * только при {"enabled": true} в их конфиге. Отключённые в конфиге
-         * инструменты не видны модели вообще — они не попадают в specs().
+         * ([withBuiltIns]). Sandbox-инструменты run_code/read_file/write_file
+         * подключаются только при {"enabled": true} в их конфиге. Отключённые
+         * в конфиге инструменты не видны модели вообще — они не попадают в specs().
          *
          * SandboxClient переиспользуется: один клиент на один уникальный
          * [SandboxToolConfig] в реестре (таймаут/адрес песочницы — на инструмент).
+         * Клиент файловых инструментов (read_file/write_file) дополнительно
+         * запоминается для маршрута скачивания файлов пользователем.
          */
         fun forConfig(tools: FileToolsConfig?): ToolRegistry {
             if (tools == null) return withBuiltIns()
@@ -59,6 +71,7 @@ class ToolRegistry(private val tools: Map<String, Tool>) {
             fun sandboxClient(config: SandboxToolConfig): SandboxClient =
                 sandboxClients.getOrPut(config) { SandboxClient(config) }
 
+            var fileClient: SandboxClient? = null
             val registered = linkedMapOf<String, Tool>()
             if (tools.currentDatetime != false) {
                 registered[CurrentDatetimeTool.NAME] = CurrentDatetimeTool()
@@ -73,9 +86,16 @@ class ToolRegistry(private val tools: Map<String, Tool>) {
                 registered[RunCodeTool.NAME] = RunCodeTool(sandboxClient(config), config.timeoutSeconds)
             }
             tools.readFile?.takeIf { it.enabled }?.let { config ->
-                registered[ReadFileTool.NAME] = ReadFileTool(sandboxClient(config))
+                val client = sandboxClient(config)
+                registered[ReadFileTool.NAME] = ReadFileTool(client)
+                fileClient = client
             }
-            return ToolRegistry(registered)
+            tools.writeFile?.takeIf { it.enabled }?.let { config ->
+                val client = sandboxClient(config)
+                registered[WriteFileTool.NAME] = WriteFileTool(client)
+                fileClient = client
+            }
+            return ToolRegistry(registered, fileClient)
         }
     }
 }

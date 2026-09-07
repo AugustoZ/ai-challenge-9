@@ -22,13 +22,14 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * Разобранный ответ sandbox-сервиса: одна структура на оба эндпоинта
- * (POST /run и POST /read) — сервер возвращает подмножество полей,
+ * Разобранный ответ sandbox-сервиса: одна структура на все эндпоинты
+ * (POST /run, POST /read и POST /write) — сервер возвращает подмножество полей,
  * неизвестные игнорируются (ignoreUnknownKeys).
  *
  * Формы ответа:
  *  - /run успех: ok=true, exitCode, stdout, stderr, durationMs;
  *  - /read успех: ok=true, content, truncated;
+ *  - /write успех: ok=true, path, bytes;
  *  - отказ сервиса (код не выполнился, таймаут, файл не прочитан,
  *    недоступность сервиса или HTTP-ошибка): ok=false, error — человекочитаемый текст.
  */
@@ -45,6 +46,8 @@ data class SandboxReply(
     val content: String? = null,
     /** Признак обрезки содержимого по лимиту сервиса (только /read). */
     val truncated: Boolean = false,
+    /** Размер записанного файла в байтах (только /write). */
+    val bytes: Long? = null,
     /** Человекочитаемый текст отказа (ok=false). */
     val error: String? = null
 )
@@ -297,5 +300,104 @@ class ReadFileTool(private val client: SandboxClient) : Tool {
 
         /** Путь эндпоинта чтения файла. */
         private const val PATH_READ = "/read"
+    }
+}
+
+/**
+ * Инструмент write_file: записывает файл в рабочую папку через sandbox-контейнер
+ * (перезапись разрешена). Так агент доставляет пользователю готовые файлы —
+ * например, исходный код игры: пользователь скачивает их по ссылке.
+ *
+ * Защита в глубину (сервис проверяет путь повторно): путь обязателен, не пуст,
+ * не длиннее капа, не абсолютный и не содержит «..»; содержимое обязательно,
+ * не пустое и не длиннее капа сервиса (2 МиБ байт, проверяет сервер). Любая
+ * ошибка возвращается как [ToolResult] с понятным текстом — исключения наружу
+ * не пробрасываются.
+ */
+class WriteFileTool(private val client: SandboxClient) : Tool {
+
+    override val name = NAME
+
+    override val description =
+        "Записывает текстовый файл в рабочую папку через sandbox-контейнер; существующий файл " +
+            "перезаписывается. Примеры: сохранить исходный код игры snake.py, положить отчёт " +
+            "report.txt для пользователя. Относительные пути в пределах рабочей папки; " +
+            "абсолютные пути и «..» запрещены."
+
+    override val parametersJsonSchema: JsonElement = buildJsonObject {
+        put("type", "object")
+        put("properties", buildJsonObject {
+            put("path", buildJsonObject {
+                put("type", "string")
+                put("description", "Относительный путь файла в рабочей папке, например snake.py или out/report.txt")
+                put("maxLength", ReadFileTool.MAX_PATH_LENGTH)
+            })
+            put("content", buildJsonObject {
+                put("type", "string")
+                put("description", "Полное содержимое файла; существующий файл перезаписывается целиком")
+                put("maxLength", MAX_CONTENT_LENGTH)
+            })
+        })
+        put("required", buildJsonArray {
+            add(JsonPrimitive("path"))
+            add(JsonPrimitive("content"))
+        })
+    }
+
+    override suspend fun execute(argsJson: String): ToolResult {
+        val args = parseArgsObject(argsJson) ?: return ToolResult(false, ARGS_NOT_OBJECT_ERROR)
+        val path = (args["path"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.trim()
+        if (path.isNullOrEmpty()) {
+            return ToolResult(false, "Некорректные аргументы: не задан параметр \"path\" (относительный путь файла)")
+        }
+        if (path.length > ReadFileTool.MAX_PATH_LENGTH) {
+            return ToolResult(false, "Некорректные аргументы: путь длиннее ${ReadFileTool.MAX_PATH_LENGTH} символов")
+        }
+        if (path.startsWith("/")) {
+            return ToolResult(false, "Некорректные аргументы: путь должен быть относительным, без \"..\" — '$path'")
+        }
+        if (path.contains("..")) {
+            return ToolResult(false, "Некорректные аргументы: путь не должен содержать \"..\" — '$path'")
+        }
+        val content = (args["content"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+        if (content.isNullOrEmpty()) {
+            return ToolResult(false, "Некорректные аргументы: не задан параметр \"content\" (непустая строка с содержимым файла)")
+        }
+        if (content.length > MAX_CONTENT_LENGTH) {
+            return ToolResult(false, "Некорректные аргументы: содержимое длиннее $MAX_CONTENT_LENGTH символов (${content.length})")
+        }
+
+        val body = buildJsonObject {
+            put("path", path)
+            put("content", content)
+        }.toString()
+
+        val reply = try {
+            client.post(PATH_WRITE, body)
+        } catch (e: Exception) {
+            return ToolResult(false, "Sandbox недоступен: ${e.message ?: e::class.simpleName}")
+        }
+        if (!reply.ok) {
+            return ToolResult(false, reply.error ?: "Sandbox недоступен: сервис вернул отказ без описания")
+        }
+        val size = reply.bytes
+        return ToolResult(
+            ok = true,
+            content = if (size != null) "Файл $path записан (${formatKib(size)})" else "Файл $path записан"
+        )
+    }
+
+    /** Размер в КиБ с одной десятичной и запятой: 12,3 КиБ. */
+    private fun formatKib(bytes: Long): String =
+        "%.1f".format(bytes / 1024.0).replace('.', ',') + " КиБ"
+
+    companion object {
+        const val NAME = "write_file"
+
+        /** Кап длины содержимого, символов (сервис дополнительно капает файл в 2 МиБ байт). */
+        const val MAX_CONTENT_LENGTH = 2_000_000
+
+        /** Путь эндпоинта записи файла. */
+        private const val PATH_WRITE = "/write"
     }
 }

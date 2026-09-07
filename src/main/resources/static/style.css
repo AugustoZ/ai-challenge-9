@@ -1746,6 +1746,30 @@ body.maint-on .raw-exchange {
     color: var(--red);
 }
 
+/* Чип «скачать файл» в строке tool_call инструмента write_file: компактная
+   пластина в фаске, при наведении — янтарная лампа, как у прочих клавиш */
+.agent-event .dl-chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 1px 7px;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.agent-event .dl-chip:hover,
+.agent-event .dl-chip:focus-visible {
+    color: var(--lamp-text);
+    background: var(--amber-soft);
+    border-color: rgba(var(--lamp-warm), 0.6);
+    text-shadow: var(--lamp-label-shadow);
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+}
+
 /* Живая трасса во время потока: раскрыта, на строке заголовка — маячок работы */
 .agent-trace.live > summary::after {
     content: '';

@@ -262,6 +262,37 @@ fun Route.aiRoutes(config: AppConfig) {
     delete("/api/sessions") {
         call.respond(SessionsCleared(deleted = sessions.clear()))
     }
+
+    // GET /api/files/{name} — пользователь скачивает файлы, записанные агентом
+    // в рабочую папку sandbox (например, snake.py после «напиши игру и пришли файлом»).
+    // Только плоские имена из латиницы/цифр/._- — вложенные пути и прочее 400.
+    // Файл добывается через /read того же клиента песочницы, что и у файловых
+    // инструментов; выключенные файловые инструменты 503, незнакомое имя 404.
+    get("/api/files/{name}") {
+        val name = call.parameters["name"].orEmpty()
+        if (!name.matches(FILE_NAME_PATTERN)) {
+            call.respond(HttpStatusCode.BadRequest, "Некорректное имя файла.")
+            return@get
+        }
+        val sandbox = registry.fileClient()
+        if (sandbox == null) {
+            call.respond(HttpStatusCode.ServiceUnavailable, "Файловые инструменты выключены в конфиге.")
+            return@get
+        }
+        val reply = sandbox.post("/read", buildJsonObject { put("path", name) }.toString())
+        if (!reply.ok) {
+            call.respond(HttpStatusCode.NotFound, "Файл не найден: $name")
+            return@get
+        }
+        call.response.header(
+            HttpHeaders.ContentDisposition,
+            "attachment; filename=\"$name\""
+        )
+        call.respondBytes(
+            reply.content.orEmpty().toByteArray(Charsets.UTF_8),
+            ContentType.Application.OctetStream
+        )
+    }
 }
 
 /** Оставляет в списке только разрешённые модели, сохраняя порядок white-списка. */
@@ -272,6 +303,12 @@ private fun keepOrder(allowed: List<String>, fetched: List<String>): List<String
 
 /** Максимум символов в заголовке сессии в списке; длиннее — обрезается с «…». */
 private const val SESSION_TITLE_LIMIT = 80
+
+/**
+ * Допустимое имя файла в GET /api/files/{name}: только плоские имена из латиницы,
+ * цифр, точки, подчёркивания и дефиса — вложенные пути и кириллица не проходят.
+ */
+private val FILE_NAME_PATTERN = Regex("[A-Za-z0-9._-]+")
 
 /**
  * Заголовок сессии для списка: первое user-сообщение с непустым текстом, без
@@ -366,7 +403,12 @@ private suspend fun finalizeResponse(
 ): ChatResponse {
     if (session != null) {
         sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
-        sessions.append(session.id, OpenAIMessage(role = "assistant", content = response.reply))
+        // Трейс агента хранится на assistant-сообщении — фронтенд показывает его
+        // при восстановлении журнала (GET /api/session/{id}); у остальных режимов пусто
+        sessions.append(
+            session.id,
+            OpenAIMessage(role = "assistant", content = response.reply, events = response.events)
+        )
     }
 
     val elapsedMs = System.currentTimeMillis() - startedAt

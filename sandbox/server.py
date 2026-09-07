@@ -12,6 +12,9 @@ HTTP-контракт (общий с Kotlin-клиентом оркестрат�
   POST /read {"path":"report.txt"}
              -> 200 {"ok":true,"content":"...","truncated":false}
              -> 200 {"ok":false,"error":"..."}
+  POST /write {"path":"game.py","content":"..."}
+             -> 200 {"ok":true,"path":"game.py","bytes":123}
+             -> 200 {"ok":false,"error":"..."}
   Некорректный JSON / отсутствие обязательного поля -> 400 {"ok":false,"error":"Некорректный запрос"}
   Неизвестный путь -> 404 {"ok":false,"error":"Не найдено"}
 
@@ -22,9 +25,10 @@ HTTP-контракт (общий с Kotlin-клиентом оркестрат�
   - resource-лимиты на дочерний процесс: RLIMIT_AS 512 МиБ, RLIMIT_CPU
     (таймаут+2 с), RLIMIT_FSIZE 10 МиБ, RLIMIT_NPROC 64;
   - минимальное окружение (PATH, HOME=/tmp, PYTHONDONTWRITEBYTECODE, LANG);
-  - /read: только файлы внутри workspace — запрещены абсолютные пути, любые
-    компоненты ".." и симлинки, разрешающиеся наружу workspace;
-  - капы: тело запроса 1 МиБ, stdout/stderr 64 КиБ каждый, файл 2 МиБ.
+  - /read и /write: только файлы внутри workspace — запрещены абсолютные пути,
+    любые компоненты ".." и симлинки, разрешающиеся наружу workspace;
+  - капы: тело запроса 1 МиБ (/write — 3 МиБ под 2 МиБ контента с запасом
+    на JSON-экранирование), stdout/stderr 64 КиБ каждый, файл 2 МиБ.
 """
 
 import json
@@ -43,9 +47,10 @@ PORT = int(os.environ.get("SANDBOX_PORT", "8080"))
 # Рабочая папка: единственное место, куда код может писать и откуда можно читать.
 WORKSPACE = Path(os.environ.get("SANDBOX_WORKSPACE", "/sandbox/workspace")).resolve()
 
-MAX_BODY_BYTES = 1 * 1024 * 1024        # кап тела запроса
+MAX_BODY_BYTES = 1 * 1024 * 1024        # кап тела запроса /run и /read
+MAX_WRITE_BODY_BYTES = 3 * 1024 * 1024  # кап тела /write: 2 МиБ контента + запас на JSON-экранирование
 MAX_OUTPUT_BYTES = 64 * 1024            # кап stdout/stderr
-MAX_FILE_BYTES = 2 * 1024 * 1024        # кап размера читаемого файла
+MAX_FILE_BYTES = 2 * 1024 * 1024        # кап размера читаемого/записываемого файла
 MAX_TIMEOUT_SECONDS = 60                # жёсткий серверный потолок таймаута
 DEFAULT_TIMEOUT_SECONDS = 15            # если timeoutSeconds не передан
 
@@ -64,6 +69,9 @@ MSG_TIMEOUT = "Превышен таймаут выполнения ({seconds}s)
 MSG_PATH_ESCAPES = "Путь вне рабочей папки запрещён"
 MSG_FILE_NOT_FOUND = "Файл не найден"
 MSG_SPAWN_FAILED = "Не удалось запустить процесс: {detail}"
+MSG_WRITE_FAILED = "Не удалось записать файл"
+MSG_CONTENT_TOO_LARGE = "Содержимое больше лимита 2 МиБ"
+MSG_CONTENT_NOT_TEXT = "Содержимое файла должно быть строкой"
 
 
 def ensure_workspace():
@@ -188,24 +196,24 @@ def run_python(code, timeout_seconds):
     }
 
 
-def read_workspace_file(raw_path):
-    """Читает файл из workspace c защитой от выхода за её пределы.
+def resolve_workspace_path(raw_path):
+    """Разбирает путь файла в workspace c защитой от выхода за её пределы.
 
     Запрещено: абсолютные пути, любые компоненты "..", симлинки,
-    разрешающиеся наружу workspace. Содержимое декодируется как UTF-8
-    с заменой некорректных байтов; кап 2 МиБ (truncated=true).
+    разрешающиеся наружу workspace. Возвращает (канонический путь, None)
+    или (None, dict-ответ об ошибке) — общий для /read и /write.
     """
     if not isinstance(raw_path, str) or not raw_path.strip():
-        return {"ok": False, "error": MSG_PATH_ESCAPES}
+        return None, {"ok": False, "error": MSG_PATH_ESCAPES}
 
     # 1) Абсолютный путь — сразу отказ.
     candidate = Path(raw_path)
     if candidate.is_absolute():
-        return {"ok": False, "error": MSG_PATH_ESCAPES}
+        return None, {"ok": False, "error": MSG_PATH_ESCAPES}
 
     # 2) Любой компонент ".." — отказ (даже если итог остался бы внутри).
     if any(part == ".." for part in candidate.parts):
-        return {"ok": False, "error": MSG_PATH_ESCAPES}
+        return None, {"ok": False, "error": MSG_PATH_ESCAPES}
 
     target = WORKSPACE / candidate
 
@@ -220,7 +228,7 @@ def read_workspace_file(raw_path):
                 resolved_link = current.resolve()
                 resolved_link.relative_to(WORKSPACE)  # бросит ValueError, если наружу
     except (ValueError, OSError):
-        return {"ok": False, "error": MSG_PATH_ESCAPES}
+        return None, {"ok": False, "error": MSG_PATH_ESCAPES}
 
     # 4) Финальная проверка: канонический путь обязан остаться внутри workspace
     #    (страховка от любых обходных путей, например внутренних симлинков-цепочек).
@@ -228,7 +236,18 @@ def read_workspace_file(raw_path):
         resolved = target.resolve()
         resolved.relative_to(WORKSPACE)
     except (ValueError, OSError):
-        return {"ok": False, "error": MSG_PATH_ESCAPES}
+        return None, {"ok": False, "error": MSG_PATH_ESCAPES}
+
+    return resolved, None
+
+
+def read_workspace_file(raw_path):
+    """Читает файл из workspace. Содержимое декодируется как UTF-8
+    с заменой некорректных байтов; кап 2 МиБ (truncated=true).
+    """
+    resolved, error = resolve_workspace_path(raw_path)
+    if error:
+        return error
 
     if not resolved.is_file():
         return {"ok": False, "error": MSG_FILE_NOT_FOUND}
@@ -246,6 +265,36 @@ def read_workspace_file(raw_path):
         "ok": True,
         "content": data.decode("utf-8", errors="replace"),
         "truncated": truncated,
+    }
+
+
+def write_workspace_file(raw_path, raw_content):
+    """Записывает файл в workspace (перезапись разрешена) с той же защитой пути,
+    что и /read. Родительские папки создаются автоматически; содержимое —
+    UTF-8, кап 2 МиБ байт (в ответе bytes — фактический размер записи).
+    """
+    if not isinstance(raw_content, str):
+        return {"ok": False, "error": MSG_CONTENT_NOT_TEXT}
+
+    resolved, error = resolve_workspace_path(raw_path)
+    if error:
+        return error
+
+    data = raw_content.encode("utf-8")
+    if len(data) > MAX_FILE_BYTES:
+        return {"ok": False, "error": MSG_CONTENT_TOO_LARGE}
+
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        with open(resolved, "wb") as fh:
+            fh.write(data)
+    except OSError:
+        return {"ok": False, "error": MSG_WRITE_FAILED}
+
+    return {
+        "ok": True,
+        "path": Path(raw_path).as_posix(),
+        "bytes": len(data),
     }
 
 
@@ -289,14 +338,16 @@ class SandboxHandler(BaseHTTPRequestHandler):
                 break
             remaining -= len(chunk)
 
-    def _read_body(self):
-        """Читает и парсит JSON-тело. Возвращает (dict, None) или (None, ответ-объект)."""
+    def _read_body(self, max_bytes=MAX_BODY_BYTES):
+        """Читает и парсит JSON-тело (кап [max_bytes]). Возвращает
+        (dict, None) или (None, ответ-объект).
+        """
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except (TypeError, ValueError):
             return None, ("bad", None)
-        if length <= 0 or length > MAX_BODY_BYTES:
-            # В т.ч. тело больше 1 МиБ — по контракту это 400 «Некорректный запрос».
+        if length <= 0 or length > max_bytes:
+            # В т.ч. тело больше капа — по контракту это 400 «Некорректный запрос».
             # Сначала дренируем тело, иначе клиент ловит BrokenPipe до ответа.
             if length > 0:
                 self._drain(self.rfile, length)
@@ -318,6 +369,8 @@ class SandboxHandler(BaseHTTPRequestHandler):
                 self._handle_run()
             elif self.path == "/read":
                 self._handle_read()
+            elif self.path == "/write":
+                self._handle_write()
             else:
                 self._send_json(404, {"ok": False, "error": MSG_NOT_FOUND})
         except Exception as exc:  # последняя линия обороны: сервер жив
@@ -372,6 +425,19 @@ class SandboxHandler(BaseHTTPRequestHandler):
             return
 
         result = read_workspace_file(body.get("path"))
+        self._send_json(200, result)
+
+    def _handle_write(self):
+        body, err = self._read_body(MAX_WRITE_BODY_BYTES)
+        if err:
+            self._send_bad_request()
+            return
+
+        if "path" not in body or "content" not in body:
+            self._send_bad_request()
+            return
+
+        result = write_workspace_file(body.get("path"), body.get("content"))
         self._send_json(200, result)
 
 

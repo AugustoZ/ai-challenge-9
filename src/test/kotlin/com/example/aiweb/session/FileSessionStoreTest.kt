@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.OpenAIMessage
 import java.io.File
 import java.nio.file.Files
@@ -46,6 +47,67 @@ class FileSessionStoreTest {
         assertEquals(2, loaded.messages.size)
         assertEquals("вопрос", loaded.messages[0].content)
         assertEquals("ответ", loaded.messages[1].content)
+    }
+
+    @Test
+    fun `трейс агента на assistant-сообщении переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("напиши игру змейку и пришли файлом"))
+        val trace = listOf(
+            AgentEvent.StepStarted(1),
+            AgentEvent.ToolCalled(1, "write_file", "{\"path\":\"snake.py\"}"),
+            AgentEvent.ToolResult(1, "write_file", ok = true, content = "Файл snake.py записан"),
+            AgentEvent.Final(1, "Готово: файл snake.py записан.", "готово")
+        )
+        store.append(
+            session.id,
+            OpenAIMessage(role = "assistant", content = "Готово: файл snake.py записан.", events = trace)
+        )
+
+        val loaded = assertNotNull(newStore(dir).get(session.id))
+
+        assertEquals(2, loaded.messages.size)
+        assertEquals(trace, loaded.messages[1].events)
+        assertTrue(loaded.messages[0].events.isEmpty())
+    }
+
+    @Test
+    fun `трейс пишется с дискриминатором type, пустой не пишется`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+        store.append(
+            session.id,
+            OpenAIMessage(
+                role = "assistant",
+                content = "готово",
+                events = listOf(AgentEvent.ToolCalled(1, "read_file", "{}"))
+            )
+        )
+
+        val raw = File(dir, "sessions/${session.id}.json").readText()
+
+        // Контракт фронтенда: {type:"tool_call", step, tool, arguments} — как в SSE
+        assertTrue(raw.contains("\"type\":\"tool_call\""), "Файл: $raw")
+        // encodeDefaults=false: пустой events user-сообщения в файл не попадает
+        assertEquals(1, Regex("\"events\"").findAll(raw).count())
+    }
+
+    @Test
+    fun `старый json-файл сессии без events читается пустым трейсом`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-1.json").writeText(
+            """{"id":"old-1","messages":[{"role":"assistant","content":"старый ответ"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val loaded = assertNotNull(newStore(dir).get("old-1"))
+
+        assertEquals(1, loaded.messages.size)
+        assertTrue(loaded.messages.single().events.isEmpty())
     }
 
     @Test

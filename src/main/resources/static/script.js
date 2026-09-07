@@ -319,6 +319,29 @@ function eventsWord(n) {
     return 'событий';
 }
 
+/* Ссылка-чип «скачать <файл>» для tool_call инструмента write_file.
+   Путь берётся из JSON-аргументов (path); если аргументы не распарсились
+   или path отсутствует — чип молча не строится. Имя файла — ненадёжный
+   ввод от LLM, поэтому и оно рендерится через textContent, без innerHTML. */
+function buildDownloadChip(argumentsJson) {
+    let path;
+    try {
+        const args = JSON.parse(argumentsJson);
+        if (typeof args?.path !== 'string' || !args.path) return null;
+        path = args.path;
+    } catch {
+        return null;
+    }
+    const link = document.createElement('a');
+    link.className = 'dl-chip';
+    link.href = '/api/files/' + encodeURIComponent(path);
+    link.setAttribute('download', '');
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = `скачать ${path}`;
+    return link;
+}
+
 /* Строка протокола для одного события AgentLoop. Аргументы инструментов
    и промежуточные тексты — ненадёжный ввод от LLM, поэтому всё рендерится
    через textContent, без innerHTML. Общая для итоговой трассы и живой. */
@@ -359,6 +382,11 @@ function buildAgentEventRow(ev) {
         case 'tool_call':
             text('— вызов инструмента: ');
             code(`${ev.tool ?? '?'}(${truncateText(ev.arguments ?? '', 200)})`);
+            /* Файл, созданный write_file, — чип-ссылка на скачивание рядом строкой вызова. */
+            if (ev.tool === 'write_file') {
+                const chip = buildDownloadChip(ev.arguments);
+                if (chip) row.appendChild(chip);
+            }
             break;
         case 'tool_result':
             text(`— результат ${ev.tool ?? '?'}: `);
@@ -1298,8 +1326,13 @@ function renderHistory(messages) {
         if (m.role === 'user') {
             addMessage(m.content);
         } else {
-            // Без tokenData: ни топлива, ни времени, ни протокола агента, ни судьи
-            addBotMessage(m.content, null);
+            /* Протокол агента восстанавливается из msg.events (когда бэкенд
+               начнёт его присылать): та же трасса, что и под живым ответом,
+               с чипами скачивания файлов. Без events — прежний вид. */
+            addBotMessage(
+                m.content,
+                Array.isArray(m.events) && m.events.length ? { events: m.events } : null
+            );
         }
     }
     chat.scrollTop = chat.scrollHeight;

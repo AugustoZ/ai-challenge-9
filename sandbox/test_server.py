@@ -6,9 +6,10 @@
     python3 sandbox/test_server.py
 
 Поднимает сервер на эфемерном порту в отдельном потоке и проверяет
-HTTP-контракт /run и /read: happy-path, ненулевой exitCode, синтаксическая
-ошибка, убийство по таймауту, защита от выхода за workspace (../, абсолютный
-путь, симлинк наружу), белый список языков, некорректный JSON и 400.
+HTTP-контракт /run, /read и /write: happy-path, ненулевой exitCode,
+синтаксическая ошибка, убийство по таймауту, защита от выхода за workspace
+(../, абсолютный путь, симлинк наружу), перезапись и капы содержимого,
+белый список языков, некорректный JSON и 400.
 """
 
 import json
@@ -192,6 +193,92 @@ class ReadEndpointTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(resp["ok"], resp)
         self.assertEqual(resp["content"], "внутри")
+
+
+class WriteEndpointTest(unittest.TestCase):
+    """POST /write — запись файлов строго в workspace (перезапись разрешена)."""
+
+    def test_happy_path_creates_file(self):
+        status, resp = post_json("/write", {"path": "snake.py", "content": "print('змея')\n"})
+        self.assertEqual(status, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual(resp["path"], "snake.py")
+        self.assertEqual(resp["bytes"], len("print('змея')\n".encode("utf-8")))
+        self.assertEqual(
+            (Path(_TEST_DIR) / "snake.py").read_text(encoding="utf-8"),
+            "print('змея')\n",
+        )
+
+    def test_overwrite_allowed(self):
+        # Перезапись разрешена: вторая запись затирает содержимое и bytes обновляется.
+        post_json("/write", {"path": "game.py", "content": "версия 1"})
+        status, resp = post_json("/write", {"path": "game.py", "content": "версия 2"})
+        self.assertEqual(status, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual(resp["bytes"], len("версия 2".encode("utf-8")))
+        self.assertEqual(
+            (Path(_TEST_DIR) / "game.py").read_text(encoding="utf-8"), "версия 2"
+        )
+
+    def test_subdirectory_created_automatically(self):
+        status, resp = post_json("/write", {"path": "out/data.csv", "content": "a,b\n1,2\n"})
+        self.assertEqual(status, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertTrue((Path(_TEST_DIR) / "out" / "data.csv").is_file())
+
+    def test_path_traversal_rejected(self):
+        for bad in ("../evil.txt", "sub/../../evil.txt"):
+            status, resp = post_json("/write", {"path": bad, "content": "x"})
+            self.assertEqual(status, 200)
+            self.assertFalse(resp["ok"], bad)
+            self.assertEqual(resp["error"], "Путь вне рабочей папки запрещён")
+        self.assertFalse((Path(_TEST_DIR).parent / "evil.txt").exists())
+
+    def test_absolute_path_rejected(self):
+        status, resp = post_json("/write", {"path": "/tmp/evil.txt", "content": "x"})
+        self.assertEqual(status, 200)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["error"], "Путь вне рабочей папки запрещён")
+
+    def test_symlink_escape_rejected(self):
+        # Симлинк наружу создаётся самим run_code — /write обязан его отвергнуть.
+        status, resp = run_code("import os\nos.symlink('/tmp', 'evil-link.txt')\n")
+        self.assertEqual(status, 200)
+        self.assertTrue(resp["ok"], resp)
+
+        status, resp = post_json("/write", {"path": "evil-link.txt", "content": "x"})
+        self.assertEqual(status, 200)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["error"], "Путь вне рабочей папки запрещён")
+
+    def test_content_over_2mib_rejected(self):
+        status, resp = post_json("/write", {"path": "big.bin", "content": "x" * (2 * 1024 * 1024 + 1)})
+        self.assertEqual(status, 200)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["error"], "Содержимое больше лимита 2 МиБ")
+        self.assertFalse((Path(_TEST_DIR) / "big.bin").exists())
+
+    def test_content_not_text_rejected(self):
+        status, resp = post_json("/write", {"path": "nope.bin", "content": 42})
+        self.assertEqual(status, 200)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["error"], "Содержимое файла должно быть строкой")
+
+    def test_missing_required_field_400(self):
+        # Нет "content"; нет "path".
+        status, resp = post_json("/write", {"path": "a.txt"})
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"], "Некорректный запрос")
+
+        status, resp = post_json("/write", {"content": "x"})
+        self.assertEqual(status, 400)
+        self.assertEqual(resp["error"], "Некорректный запрос")
+
+    def test_malformed_json_400(self):
+        status, resp = post_json("/write", None, raw_body=b"{not json")
+        self.assertEqual(status, 400)
+        self.assertFalse(resp["ok"])
+        self.assertEqual(resp["error"], "Некорректный запрос")
 
 
 class ProtocolTest(unittest.TestCase):

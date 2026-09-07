@@ -5,6 +5,7 @@ import com.example.aiweb.model.SandboxToolConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -56,6 +57,33 @@ class ToolRegistryConfigTest {
         )
         assertTrue(registry.specs().any { it.function.name == "read_file" })
         assertNotNull(registry.get("read_file"))
+    }
+
+    @Test
+    fun `включенный write_file регистрируется`() {
+        val registry = ToolRegistry.forConfig(
+            FileToolsConfig(writeFile = SandboxToolConfig(enabled = true))
+        )
+        assertTrue(registry.specs().any { it.function.name == "write_file" })
+        assertNotNull(registry.get("write_file"))
+    }
+
+    @Test
+    fun `fileClient привязан к файловому инструменту и null без него`() {
+        assertNull(
+            ToolRegistry.forConfig(FileToolsConfig()).fileClient(),
+            "Без файловых инструментов клиента песочницы быть не должно"
+        )
+        assertNotNull(
+            ToolRegistry.forConfig(
+                FileToolsConfig(readFile = SandboxToolConfig(enabled = true))
+            ).fileClient()
+        )
+        assertNotNull(
+            ToolRegistry.forConfig(
+                FileToolsConfig(writeFile = SandboxToolConfig(enabled = true))
+            ).fileClient()
+        )
     }
 
     @Test
