@@ -19,10 +19,11 @@ import com.example.aiweb.model.ModelsResponse
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.ProviderModels
 import com.example.aiweb.model.ReasoningMode
-import com.example.aiweb.session.InMemorySessionStore
+import com.example.aiweb.model.StreamEvent
 import com.example.aiweb.session.Session
 import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.session.SessionStore
+import com.example.aiweb.session.sessionStoreFor
 import com.example.aiweb.tools.NativeToolTransport
 import com.example.aiweb.tools.PromptToolTransport
 import com.example.aiweb.tools.ToolRegistry
@@ -31,9 +32,21 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /** Режимы, ведущие серверную историю диалога; «Команда» и Prompt-to-Prompt остаются stateless. */
 private val HISTORY_MODES = setOf(
@@ -51,8 +64,16 @@ fun Route.aiRoutes(config: AppConfig) {
     val clients: Map<ProviderConfig, AIClient> =
         config.providers.associateWith { AIClient(it) }
 
-    // Серверная память диалога для одиночных режимов (P1-персистентность = замена реализации)
-    val sessions: SessionStore = InMemorySessionStore()
+    // Серверная память диалога для одиночных режимов: без каталога данных (AI_DATA_DIR)
+    // — память процесса, с каталогом — файловое хранилище (маршруты не меняются)
+    val sessions: SessionStore = sessionStoreFor(config.dataDir)
+
+    // Активные запросы стриминга для POST /api/cancel
+    val activeRequests = ActiveRequests()
+
+    // Реестр инструментов агента: строится один раз из раздела "tools" конфига
+    // (отключённые в конфиге инструменты не видны модели)
+    val registry = ToolRegistry.forConfig(config.tools)
 
     // GET /api/log — сырой протокол обменов с моделью (самописец)
     get("/api/log") {
@@ -85,62 +106,19 @@ fun Route.aiRoutes(config: AppConfig) {
 
     // POST /api/chat — принимает сообщение и возвращает ответ AI
     post("/api/chat") {
-        val body = try {
-            call.receive<ChatRequest>()
-        } catch (e: Exception) {
-            println("Ошибка десериализации запроса: ${e.message}")
-            call.respond(
-                HttpStatusCode.BadRequest,
-                ChatResponse("Некорректный запрос.")
-            )
-            return@post
-        }
-
-        if (body.message.isBlank()) {
-            call.respond(
-                HttpStatusCode.BadRequest,
-                ChatResponse("Сообщение не может быть пустым.")
-            )
-            return@post
-        }
-
-        val mode = ReasoningMode.fromId(body.reasoningMode)
-        val provider = config.provider(body.provider)
-        val aiClient = clients.getValue(provider)
+        val body = call.receiveChatRequest() ?: return@post
         val startedAt = System.currentTimeMillis()
-
-        // Память диалога — только у одиночных режимов: без sessionId создаётся новая
-        // сессия, неизвестный/выселенный id тоже начинает диалог заново
-        val session = if (mode in HISTORY_MODES) {
-            sessions.get(body.sessionId) ?: sessions.create()
-        } else {
-            null
-        }
+        val chat = resolveChat(config, clients, sessions, body)
 
         try {
-            val response = when (mode) {
-                ReasoningMode.TEAM -> handleTeam(aiClient, body)
-                ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(aiClient, body)
-                ReasoningMode.AGENT -> handleAgent(aiClient, body, provider, session)
-                else -> handleSingle(aiClient, body, mode, session)
+            val response = when (chat.mode) {
+                ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
+                ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
+                ReasoningMode.AGENT -> handleAgent(chat.aiClient, body, chat.provider, chat.session, registry)
+                else -> handleSingle(chat.aiClient, body, chat.mode, chat.session)
             }
 
-            // История пополняется только после успешного ответа модели
-            if (session != null) {
-                sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
-                sessions.append(session.id, OpenAIMessage(role = "assistant", content = response.reply))
-            }
-
-            val elapsedMs = System.currentTimeMillis() - startedAt
-            val judged = if (body.judgeEnabled == true) {
-                response.copy(
-                    elapsedMs = elapsedMs,
-                    judge = runJudge(aiClient, body, response, elapsedMs)
-                )
-            } else {
-                response.copy(elapsedMs = elapsedMs)
-            }
-            call.respond(judged)
+            call.respond(finalizeResponse(chat.aiClient, body, response, chat.session, sessions, startedAt))
         } catch (e: Exception) {
             println("Ошибка при обращении к API: ${e.message}")
             call.respond(
@@ -148,6 +126,102 @@ fun Route.aiRoutes(config: AppConfig) {
                 ChatResponse("Ошибка при обращении к API: ${e.message}")
             )
         }
+    }
+
+    // POST /api/chat/stream — тот же ChatRequest, что у /api/chat, но ответ отдаётся
+    // кадрами SSE (text/event-stream): живые события агента (или статус этапа для
+    // остальных режимов), затем ровно один кадр final с полным ChatResponse.
+    // Отмена прогона — POST /api/cancel по body.requestId.
+    post("/api/chat/stream") {
+        val body = call.receiveChatRequest() ?: return@post
+        val startedAt = System.currentTimeMillis()
+        val chat = resolveChat(config, clients, sessions, body)
+
+        val requestId = body.requestId?.trim().orEmpty()
+        val frames = Channel<StreamEvent>(Channel.UNLIMITED)
+
+        try {
+            if (requestId.isNotEmpty()) {
+                activeRequests.register(requestId, currentCoroutineContext().job)
+            }
+
+            // Обработка запроса идёт в дочерней корутине и наполняет канал кадрами;
+            // писатель ниже параллельно вычитывает их в HTTP-поток (живой стрим)
+            val processor = launch {
+                try {
+                    if (chat.mode != ReasoningMode.AGENT) {
+                        frames.trySend(StreamEvent.Status("Обрабатываю запрос…"))
+                    }
+                    val response = when (chat.mode) {
+                        ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
+                        ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
+                        ReasoningMode.AGENT -> handleAgent(chat.aiClient, body, chat.provider, chat.session, registry) { event ->
+                            frames.trySend(StreamEvent.Agent(event))
+                        }
+                        else -> handleSingle(chat.aiClient, body, chat.mode, chat.session)
+                    }
+                    val finalized = finalizeResponse(
+                        chat.aiClient, body, response, chat.session, sessions, startedAt
+                    ) { status ->
+                        frames.trySend(StreamEvent.Status(status))
+                    }
+                    frames.trySend(StreamEvent.Final(finalized))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    println("Ошибка при обращении к API: ${e.message}")
+                    frames.trySend(StreamEvent.Error(e.message ?: "Неизвестная ошибка"))
+                } finally {
+                    frames.close()
+                }
+            }
+
+            // Content-Type задаётся в respondTextWriter; no-cache — вручную, чтобы
+            // прокси не буферизовали поток
+            call.response.header(HttpHeaders.CacheControl, "no-cache")
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                try {
+                    for (frame in frames) {
+                        write(encodeFrame(frame))
+                        flush()
+                    }
+                    processor.join()
+                } catch (e: CancellationException) {
+                    // Отмена по /api/cancel (или обрыв клиента): best-effort кадр
+                    // cancelled и чистое закрытие — исключение не перебрасывается,
+                    // реестр чистится в finally обработчика
+                    withContext(NonCancellable) {
+                        runCatching {
+                            write(encodeFrame(StreamEvent.Cancelled(requestId)))
+                            flush()
+                        }
+                    }
+                } finally {
+                    frames.close()
+                }
+            }
+        } finally {
+            if (requestId.isNotEmpty()) activeRequests.unregister(requestId)
+        }
+    }
+
+    // POST /api/cancel — отмена активного стрима по клиентскому requestId:
+    // {"requestId": "..."} → {"cancelled": true|false}; неизвестный или уже
+    // завершённый идентификатор — {"cancelled": false}
+    post("/api/cancel") {
+        val requestId = try {
+            call.receive<JsonObject>()["requestId"]?.jsonPrimitive?.contentOrNull
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+
+        if (requestId == null) {
+            call.respond(HttpStatusCode.BadRequest, buildJsonObject { put("cancelled", false) })
+            return@post
+        }
+
+        call.respond(buildJsonObject { put("cancelled", activeRequests.cancel(requestId)) })
     }
 
     // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно)
@@ -161,6 +235,101 @@ fun Route.aiRoutes(config: AppConfig) {
 private fun keepOrder(allowed: List<String>, fetched: List<String>): List<String> {
     val present = fetched.toSet()
     return allowed.filter { it in present }
+}
+
+/**
+ * Читает и валидирует тело запроса чата (общий вход /api/chat и /api/chat/stream).
+ * Возвращает null, если ответ уже отправлен: некорректный JSON или пустое
+ * сообщение → 400 с ChatResponse с текстом ошибки.
+ */
+private suspend fun ApplicationCall.receiveChatRequest(): ChatRequest? {
+    val body = try {
+        receive<ChatRequest>()
+    } catch (e: Exception) {
+        println("Ошибка десериализации запроса: ${e.message}")
+        respond(HttpStatusCode.BadRequest, ChatResponse("Некорректный запрос."))
+        return null
+    }
+
+    if (body.message.isBlank()) {
+        respond(HttpStatusCode.BadRequest, ChatResponse("Сообщение не может быть пустым."))
+        return null
+    }
+
+    return body
+}
+
+/**
+ * Контекст запроса чата после общего препроцессинга /api/chat и /api/chat/stream:
+ * выбранный режим, провайдер, его клиент LLM и сессия диалога.
+ */
+private class ChatContext(
+    val mode: ReasoningMode,
+    val provider: ProviderConfig,
+    val aiClient: AIClient,
+    val session: Session?
+)
+
+/**
+ * Общий препроцессинг /api/chat и /api/chat/stream: выбор режима, провайдера,
+ * клиента LLM и сессии диалога. Память диалога — только у режимов с историей:
+ * без sessionId создаётся новая сессия, неизвестный/выселенный id тоже начинает
+ * диалог заново; «Команда» и Prompt-to-Prompt остаются stateless.
+ */
+private fun resolveChat(
+    config: AppConfig,
+    clients: Map<ProviderConfig, AIClient>,
+    sessions: SessionStore,
+    body: ChatRequest
+): ChatContext {
+    val mode = ReasoningMode.fromId(body.reasoningMode)
+    val provider = config.provider(body.provider)
+    return ChatContext(
+        mode = mode,
+        provider = provider,
+        aiClient = clients.getValue(provider),
+        session = if (mode in HISTORY_MODES) {
+            sessions.get(body.sessionId) ?: sessions.create()
+        } else {
+            null
+        }
+    )
+}
+
+/**
+ * Общая пост-обработка ответа режима (используется /api/chat и /api/chat/stream):
+ * история сессии пополняется только после успешного ответа модели — одним
+ * пользовательским сообщением и финальным ответом (промежуточный трафик
+ * инструментов в память не пишет); затем приборный замер полного времени
+ * обработки и опциональная контрольная проверка судьи.
+ *
+ * [onStatus] — шов стриминга: уведомление «Судья проверяет ответ…» уходит в поток
+ * кадром Status до начала проверки; в блокирующем /api/chat остаётся пустым.
+ */
+private suspend fun finalizeResponse(
+    aiClient: AIClient,
+    body: ChatRequest,
+    response: ChatResponse,
+    session: Session?,
+    sessions: SessionStore,
+    startedAt: Long,
+    onStatus: suspend (String) -> Unit = {}
+): ChatResponse {
+    if (session != null) {
+        sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
+        sessions.append(session.id, OpenAIMessage(role = "assistant", content = response.reply))
+    }
+
+    val elapsedMs = System.currentTimeMillis() - startedAt
+    return if (body.judgeEnabled == true) {
+        onStatus("Судья проверяет ответ…")
+        response.copy(
+            elapsedMs = elapsedMs,
+            judge = runJudge(aiClient, body, response, elapsedMs)
+        )
+    } else {
+        response.copy(elapsedMs = elapsedMs)
+    }
 }
 
 /**
@@ -228,25 +397,31 @@ private suspend fun handleSingle(
 /**
  * Режим «Агент»: AgentLoop итерирует модель с инструментами до финального ответа.
  * Транспорт выбирается по возможностям провайдера: нативный function calling
- * (supportsTools = true) либо промт-протокол. История сессии и цель пользователя
- * передаются в цикл как seed — system-промт агента добавляет сам AgentLoop.
+ * (supportsTools = true) либо промт-протокол. Реестр инструментов [registry]
+ * строится один раз в aiRoutes из раздела "tools" конфига. История сессии и цель
+ * пользователя передаются в цикл как seed — system-промт агента добавляет сам
+ * AgentLoop.
  *
- * События хода работы собираются через sink в ChatResponse.events; в историю сессии
- * попадают только пользовательское сообщение и финальный ответ — промежуточный
- * трафик инструментов (общий пост-when блок после ответа) в память не пишет.
+ * События хода работы собираются через sink в ChatResponse.events; [onEvent] —
+ * шов стриминга (P1: живые кадры Agent в /api/chat/stream), вызывается для каждого
+ * события в дополнение к коплению списка. В историю сессии попадают только
+ * пользовательское сообщение и финальный ответ — промежуточный трафик инструментов
+ * (общий пост-when блок после ответа) в память не пишет.
  */
 private suspend fun handleAgent(
     aiClient: AIClient,
     body: ChatRequest,
     provider: ProviderConfig,
-    session: Session?
+    session: Session?,
+    registry: ToolRegistry,
+    onEvent: suspend (AgentEvent) -> Unit = {}
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
     val loop = AgentLoop(
         client = aiClient,
         transport = if (provider.supportsTools) NativeToolTransport() else PromptToolTransport(),
-        registry = ToolRegistry.withBuiltIns()
+        registry = registry
     )
 
     val history = session
@@ -258,7 +433,10 @@ private suspend fun handleAgent(
     val outcome = loop.run(
         seed = seed,
         maxTokens = body.maxTokens,
-        onEvent = { events.add(it) },
+        onEvent = { event ->
+            events.add(event)
+            onEvent(event)
+        },
         model = body.model,
         temperature = body.temperature,
         topP = body.topP,

@@ -150,6 +150,58 @@
 инструмента; URL из `http_get` дополнительно проходит гарды. Ошибка валидации →
 `role="tool"` с текстом ошибки (правило Фазы 3), не падение цикла.
 
+## P2 волна 1 — Sandbox-исполнение и инструменты из конфига
+
+**Объём:**
+1. **Инструменты из конфига** — секция `"tools"` в config.json: вкл/выкл встроенных
+   (`current_datetime`, `calculator`, `http_get`, по умолчанию true) и подключение
+   sandbox-инструментов. `ToolRegistry.forConfig()` — точка регистрации из плана;
+   отключённый инструмент не виден модели вообще (не попадает в specs()).
+2. **`run_code`** — Python-код в sandbox-контейнере: HTTP-вызов оркестратора с таймаутом
+   (clamp 1..60, HTTP-таймаут = таймаут + 5 с), сервер ставит `resource`-лимиты
+   (RLIMIT_AS 512 МиБ, CPU, FSIZE, NPROC), убивает группу процессов по таймауту,
+   капы stdout/stderr 64 КиБ. CWD — рабочая папка.
+3. **`read_file`** — чтение файла из рабочей папки sandbox (только она): отказ
+   абсолютных путей и `..`, отказ симлинков наружу, кап 2 МиБ. Двойная валидация —
+   на клиенте (Kotlin) и на сервере (python).
+4. **Сеть** — `sandbox` (`internal: true`): aiweb в двух сетях (интернет для LLM API +
+   internal для sandbox), sandbox только в internal — полный запрет egress =
+   строжайший allowlist. Порты по-прежнему не публикуются, docker socket не монтируется.
+5. **Валидация аргументов по JSON-схеме до HTTP** (правило доверия: аргументы от LLM);
+   sandbox недоступен → `ToolResult(ok=false)` с человеческим текстом, цикл продолжается.
+
+**Контракт HTTP оркестратор↔sandbox:** `POST /run {language, code, timeoutSeconds}` →
+`{ok, exitCode?, stdout?, stderr?, durationMs?, error?}`; `POST /read {path}` →
+`{ok, content?, truncated?, error?}`; ошибки исполнения — 200 с `ok:false`, битый
+запрос — 400.
+
+**Отложено в P3:** auth-токен на `/api/*`, retry/backoff на 429/5xx, OpenCode
+SSE-трансляция, `write_file`/список файлов, egress-allowlist с выборочным доступом.
+
+## P1 — Стриминг, отмена, персистентность
+
+**Объём (ядро P1 из гэп-анализа):**
+1. **Персистентность сессий** — `FileSessionStore` в `AI_DATA_DIR` (атомарная запись
+   tmp+rename, выселение по `MAX_SESSIONS` с удалением файлов, устойчивость к битым
+   файлам); выбор реализации фабрикой `sessionStoreFor(dataDir)` в точке сборки
+   `Routes.aiRoutes` — маршруты не меняются (заготовка Фазы 1).
+2. **Стриминг SSE** — `POST /api/chat/stream`: тот же `ChatRequest`, ответ — кадры
+   `data: <JSON>\n\n` (Ktor 2.3.12 без плагина SSE — ручной `respondTextWriter`).
+   Конверт `StreamEvent`: `agent` (живые `AgentEvent` из sink Фазы 3) → `final`
+   (полный `ChatResponse`) + `status`/`error`/`cancelled` для остальных режимов.
+   Фронтенд: стрим через `fetch`+`getReader`, живой блок «Ход работы агента»,
+   fallback на блокирующий `/api/chat` до первого кадра.
+3. **Отмена** — `ChatRequest.requestId` (клиентский UUID) + реестр активных Job;
+   `POST /api/cancel {requestId}` → `job.cancel()`; в стриме — кадр `cancelled`
+   и чистое закрытие. Кнопка «Стоп»: `AbortController` + `/api/cancel`.
+
+**Контракт событий:** дискриминатор `"type"`; `final.response` — тот же `ChatResponse`,
+что вернул бы `/api/chat` (events уже внутри) — фронтенд рендерит финал существующим
+путём `addBotMessage`.
+
+**Отложено в P2:** sandbox-исполнение кода/файлов (нужны сами инструменты `run_code`/
+`read_file`), трансляция SSE `opencode serve` в `AgentEvent`, инструменты из конфига.
+
 ## Заготовки под P1 (встроены дизайном, не кодом)
 
 | P1-задача | Заготовка из P0 |
