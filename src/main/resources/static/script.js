@@ -206,6 +206,27 @@ function updateTokenCounter() {
     tokenCounter.classList.remove('hidden');
 }
 
+/* Служебная запись журнала: уведомление без ответа модели — отмена и т.п. */
+function addSystemMessage(text) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message bot';
+
+    const entry = document.createElement('div');
+    entry.className = 'entry';
+
+    entry.appendChild(buildEntryHead('Служебное', [{ text: nowStamp() }]));
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble system';
+    bubble.textContent = text;
+
+    entry.appendChild(bubble);
+    messageDiv.appendChild(entry);
+    chat.appendChild(messageDiv);
+    chat.scrollTop = chat.scrollHeight;
+    return messageDiv;
+}
+
 /* ---------- Заключение судьи ---------- */
 
 /* Оценка судьи: 7..10 — показание в допуске (зелёный), 4..6 — на грани (янтарь),
@@ -298,9 +319,68 @@ function eventsWord(n) {
     return 'событий';
 }
 
+/* Строка протокола для одного события AgentLoop. Аргументы инструментов
+   и промежуточные тексты — ненадёжный ввод от LLM, поэтому всё рендерится
+   через textContent, без innerHTML. Общая для итоговой трассы и живой. */
+function buildAgentEventRow(ev) {
+    if (!ev || typeof ev !== 'object') return null;
+    const step = ev.step != null ? ev.step : '—';
+
+    const row = document.createElement('div');
+    row.className = 'agent-event';
+
+    const label = document.createElement('span');
+    label.className = 'agent-step';
+    label.textContent = `Шаг ${step}`;
+    row.appendChild(label);
+
+    const text = (value) => {
+        const span = document.createElement('span');
+        span.textContent = value;
+        row.appendChild(span);
+    };
+    const code = (value) => {
+        const el = document.createElement('code');
+        el.className = 'agent-args';
+        el.textContent = value;
+        row.appendChild(el);
+    };
+    const flag = (ok) => {
+        const el = document.createElement('span');
+        el.className = 'agent-flag' + (ok ? ' ok' : ' fault');
+        el.textContent = ok ? '✓' : '✗';
+        row.appendChild(el);
+    };
+
+    switch (ev.type) {
+        case 'step_started':
+            text('— обдумываю задачу');
+            break;
+        case 'tool_call':
+            text('— вызов инструмента: ');
+            code(`${ev.tool ?? '?'}(${truncateText(ev.arguments ?? '', 200)})`);
+            break;
+        case 'tool_result':
+            text(`— результат ${ev.tool ?? '?'}: `);
+            flag(ev.ok);
+            text(truncateText(ev.content ?? '', 300));
+            if (ev.ok === false) row.classList.add('fault');
+            break;
+        case 'assistant_message':
+            text(`— промежуточный ответ: ${truncateText(ev.text ?? '', 300)}`);
+            break;
+        case 'final':
+            text(`— итог (${ev.reason ?? 'без причины'}): ${truncateText(ev.text ?? '', 300)}`);
+            row.classList.add('final');
+            break;
+        default:
+            text(`— событие ${ev.type ?? 'неизвестного типа'}`);
+    }
+    return row;
+}
+
 /* Протокол агентного цикла под ответом: по строке на событие AgentLoop.
-   Аргументы инструментов и промежуточные тексты — ненадёжный ввод от LLM,
-   поэтому всё рендерится через textContent, без innerHTML. */
+   Для живой трассы во время потока строки строит та же buildAgentEventRow. */
 function buildAgentTrace(events) {
     const wrap = document.createElement('details');
     wrap.className = 'agent-trace';
@@ -313,64 +393,39 @@ function buildAgentTrace(events) {
     body.className = 'agent-trace-body';
 
     for (const ev of events) {
-        if (!ev || typeof ev !== 'object') continue;
-        const step = ev.step != null ? ev.step : '—';
-
-        const row = document.createElement('div');
-        row.className = 'agent-event';
-
-        const label = document.createElement('span');
-        label.className = 'agent-step';
-        label.textContent = `Шаг ${step}`;
-        row.appendChild(label);
-
-        const text = (value) => {
-            const span = document.createElement('span');
-            span.textContent = value;
-            row.appendChild(span);
-        };
-        const code = (value) => {
-            const el = document.createElement('code');
-            el.className = 'agent-args';
-            el.textContent = value;
-            row.appendChild(el);
-        };
-        const flag = (ok) => {
-            const el = document.createElement('span');
-            el.className = 'agent-flag' + (ok ? ' ok' : ' fault');
-            el.textContent = ok ? '✓' : '✗';
-            row.appendChild(el);
-        };
-
-        switch (ev.type) {
-            case 'step_started':
-                text('— обдумываю задачу');
-                break;
-            case 'tool_call':
-                text('— вызов инструмента: ');
-                code(`${ev.tool ?? '?'}(${truncateText(ev.arguments ?? '', 200)})`);
-                break;
-            case 'tool_result':
-                text(`— результат ${ev.tool ?? '?'}: `);
-                flag(ev.ok);
-                text(truncateText(ev.content ?? '', 300));
-                if (ev.ok === false) row.classList.add('fault');
-                break;
-            case 'assistant_message':
-                text(`— промежуточный ответ: ${truncateText(ev.text ?? '', 300)}`);
-                break;
-            case 'final':
-                text(`— итог (${ev.reason ?? 'без причины'}): ${truncateText(ev.text ?? '', 300)}`);
-                row.classList.add('final');
-                break;
-            default:
-                text(`— событие ${ev.type ?? 'неизвестного типа'}`);
-        }
-        body.appendChild(row);
+        const row = buildAgentEventRow(ev);
+        if (row) body.appendChild(row);
     }
 
     wrap.appendChild(body);
     return wrap;
+}
+
+/* Живая трасса на время потока: та же структура .agent-trace, но раскрыта
+   и растёт по строке на каждое приходящее событие агента. */
+function createLiveTrace() {
+    const wrap = document.createElement('details');
+    wrap.className = 'agent-trace live';
+    wrap.open = true;
+
+    const summary = document.createElement('summary');
+    summary.textContent = 'Ход работы агента · идёт работа';
+    wrap.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'agent-trace-body';
+    wrap.appendChild(body);
+
+    return { wrap, summary, body, count: 0 };
+}
+
+function appendLiveAgentEvent(trace, ev) {
+    const row = buildAgentEventRow(ev);
+    if (!row) return;
+    trace.body.appendChild(row);
+    trace.count += 1;
+    trace.summary.textContent = `Ход работы агента · ${trace.count} ${eventsWord(trace.count)}`;
+    chat.scrollTop = chat.scrollHeight;
 }
 
 /* ---------- Индикатор обработки: лампы ---------- */
@@ -384,6 +439,7 @@ function showTyping() {
             <div class="typing" role="status" aria-label="Идёт обработка">
                 <span></span><span></span><span></span>
             </div>
+            <p class="typing-status"></p>
         </div>
     `;
     chat.appendChild(wrapper);
@@ -392,6 +448,12 @@ function showTyping() {
 
 function hideTyping() {
     document.getElementById('typing')?.remove();
+}
+
+/* Строка состояния потока под лампами: ненавязчивое «что происходит» */
+function setStreamStatus(text) {
+    const el = document.querySelector('#typing .typing-status');
+    if (el) el.textContent = text;
 }
 
 /* ---------- Приборы: круглые шкалы ---------- */
@@ -1055,7 +1117,228 @@ newChatBtn.addEventListener('click', async () => {
 
 loadSettings();
 
+/* ---------- Клавиша «Стоп» ---------- */
+
+/* Идентификатор запроса: по нему сервер находит и прерывает выполнение
+   /api/chat/stream при нажатии «Стоп» (/api/cancel). */
+function makeRequestId() {
+    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    // Запасной вариант для окружений без crypto.randomUUID (не-secure context)
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* Текущий запрос: { controller, requestId }. Клавиша «Стоп» видна, пока он
+   в полёте — и для потока событий, и для блокирующего запроса. */
+let activeRequest = null;
+
+const stopBtn = document.getElementById('stopBtn');
+
+function endRequest() {
+    activeRequest = null;
+    stopBtn.hidden = true;
+}
+
+/* «Стоп»: обрываем чтение потока и отдельно просим сервер убить вызов LLM.
+   Ответ /api/cancel не важен — ошибки игнорируем. */
+stopBtn.addEventListener('click', () => {
+    if (!activeRequest) return;
+    const { controller, requestId } = activeRequest;
+    activeRequest = null;
+    controller.abort();
+    fetch('/api/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+    }).catch(() => {});
+    hideTyping();
+    addSystemMessage('Остановлено пользователем');
+    setDirective('fault', 'Передача остановлена');
+});
+
 /* ---------- Передача запроса ---------- */
+
+/* Общая часть обоих путей: готовый ChatResponse — в журнал, сессия в настройки */
+function applyChatResponse(data) {
+    hideTyping();
+    addBotMessage(data.reply, data, data.exchanges || []);
+    // Сервер подтвердил сессию диалога — запоминаем для следующих запросов
+    if (data.sessionId) {
+        sessionId = data.sessionId;
+        saveSettings();
+    }
+    setDirective('ready', 'Передача завершена');
+}
+
+/* Резервный путь: старый блокирующий запрос, когда поток событий недоступен */
+async function sendChatFallback(requestData) {
+    const signal = activeRequest ? activeRequest.controller.signal : null;
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData),
+            ...(signal ? { signal } : {}),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            setDirective('fault', data.reply || 'Произошла ошибка');
+        } else {
+            applyChatResponse(data);
+        }
+    } catch (err) {
+        // «Стоп» уже показал «Остановлено пользователем» — тихо выходим
+        if (err && err.name === 'AbortError') return;
+        hideTyping();
+        setDirective('fault', 'Не удалось связаться с сервером: ' + err.message);
+    }
+}
+
+/* Разбор кадра SSE: строки «data: <JSON>»; комментарии «:…» пропускаем.
+   Возвращает true, если кадр оказался завершающим (final/cancelled/error). */
+function parseStreamFrame(frame, handleEvent) {
+    let finished = false;
+    for (const rawLine of frame.split('\n')) {
+        const line = rawLine.replace(/\r$/, '');
+        if (line.startsWith(':')) continue;
+        if (!line.startsWith('data:')) continue;
+
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+
+        let event;
+        try {
+            event = JSON.parse(payload);
+        } catch (err) {
+            continue; // битый кадр — пропускаем, ждём следующий
+        }
+        if (event && typeof event === 'object' && handleEvent(event)) {
+            finished = true;
+        }
+    }
+    return finished;
+}
+
+/* Живой поток: POST /api/chat/stream, кадры SSE разбираются по мере прихода.
+   Ход агента растёт в живой трассе под лампами; итоговый ChatResponse
+   рендерится обычной записью журнала. Если до первого кадра поток недоступен
+   (не 2xx, сеть, обрыв) — тот же запрос уходит по старому блокирующему пути. */
+async function sendChatStream(requestData, requestId) {
+    const controller = new AbortController();
+    activeRequest = { controller, requestId };
+    stopBtn.hidden = false;
+
+    let live = null;
+    let gotFrame = false;
+
+    /* Живая трасса заводится лениво — по первому событию агента */
+    const ensureLiveTrace = () => {
+        if (!live) {
+            live = createLiveTrace();
+            document.getElementById('typing')?.querySelector('.entry')?.appendChild(live.wrap);
+        }
+        return live;
+    };
+
+    const handleEvent = (event) => {
+        switch (event.type) {
+            case 'status':
+                setStreamStatus(typeof event.text === 'string' ? event.text : '');
+                return false;
+            case 'agent':
+                if (event.event && typeof event.event === 'object') {
+                    appendLiveAgentEvent(ensureLiveTrace(), event.event);
+                }
+                return false;
+            case 'final':
+                hideTyping();
+                if (event.response && typeof event.response === 'object') {
+                    applyChatResponse(event.response);
+                } else {
+                    setDirective('fault', 'Сервер прислал некорректный итоговый ответ');
+                }
+                return true;
+            case 'cancelled':
+                hideTyping();
+                addSystemMessage('Остановлено пользователем');
+                setDirective('fault', 'Передача остановлена');
+                return true;
+            case 'error':
+                hideTyping();
+                setDirective('fault', event.message || 'Произошла ошибка');
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    try {
+        const res = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...requestData, requestId }),
+            signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) {
+            await sendChatFallback(requestData);
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finished = false;
+
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            // Кадры разделены пустой строкой; обрыв между чанками держим в буфере
+            let sep;
+            while (!finished && (sep = buffer.indexOf('\n\n')) !== -1) {
+                gotFrame = true;
+                finished = parseStreamFrame(buffer.slice(0, sep), handleEvent);
+                buffer = buffer.slice(sep + 2);
+            }
+            if (finished) {
+                await reader.cancel().catch(() => {});
+                return;
+            }
+        }
+
+        // Хвост без завершающего \n\n: по спецификации SSE доставляется в конце потока
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+            gotFrame = true;
+            finished = parseStreamFrame(buffer, handleEvent);
+        }
+
+        if (!gotFrame) {
+            await sendChatFallback(requestData);
+            return;
+        }
+        if (!finished) {
+            hideTyping();
+            setDirective('fault', 'Сервер завершил передачу без итогового ответа');
+        }
+    } catch (err) {
+        // «Стоп» уже показал «Остановлено пользователем» — тихо выходим
+        if (err && err.name === 'AbortError') return;
+        if (gotFrame) {
+            hideTyping();
+            setDirective('fault', 'Связь с сервером прервалась во время передачи: ' + err.message);
+        } else {
+            // Ни одного кадра не пришло — уходим в блокирующий запрос
+            await sendChatFallback(requestData);
+        }
+    }
+}
+
+/* ---------- Клавиша «Передать» ---------- */
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1072,44 +1355,26 @@ form.addEventListener('submit', async (e) => {
     const selected = splitModelValue(model || '');
     setDirective('busy', `Идёт обработка · ${MODE_LABELS[currentMode]}${judge ? ' · проверка судьёй' : ''}`);
 
+    const requestData = {
+        message,
+        reasoningMode,
+        sessionId: sessionId || null,
+        provider: selected.provider,
+        model: selected.model,
+        judgeEnabled: judge,
+        thinkingEnabled: thinking,
+        maxTokens,
+        temperature,
+        topP,
+        stop: stop || null,
+    };
+
     try {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message,
-                reasoningMode,
-                sessionId: sessionId || null,
-                provider: selected.provider,
-                model: selected.model,
-                judgeEnabled: judge,
-                thinkingEnabled: thinking,
-                maxTokens,
-                temperature,
-                topP,
-                stop: stop || null,
-            }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-            setDirective('fault', data.reply || 'Произошла ошибка');
-        } else {
-            hideTyping();
-            addBotMessage(data.reply, data, data.exchanges || []);
-            // Сервер подтвердил сессию диалога — запоминаем для следующих запросов
-            if (data.sessionId) {
-                sessionId = data.sessionId;
-                saveSettings();
-            }
-            setDirective('ready', 'Передача завершена');
-        }
-    } catch (err) {
-        hideTyping();
-        setDirective('fault', 'Не удалось связаться с сервером: ' + err.message);
+        // Живой поток хода агента; при его недоступности — блокирующий запрос
+        await sendChatStream(requestData, makeRequestId());
     } finally {
         hideTyping();
+        endRequest();
         sendBtn.disabled = false;
         input.disabled = false;
         input.focus();
