@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""
+Mock LLM provider для QA-цикла «Штурмана» (задача 5 плана
+context-compression-shturman, решение 15). ТОЛЬКО stdlib, без зависимостей.
+
+Зачем:
+    Все QA-сценарии компрессии истории (задачи 6/7) должны работать без живого
+    LLM-ключа. Это детерминированный OpenAI-совместимый стаб: сервер «Штурман»
+    подключается к нему через config.dev.json (apiUrl → http://127.0.0.1:18080).
+
+Эндпоинты:
+    POST /v1/chat/completions — OpenAI Chat Completions:
+      stream: false → обычный JSON (choices[0].message, usage)
+      stream: true  → SSE: data: {chunk} … финальный chunk с usage … data: [DONE]
+    GET  /v1/models — список моделей (для /api/models фронта)
+
+Детерминированные метрики (синхронно с SessionHistory.estimateTokens):
+    usage.prompt_tokens     = ceil(сумма_длин_всех_сообщений / 2.5)
+    usage.completion_tokens = 60 + len(JSON_запроса) % 40
+    Сравнение токенов «до/после компрессии» измеримо: при компрессии
+    prompt_tokens реально падает.
+
+Поведение ответов:
+    - ротация 6 заготовленных русских реплик (заметно разных, чтобы стороны
+      mirror-режима визуально различались);
+    - если в messages есть system-сообщение, содержащее фразу «Сводка ранее»
+      (маркер запроса к суммаризатору) → фиксированный короткий «summary-ответ»;
+    - tools в запросе игнорируются (обычный ответ, без tool_calls).
+
+Запуск:
+    python3 scripts/mock-llm.py --port 18080
+
+В фоне (QA-инфраструктура Wave 1–3, убивается F-волной):
+    nohup python3 scripts/mock-llm.py --port 18080 > /tmp/mock-llm.log 2>&1 & \
+        echo $! > /tmp/mock-llm.pid
+"""
+
+import argparse
+import json
+import math
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# Маркер суммаризационного запроса (согласовано с задачей 4/6: промпт
+# суммаризации содержит в system-сообщении эту фразу).
+SUMMARY_MARKER = "Сводка ранее"
+
+# Фиксированный «summary-ответ» — короткий, как результат сжатия истории.
+SUMMARY_REPLY = (
+    "Сводка ранее: обсуждались параметры запуска и выбор моделей; "
+    "приняты бюджет сводки 400 токенов и окно 5 сообщений; "
+    "открытых вопросов не осталось."
+)
+
+# Ротация обычных реплик: заметно разные, чтобы стороны mirror различались.
+REPLIES = [
+    "Курс рассчитан: держим 30 узлов, запас хода 12 часов, отклонений нет.",
+    "Понял, штурман. Записываю в бортовой журнал: все системы в норме, продолжаем движение.",
+    "Готово. По моим расчётам расход топлива снизится примерно на восемь процентов.",
+    "Принял. Проверяю курс повторно: связь устойчивая, манёвров не требуется.",
+    "Зафиксировано в журнале. Если понадобится уточнить расчёт — скажи, пересчитаю.",
+    "Принято к исполнению. Отмечаю в журнале и возвращаюсь к основному маршруту.",
+]
+
+_lock = threading.Lock()
+_counter = 0  # счётчик ротации реплик
+_seen_models = set()  # модели, встречавшиеся в запросах (для GET /v1/models)
+
+
+def _content_chars(message):
+    """Длина content сообщения: строка — её длина; список частей — сумма text; null — 0."""
+    content = message.get("content")
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(len(part.get("text", "")) for part in content if isinstance(part, dict))
+    return 0
+
+
+def _compute_usage(raw_body, messages):
+    """Детерминированный usage (решение 15): prompt — chars/2.5, completion — от длины запроса."""
+    total_chars = sum(_content_chars(m) for m in messages if isinstance(m, dict))
+    prompt_tokens = math.ceil(total_chars / 2.5) if total_chars > 0 else 0
+    completion_tokens = 60 + len(raw_body) % 40
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _pick_reply(messages):
+    """Сводка — фиксированный ответ; иначе — следующая реплика из ротации."""
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and SUMMARY_MARKER in content:
+            return SUMMARY_REPLY
+    global _counter
+    with _lock:
+        reply = REPLIES[_counter % len(REPLIES)]
+        _counter += 1
+    return reply
+
+
+def _split_reply(reply, parts=3):
+    """Разбивает реплику на части для SSE-чанков (минимум одна часть)."""
+    if not reply:
+        return [""]
+    size = max(1, math.ceil(len(reply) / parts))
+    return [reply[i:i + size] for i in range(0, len(reply), size)]
+
+
+class MockLLMHandler(BaseHTTPRequestHandler):
+    server_version = "MockLLM/1.0"
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_sse(self, payload):
+        self.wfile.write(("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8"))
+        self.wfile.flush()
+
+    def do_GET(self):
+        if self.path.rstrip("/") == "/v1/models":
+            with _lock:
+                models = sorted(_seen_models) or ["mock-1"]
+            self._send_json(200, {"data": [{"id": m} for m in models]})
+            return
+        self._send_json(404, {"error": {"message": "Неизвестный эндпоинт: %s" % self.path}})
+
+    def do_POST(self):
+        if self.path.rstrip("/") != "/v1/chat/completions":
+            self._send_json(404, {"error": {"message": "Неизвестный эндпоинт: %s" % self.path}})
+            return
+
+        length = int(self.headers.get("Content-Length") or 0)
+        raw_body = self.rfile.read(length).decode("utf-8", "replace") if length > 0 else ""
+        try:
+            request = json.loads(raw_body) if raw_body else {}
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": {"message": "Некорректный JSON запроса"}})
+            return
+
+        messages = request.get("messages") or []
+        model = request.get("model") or "mock"
+        with _lock:
+            _seen_models.add(model)
+
+        usage = _compute_usage(raw_body, messages)
+        reply = _pick_reply(messages)
+        created = int(time.time())
+
+        if request.get("stream"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.end_headers()
+            chunk_base = {
+                "id": "chatcmpl-mock-%d" % created,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+            }
+            # Первый чанк: роль без контента (формат OpenAI).
+            self._send_sse(dict(chunk_base, choices=[{
+                "index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None,
+            }]))
+            for piece in _split_reply(reply):
+                self._send_sse(dict(chunk_base, choices=[{
+                    "index": 0, "delta": {"content": piece}, "finish_reason": None,
+                }]))
+            # Финальный чанк: finish_reason + usage.
+            self._send_sse(dict(chunk_base, choices=[{
+                "index": 0, "delta": {}, "finish_reason": "stop",
+            }], usage=usage))
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            return
+
+        self._send_json(200, {
+            "id": "chatcmpl-mock-%d" % created,
+            "object": "chat.completion",
+            "created": created,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": reply},
+                "finish_reason": "stop",
+            }],
+            "usage": usage,
+        })
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Детерминированный OpenAI-совместимый mock LLM для QA")
+    parser.add_argument("--port", type=int, default=18080, help="порт HTTP-сервера (по умолчанию 18080)")
+    parser.add_argument("--host", default="127.0.0.1", help="адрес прослушивания (по умолчанию 127.0.0.1)")
+    args = parser.parse_args()
+
+    server = ThreadingHTTPServer((args.host, args.port), MockLLMHandler)
+    print("mock-llm: POST /v1/chat/completions на http://%s:%d (stdlib, детерминированный usage)" % (args.host, args.port))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
