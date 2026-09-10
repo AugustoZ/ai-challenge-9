@@ -8,6 +8,13 @@ COPY build.gradle.kts settings.gradle.kts ./
 COPY gradle gradle
 COPY gradlew gradlew
 
+# Кэш gradle с хоста (доп. контекст gradle-host из docker-compose.yml — ~/.gradle):
+# дистрибутив wrapper'а с маркером .ok и maven-зависимости уже на машине, поэтому
+# сборка не зависит от доступности services.gradle.org и Maven Central через
+# прокси Docker (кейс: у http.docker.internal:3128 таймаут на services.gradle.org).
+COPY --from=gradle-host wrapper/dists/gradle-8.9-bin /root/.gradle/wrapper/dists/gradle-8.9-bin
+COPY --from=gradle-host caches/modules-2 /root/.gradle/caches/modules-2
+
 # Устанавливаем права и собираем зависимости (кэш слоёв)
 RUN chmod +x gradlew
 

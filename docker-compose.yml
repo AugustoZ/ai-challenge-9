@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Кэш gradle хоста как доп. контекст билда: дистрибутив wrapper'а и
+      # maven-зависимости берутся с машины (~/.gradle), а не качаются через
+      # прокси Docker, у которого таймаут на services.gradle.org.
+      additional_contexts:
+        - gradle-host=${HOME}/.gradle
     container_name: aiweb
     ports:
       - "8080:8080"
