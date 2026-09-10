@@ -2258,6 +2258,50 @@ body.maint-on .raw-exchange {
     text-shadow: var(--lamp-label-shadow);
 }
 
+/* ---------- Клавиша разворота окон ответов ---------- */
+
+/* Плашка «Развернуть/Свернуть» над узким колодцем: та же приборная
+    лексика, что у бейджа выше, но нейтральная — управление, а не показание;
+    янтарь зажигается под курсором. В гриде прижимается к левому краю. */
+.expand-toggle {
+    display: inline-flex;
+    align-self: flex-start;
+    justify-self: start;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 2px 7px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.expand-toggle:hover {
+    color: var(--amber);
+    border-color: rgba(var(--lamp-warm), 0.45);
+}
+
+.expand-toggle:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.expand-toggle[hidden] {
+    display: none;
+}
+
+/* Развёрнутый колодец: почти вся высота окна браузера. Свёрнутые
+    потолки задают сами правила .judge-raw и .json-view — здесь они
+    только поднимаются, не трогая цвет, рамки и шрифты колодца */
+.expandable.is-expanded {
+    max-height: 92vh;
+}
+
 /* ---------- Зеркальный режим: пара twin-сессий ---------- */
 
 /* Пульт сравнения под журналом: две приборные панели бок о бок.

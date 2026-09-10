@@ -143,6 +143,68 @@ function buildSummaryBadge() {
     return badge;
 }
 
+/* ---------- Клавиша разворота окон ответов ---------- */
+
+/* Окна сырых текстов записи (вердикт судьи, payload обменов) обрезаны
+    потолком и листаются в узкой полосе. Клавиша «Развернуть» поднимает
+    потолок почти на весь экран, «Свернуть» возвращает узкую полосу.
+    Клавиша появляется только когда контент действительно переполняет
+    колодец; на коротких ответах её нет. */
+
+const EXPAND_SLACK = 2; /* запас против дрожания на границе потолка */
+let expandSeq = 0;      /* счётчик id колодцев для aria-controls */
+
+/* Переполняет ли контент свёрнутый потолок. В развёрнутом состоянии класс
+    снимается на время замера: сверяем всегда с одним и тем же потолком. */
+function expandOverflow(box) {
+    const wasExpanded = box.classList.contains('is-expanded');
+    if (wasExpanded) box.classList.remove('is-expanded');
+    const overflowing = box.scrollHeight > box.clientHeight + EXPAND_SLACK;
+    if (wasExpanded) box.classList.add('is-expanded');
+    return overflowing;
+}
+
+/* Пересчёт клавиши по фактическому переполнению. Пока колодец спрятан
+    (details закрыт, вкладка не построена) — замер бессмыслен, ничего
+    не трогаем; ResizeObserver вызовет снова при раскрытии и ресайзе. */
+function syncExpandToggle(box, btn) {
+    if (!box.isConnected || box.clientHeight === 0) return;
+    if (!expandOverflow(box)) {
+        box.classList.remove('is-expanded');
+        btn.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        btn.textContent = 'Развернуть';
+        return;
+    }
+    btn.hidden = false;
+}
+
+/* Клавиша-плашка в духе бейджа «Сводка применена»: настоящая кнопка,
+    состояние — в aria-expanded, управляется с клавиатуры. Наблюдение
+    за размером колодца (ResizeObserver) пересчитывает потребность в
+    развороте: закрытие/раскрытие details, шрифты, ресайз окна и любые
+    дописывания контента (в том числе после завершения стрима). */
+function buildExpandToggle(box) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'expand-toggle';
+    btn.hidden = true;
+    btn.textContent = 'Развернуть';
+    if (!box.id) box.id = `expandable-${++expandSeq}`;
+    btn.setAttribute('aria-controls', box.id);
+    btn.setAttribute('aria-expanded', 'false');
+    btn.addEventListener('click', () => {
+        const expanded = box.classList.toggle('is-expanded');
+        btn.setAttribute('aria-expanded', String(expanded));
+        btn.textContent = expanded ? 'Свернуть' : 'Развернуть';
+    });
+
+    box.classList.add('expandable');
+    const observer = new ResizeObserver(() => syncExpandToggle(box, btn));
+    observer.observe(box);
+    return btn;
+}
+
 function addMessage(text) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message user';
@@ -333,6 +395,7 @@ function buildJudgeReport(judge) {
         const raw = document.createElement('pre');
         raw.className = 'judge-raw';
         raw.textContent = judge.raw;
+        body.appendChild(buildExpandToggle(raw));
         body.appendChild(raw);
     }
 
@@ -1125,7 +1188,9 @@ function buildRawExchange(exchanges) {
         head.appendChild(meta);
 
         item.appendChild(head);
-        item.appendChild(buildPayloadBlock(ex.payload));
+        const payload = buildPayloadBlock(ex.payload);
+        item.appendChild(buildExpandToggle(payload));
+        item.appendChild(payload);
         wrap.appendChild(item);
     }
     return wrap;
