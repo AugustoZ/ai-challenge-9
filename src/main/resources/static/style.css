@@ -2238,6 +2238,204 @@ body.maint-on .raw-exchange {
     color: var(--ink-faint);
 }
 
+/* ---------- Бейдж «Сводка применена» ---------- */
+
+/* Янтарная пластина: механика сжатия участвовала в обмене —
+    та же формула лампы, что у клавиш-табло */
+.summary-badge {
+    display: inline-flex;
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--lamp-text);
+    background: var(--amber-soft);
+    border: 1px solid rgba(var(--lamp-warm), 0.45);
+    border-radius: var(--radius);
+    padding: 2px 7px;
+    text-shadow: var(--lamp-label-shadow);
+}
+
+/* ---------- Зеркальный режим: пара twin-сессий ---------- */
+
+/* Пульт сравнения под журналом: две приборные панели бок о бок.
+   Дисциплина цвета: эталонная сторона «Без сжатия» — зелёная лампа
+   (показания), испытуемая «Со сжатия» — янтарная (механика под проверкой),
+   отказы — красным. */
+.mirror {
+    flex-shrink: 0;
+    padding: 10px 20px 12px;
+    background: var(--panel-deep);
+    border-top: 1px solid var(--bezel);
+}
+
+.mirror[hidden] {
+    display: none;
+}
+
+.mirror-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.mirror-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.mirror-col-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--bezel);
+}
+
+.mirror-col-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+/* Лампа канала: как маячок живой трассы, цвет — по роли стороны */
+.mirror-col-title::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(var(--lamp-cool), 0.7);
+}
+
+.mirror-col[data-side="compressed"] .mirror-col-title {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+}
+
+.mirror-col[data-side="compressed"] .mirror-col-title::before {
+    background: var(--amber);
+    box-shadow: 0 0 6px rgba(var(--lamp-warm), 0.7);
+}
+
+.mirror-col-total {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--green);
+    white-space: nowrap;
+}
+
+/* Показания сторон накапливаются: прокрутка живёт внутри колонки,
+    журнал и строка передачи не вытесняются длинными ответами */
+.mirror-col-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
+    max-height: 32vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.mirror-col-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.mirror-col-body::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.mirror-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 11px;
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    animation: entry-in 0.16s var(--ease-snap);
+}
+
+/* Строка топлива в узкой колонке переносится, а не прячется за многоточие */
+.mirror-card .entry-head {
+    max-width: 100%;
+    white-space: normal;
+}
+
+/* Ответ утоплен в колодец колонки */
+.mirror-card .bubble {
+    background: var(--well);
+}
+
+.mirror-card .summary-badge {
+    align-self: flex-start;
+}
+
+/* Отказ стороны: рамка и текст — красным, по дисциплине цвета */
+.mirror-card.fault {
+    border-color: rgba(var(--lamp-alarm), 0.45);
+}
+
+.mirror-card.fault .entry-tag {
+    color: var(--red);
+}
+
+.mirror-error {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--red);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.mirror-empty {
+    margin: 2px 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+}
+
+/* Итоговая строка сравнения под сеткой */
+.mirror-verdict {
+    margin: 9px 0 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-dim);
+}
+
+@media (max-width: 700px) {
+    .mirror {
+        padding: 8px 12px 10px;
+    }
+
+    /* На узких экранах панели сравнения ставятся стеком */
+    .mirror-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (max-width: 600px) {
     .fuel-summary {
         grid-template-columns: repeat(2, 1fr);

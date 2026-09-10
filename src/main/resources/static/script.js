@@ -16,6 +16,8 @@ const clock = document.getElementById('clock');
 const stopInput = document.getElementById('stopSeq');
 const thinkingToggle = document.getElementById('thinkingToggle');
 const judgeToggle = document.getElementById('judgeToggle');
+const compressionToggle = document.getElementById('compressionToggle');
+const mirrorToggle = document.getElementById('mirrorToggle');
 const modelSelect = document.getElementById('modelSelect');
 const resetBtn = document.getElementById('resetBtn');
 
@@ -37,6 +39,7 @@ const MODE_LABELS = {
 const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
 const DEFAULTS = {
     reasoningMode: 'default', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '', thinking: true, judge: false,
+    compressionEnabled: false, mirrorMode: false,
 };
 
 /* Исходный вид бортового журнала — «Новый диалог» возвращает его на место */
@@ -132,6 +135,14 @@ function buildEntryHead(tag, parts) {
     return head;
 }
 
+/* Бейдж «Сводка применена»: янтарная пластина — механика сжатия участвовала в обмене */
+function buildSummaryBadge() {
+    const badge = document.createElement('span');
+    badge.className = 'summary-badge';
+    badge.textContent = 'Сводка применена';
+    return badge;
+}
+
 function addMessage(text) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message user';
@@ -167,13 +178,19 @@ function addBotMessage(text, tokenData, exchanges = []) {
         parts.push({ fuel: true, text: bits.join(' · ') });
     }
     if (tokenData && tokenData.totalTokens != null) {
-        /* Топливо с расшифровкой: токены запроса + токены ответа = сумма */
-        parts.push({
-            fuel: true,
-            text: `Топливо: запрос ${tokenData.promptTokens ?? 0} + ответ ${tokenData.completionTokens ?? 0} = ${tokenData.totalTokens}`,
-        });
+        /* Топливо с расшифровкой: токены запроса + токены ответа = сумма;
+           применённая сводка сжатия добавляет свою статью расхода */
+        let fuelText = `Топливо: запрос ${tokenData.promptTokens ?? 0} + ответ ${tokenData.completionTokens ?? 0} = ${tokenData.totalTokens}`;
+        if (tokenData.summaryApplied && tokenData.summaryTokens != null) {
+            fuelText += ` (+сводка: ${tokenData.summaryTokens})`;
+        }
+        parts.push({ fuel: true, text: fuelText });
     }
     entry.appendChild(buildEntryHead('Ответ', parts));
+
+    if (tokenData && tokenData.summaryApplied) {
+        entry.appendChild(buildSummaryBadge());
+    }
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble md';
@@ -738,6 +755,8 @@ function readSettings() {
         reasoningMode: currentMode,
         thinking: thinkingToggle.getAttribute('aria-pressed') === 'true',
         judge: judgeToggle.getAttribute('aria-pressed') === 'true',
+        compressionEnabled: compressionToggle.getAttribute('aria-pressed') === 'true',
+        mirrorMode: mirrorToggle.getAttribute('aria-pressed') === 'true',
         temperature: settingsControls.temperature.value,
         maxTokens: Math.round(settingsControls.maxTokens.value),
         topP: settingsControls.topP.value,
@@ -778,6 +797,14 @@ function loadSettings() {
 
     const judge = stored && typeof stored.judge === 'boolean' ? stored.judge : DEFAULTS.judge;
     setJudge(judge, { save: false });
+
+    const compression = stored && typeof stored.compressionEnabled === 'boolean'
+        ? stored.compressionEnabled
+        : DEFAULTS.compressionEnabled;
+    setCompression(compression, { save: false });
+
+    const mirror = stored && typeof stored.mirrorMode === 'boolean' ? stored.mirrorMode : DEFAULTS.mirrorMode;
+    setMirror(mirror, { save: false });
 
     setMode(stored && stored.reasoningMode, { save: false });
     loadModels(stored && typeof stored.model === 'string' ? stored.model : '');
@@ -866,6 +893,45 @@ judgeToggle.addEventListener('click', () => {
     setJudge(judgeToggle.getAttribute('aria-pressed') !== 'true');
 });
 
+/* Тумблер «Сжатие истории»: ВКЛ → в контекст уходят последние 5 сообщений
+   и сводка более старых вместо полного перечня. */
+function setCompression(on, { save = true } = {}) {
+    const enabled = Boolean(on);
+    compressionToggle.setAttribute('aria-pressed', String(enabled));
+    compressionToggle.textContent = enabled ? 'Сжатие истории: ВКЛ' : 'Сжатие истории: ВЫКЛ';
+    if (save) saveSettings();
+}
+
+compressionToggle.addEventListener('click', () => {
+    setCompression(compressionToggle.getAttribute('aria-pressed') !== 'true');
+});
+
+/* Тумблер «Режим сравнения»: ВКЛ → каждый запрос уходит параллельно в пару
+   twin-сессий (без сжатия и со сжатием), ответы сравниваются под журналом.
+   Выключение стирает накопленные показания зеркала; twin-сессии остаются
+   на сервере как обычные, основной диалог не затрагивается. */
+function setMirror(on, { save = true } = {}) {
+    const enabled = Boolean(on);
+    mirrorToggle.setAttribute('aria-pressed', String(enabled));
+    mirrorToggle.textContent = enabled ? 'Режим сравнения: ВКЛ' : 'Режим сравнения: ВЫКЛ';
+    if (enabled) {
+        mirrorBlock.hidden = false;
+        for (const side of MIRROR_SIDES) {
+            if (!mirrorState[side.key].exchanges) {
+                mirrorBodies[side.key].replaceChildren(mirrorEmptyNote());
+            }
+        }
+        renderMirrorTotals();
+    } else {
+        finishMirror();
+    }
+    if (save) saveSettings();
+}
+
+mirrorToggle.addEventListener('click', () => {
+    setMirror(mirrorToggle.getAttribute('aria-pressed') !== 'true');
+});
+
 function setMode(rawMode, { save = true } = {}) {
     currentMode = rawMode && Object.prototype.hasOwnProperty.call(MODE_LABELS, rawMode)
         ? rawMode
@@ -920,6 +986,8 @@ resetBtn.addEventListener('click', () => {
     stopInput.value = '';
     setThinking(DEFAULTS.thinking);
     setJudge(DEFAULTS.judge);
+    setCompression(DEFAULTS.compressionEnabled);
+    setMirror(DEFAULTS.mirrorMode);
     setMode(DEFAULTS.reasoningMode);
     if (modelSelect.options.length) modelSelect.selectedIndex = 0;
     saveSettings();
@@ -1704,6 +1772,284 @@ async function restoreSession() {
     renderHistory(messages);
 }
 
+/* ---------- Зеркальный режим: пара twin-сессий ---------- */
+
+const mirrorBlock = document.getElementById('mirrorBlock');
+const mirrorBodies = {
+    full: document.getElementById('mirrorBodyFull'),
+    compressed: document.getElementById('mirrorBodyComp'),
+};
+const mirrorTotals = {
+    full: document.getElementById('mirrorTotalFull'),
+    compressed: document.getElementById('mirrorTotalComp'),
+};
+const mirrorVerdict = document.getElementById('mirrorVerdict');
+
+/* Две стороны сравнения: эталон без сжатия и испытуемая сторона со сжатием */
+const MIRROR_SIDES = [
+    { key: 'full', compression: false, label: 'Без сжатия' },
+    { key: 'compressed', compression: true, label: 'Со сжатием' },
+];
+
+/* Состояние зеркала живёт в JS-памяти страницы и не переживает перезагрузку.
+    По стороне: sessionId twin-сессии (выдаёт сервер первым обменом),
+    total — накопленные токены (null, когда сервер прислал не число),
+    summaryTotal — суммарная статья «сводка», exchanges — число передач. */
+const mirrorState = {};
+for (const side of MIRROR_SIDES) {
+    mirrorState[side.key] = { sessionId: null, total: 0, summaryTotal: 0, exchanges: 0 };
+}
+
+/* Токен, которого сервер не прислал, — не ноль: показываем честное «н/д» */
+function mirrorTokensOrNd(value) {
+    return value == null ? 'н/д' : String(value);
+}
+
+function mirrorEmptyNote() {
+    const p = document.createElement('p');
+    p.className = 'mirror-empty';
+    p.textContent = 'Передач ещё не было';
+    return p;
+}
+
+/* Выключение сравнения: панель убирается, накопленные показания стираются.
+    Сами twin-сессии остаются на сервере и видны в перечне сессий. */
+function finishMirror() {
+    mirrorBlock.hidden = true;
+    for (const side of MIRROR_SIDES) {
+        mirrorState[side.key] = { sessionId: null, total: 0, summaryTotal: 0, exchanges: 0 };
+        mirrorBodies[side.key].replaceChildren();
+    }
+    mirrorVerdict.textContent = 'Сравнение появится после первой передачи';
+}
+
+/* Карточка одной передачи в колонке: ответ + строка топлива,
+    либо карточка отказа — ошибка не выходит за свою сторону */
+function buildMirrorCard(result) {
+    const card = document.createElement('article');
+    card.className = 'mirror-card';
+
+    if (result.fault) {
+        card.classList.add('fault');
+        card.appendChild(buildEntryHead('Отказ', [{ text: nowStamp() }]));
+        const text = document.createElement('p');
+        text.className = 'mirror-error';
+        text.textContent = result.message;
+        card.appendChild(text);
+        return card;
+    }
+
+    const parts = [{ text: nowStamp() }];
+    if (result.elapsedMs != null) {
+        const bits = [fmtElapsed(result.elapsedMs)];
+        const rate = fmtRate(result);
+        if (rate) bits.push(rate);
+        parts.push({ fuel: true, text: bits.join(' · ') });
+    }
+    let fuelText = `Топливо: запрос ${mirrorTokensOrNd(result.promptTokens)}`
+        + ` + ответ ${mirrorTokensOrNd(result.completionTokens)}`
+        + ` = ${mirrorTokensOrNd(result.totalTokens)}`;
+    if (result.summaryApplied && result.summaryTokens != null) {
+        fuelText += ` (+сводка: ${result.summaryTokens})`;
+    }
+    parts.push({ fuel: true, text: fuelText });
+    card.appendChild(buildEntryHead('Ответ', parts));
+
+    if (result.summaryApplied) {
+        card.appendChild(buildSummaryBadge());
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble md';
+    bubble.innerHTML = renderMarkdown(result.reply || '');
+    highlightCode(bubble);
+    card.appendChild(bubble);
+    return card;
+}
+
+/* Накопленные показания сторон и итоговая строка сравнения */
+function renderMirrorTotals() {
+    for (const side of MIRROR_SIDES) {
+        const st = mirrorState[side.key];
+        mirrorTotals[side.key].textContent = st.exchanges
+            ? `Итог: ${mirrorTokensOrNd(st.total)} ток`
+            : 'Итог: —';
+    }
+
+    const full = mirrorState.full;
+    const comp = mirrorState.compressed;
+    if (!full.exchanges && !comp.exchanges) {
+        mirrorVerdict.textContent = 'Сравнение появится после первой передачи';
+        return;
+    }
+    const saving = full.total != null && comp.total != null && full.total > 0
+        ? `экономия: ${Math.round(((full.total - comp.total) / full.total) * 100)}%`
+        : 'экономия: н/д';
+    mirrorVerdict.textContent =
+        `Без сжатия: ${mirrorTokensOrNd(full.total)} ток`
+        + ` · Со сжатия: ${mirrorTokensOrNd(comp.total)} ток`
+        + ` (из них сводка: ${mirrorTokensOrNd(comp.exchanges ? comp.summaryTotal : null)})`
+        + ` · ${saving}`;
+}
+
+/* Отказ стороны оседает карточкой в её колонке: обмен без токенов
+    накопленные показания не меняет и обменом не считается */
+function settleTwin(side, result) {
+    if (result.fault) {
+        const body = mirrorBodies[side.key];
+        body.appendChild(buildMirrorCard({ fault: true, message: result.message }));
+        body.scrollTop = body.scrollHeight;
+    }
+    return result;
+}
+
+function applyTwinResponse(side, data) {
+    const st = mirrorState[side.key];
+    if (data.sessionId) st.sessionId = data.sessionId;
+    if (data.totalTokens != null) {
+        if (st.total != null) st.total += data.totalTokens;
+    } else {
+        st.total = null;
+    }
+    if (data.summaryTokens != null) st.summaryTotal += data.summaryTokens;
+    st.exchanges += 1;
+    mirrorBodies[side.key].appendChild(buildMirrorCard(data));
+    mirrorBodies[side.key].scrollTop = mirrorBodies[side.key].scrollHeight;
+    renderMirrorTotals();
+}
+
+/* Резервный путь twin-стороны: блокирующий /api/chat, когда поток недоступен */
+async function sendTwinBlocking(side, requestData) {
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestData),
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data) {
+            return settleTwin(side, { fault: true, message: (data && data.reply) || `Сервер ответил ${res.status}` });
+        }
+        applyTwinResponse(side, data);
+        return { fault: false };
+    } catch (err) {
+        return settleTwin(side, { fault: true, message: 'Нет связи с сервером: ' + err.message });
+    }
+}
+
+/* Один twin-запрос: тот же /api/chat/stream, итог — в свою колонку зеркала.
+    Любой сбой стороны (сеть, не-2xx, кадр error) оседает карточкой отказа
+    в её колонке и наружу не выходит: вторая сторона рендерится нормально. */
+async function sendTwinStream(side, requestData) {
+    const requestId = makeRequestId();
+    let gotFrame = false;
+
+    try {
+        const res = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...requestData, requestId }),
+        });
+
+        if (!res.ok || !res.body) {
+            return await sendTwinBlocking(side, requestData);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finished = false;
+        let outcome = null;
+
+        const handleEvent = (event) => {
+            switch (event.type) {
+                case 'status':
+                    setStreamStatus(`${side.label}: ${typeof event.text === 'string' ? event.text : ''}`);
+                    return false;
+                case 'final':
+                    if (event.response && typeof event.response === 'object') {
+                        applyTwinResponse(side, event.response);
+                        outcome = { fault: false };
+                    } else {
+                        outcome = { fault: true, message: 'Сервер прислал некорректный итоговый ответ' };
+                    }
+                    return true;
+                case 'cancelled':
+                    outcome = { fault: true, message: 'Передача остановлена' };
+                    return true;
+                case 'error':
+                    outcome = { fault: true, message: event.message || 'Произошла ошибка' };
+                    return true;
+                default:
+                    return false;
+            }
+        };
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            let sep;
+            while (!finished && (sep = buffer.indexOf('\n\n')) !== -1) {
+                gotFrame = true;
+                finished = parseStreamFrame(buffer.slice(0, sep), handleEvent);
+                buffer = buffer.slice(sep + 2);
+            }
+            if (finished) {
+                await reader.cancel().catch(() => {});
+                break;
+            }
+        }
+
+        if (!finished) {
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+                gotFrame = true;
+                finished = parseStreamFrame(buffer, handleEvent);
+            }
+        }
+
+        if (outcome) return settleTwin(side, outcome);
+        if (!gotFrame) return await sendTwinBlocking(side, requestData);
+        return settleTwin(side, { fault: true, message: 'Сервер завершил передачу без итогового ответа' });
+    } catch (err) {
+        if (err && err.name === 'AbortError') {
+            return settleTwin(side, { fault: true, message: 'Передача остановлена' });
+        }
+        if (gotFrame) {
+            return settleTwin(side, { fault: true, message: 'Связь с сервером прервалась во время передачи: ' + err.message });
+        }
+        return await sendTwinBlocking(side, requestData);
+    }
+}
+
+/* Пара параллельных передач: оба fetch отправляются одновременно —
+    ожидание одной стороны ради другой лишило бы сравнение смысла.
+    Каждый twin несёт свой sessionId и явное compressionEnabled. */
+async function runMirrorExchange(baseRequest) {
+    for (const side of MIRROR_SIDES) {
+        if (!mirrorState[side.key].exchanges) {
+            mirrorBodies[side.key].replaceChildren();
+        }
+    }
+
+    const attempts = MIRROR_SIDES.map((side) => {
+        const requestData = {
+            ...baseRequest,
+            sessionId: mirrorState[side.key].sessionId,
+            judgeEnabled: false,
+            compressionEnabled: side.compression,
+        };
+        return sendTwinStream(side, requestData);
+    });
+
+    const results = await Promise.all(attempts);
+    const anyOk = results.some((r) => !r.fault);
+    setDirective(anyOk ? 'ready' : 'fault', anyOk ? 'Сравнение завершено' : 'Обе стороны зеркала отказали');
+    loadSessions();
+    return results;
+}
+
 loadSettings();
 restoreSession();
 loadSessions();
@@ -1940,22 +2286,24 @@ form.addEventListener('submit', async (e) => {
     const message = input.value.trim();
     if (!message || sendBtn.disabled) return;
 
+    const mirrorOn = mirrorToggle.getAttribute('aria-pressed') === 'true';
+
     addMessage(message);
     input.value = '';
     sendBtn.disabled = true;
     input.disabled = true;
     showTyping();
-    const { reasoningMode, thinking, judge, temperature, maxTokens, topP, stop, model } = readSettings();
+    const { reasoningMode, thinking, judge, compressionEnabled, temperature, maxTokens, topP, stop, model } = readSettings();
     const selected = splitModelValue(model || '');
-    setDirective('busy', `Идёт обработка · ${MODE_LABELS[currentMode]}${judge ? ' · проверка судьёй' : ''}`);
+    setDirective('busy', mirrorOn
+        ? 'Идёт сравнение · пара параллельных передач'
+        : `Идёт обработка · ${MODE_LABELS[currentMode]}${judge ? ' · проверка судьёй' : ''}`);
 
-    const requestData = {
+    const commonRequest = {
         message,
         reasoningMode,
-        sessionId: sessionId || null,
         provider: selected.provider,
         model: selected.model,
-        judgeEnabled: judge,
         thinkingEnabled: thinking,
         maxTokens,
         temperature,
@@ -1964,8 +2312,19 @@ form.addEventListener('submit', async (e) => {
     };
 
     try {
-        // Живой поток хода агента; при его недоступности — блокирующий запрос
-        await sendChatStream(requestData, makeRequestId());
+        if (mirrorOn) {
+            // Зеркало: основной диалог и его счётчики не затрагиваются
+            await runMirrorExchange(commonRequest);
+        } else {
+            const requestData = {
+                ...commonRequest,
+                sessionId: sessionId || null,
+                judgeEnabled: judge,
+                compressionEnabled,
+            };
+            // Живой поток хода агента; при его недоступности — блокирующий запрос
+            await sendChatStream(requestData, makeRequestId());
+        }
     } finally {
         hideTyping();
         endRequest();
