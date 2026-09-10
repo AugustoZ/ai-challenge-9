@@ -6,6 +6,8 @@ import com.example.aiweb.client.ChatResult
 import com.example.aiweb.client.ExchangeLog
 import com.example.aiweb.client.JudgePrompts
 import com.example.aiweb.client.LLMCall
+import com.example.aiweb.client.LLMClient
+import com.example.aiweb.client.OpenAIHistorySummarizer
 import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.client.TeamRole
 import com.example.aiweb.config.AppConfig
@@ -23,6 +25,9 @@ import com.example.aiweb.model.SessionSummary
 import com.example.aiweb.model.SessionsCleared
 import com.example.aiweb.model.SessionsResponse
 import com.example.aiweb.model.StreamEvent
+import com.example.aiweb.session.HistoryCompressor
+import com.example.aiweb.session.HistorySummarizer
+import com.example.aiweb.session.MergeResult
 import com.example.aiweb.session.Session
 import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.session.SessionStore
@@ -61,15 +66,38 @@ private val HISTORY_MODES = setOf(
 
 /**
  * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
- * собственный AIClient; выбор провайдера — по ChatRequest.provider.
+ * собственный LLMClient; выбор провайдера — по ChatRequest.provider.
+ *
+ * Швы для тестов (реализации по умолчанию работают в продакшене): хранилище
+ * сессий, фабрика LLM-клиентов ([FakeLLMClient ] как транспорт в Routes-тестах)
+ * и фабрика суммаризаторов (реальная — [OpenAIHistorySummarizer], фейк в тестах).
  */
-fun Route.aiRoutes(config: AppConfig) {
-    val clients: Map<ProviderConfig, AIClient> =
-        config.providers.associateWith { AIClient(it) }
+fun Route.aiRoutes(
+    config: AppConfig,
+    store: SessionStore = sessionStoreFor(config.dataDir),
+    clientFactory: (ProviderConfig) -> LLMClient = { AIClient(it) },
+    summarizerFactory: (LLMClient) -> HistorySummarizer = {
+        OpenAIHistorySummarizer(it, config.compressionSummaryMaxTokens)
+    }
+) {
+    val clients: Map<ProviderConfig, LLMClient> =
+        config.providers.associateWith { clientFactory(it) }
 
     // Серверная память диалога для одиночных режимов: без каталога данных (AI_DATA_DIR)
     // — память процесса, с каталогом — файловое хранилище (маршруты не меняются)
-    val sessions: SessionStore = sessionStoreFor(config.dataDir)
+    val sessions: SessionStore = store
+
+    // Компрессор истории на каждый провайдер: окно/порог/бюджет из конфига,
+    // суммаризатор реальный (оборачивает LLM-клиента провайдера) либо фейк в тестах.
+    val compressors: Map<ProviderConfig, HistoryCompressor> =
+        config.providers.associateWith { provider ->
+            HistoryCompressor(
+                windowSize = config.compressionWindowSize,
+                mergeEvery = config.compressionMergeEvery,
+                summaryMaxTokens = config.compressionSummaryMaxTokens,
+                summarizer = summarizerFactory(clients.getValue(provider))
+            )
+        }
 
     // Активные запросы стриминга для POST /api/cancel
     val activeRequests = ActiveRequests()
@@ -118,7 +146,10 @@ fun Route.aiRoutes(config: AppConfig) {
                 ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
                 ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
                 ReasoningMode.AGENT -> handleAgent(chat.aiClient, body, chat.provider, chat.session, registry)
-                else -> handleSingle(chat.aiClient, body, chat.mode, chat.session)
+                else -> handleSingle(
+                    chat.aiClient, body, chat.mode, chat.session,
+                    sessions, config, compressors.getValue(chat.provider)
+                )
             }
 
             call.respond(finalizeResponse(chat.aiClient, body, response, chat.session, sessions, startedAt))
@@ -161,7 +192,10 @@ fun Route.aiRoutes(config: AppConfig) {
                         ReasoningMode.AGENT -> handleAgent(chat.aiClient, body, chat.provider, chat.session, registry) { event ->
                             frames.trySend(StreamEvent.Agent(event))
                         }
-                        else -> handleSingle(chat.aiClient, body, chat.mode, chat.session)
+                        else -> handleSingle(
+                            chat.aiClient, body, chat.mode, chat.session,
+                            sessions, config, compressors.getValue(chat.provider)
+                        )
                     }
                     val finalized = finalizeResponse(
                         chat.aiClient, body, response, chat.session, sessions, startedAt
@@ -352,7 +386,7 @@ private suspend fun ApplicationCall.receiveChatRequest(): ChatRequest? {
 private class ChatContext(
     val mode: ReasoningMode,
     val provider: ProviderConfig,
-    val aiClient: AIClient,
+    val aiClient: LLMClient,
     val session: Session?
 )
 
@@ -364,7 +398,7 @@ private class ChatContext(
  */
 private fun resolveChat(
     config: AppConfig,
-    clients: Map<ProviderConfig, AIClient>,
+    clients: Map<ProviderConfig, LLMClient>,
     sessions: SessionStore,
     body: ChatRequest
 ): ChatContext {
@@ -393,7 +427,7 @@ private fun resolveChat(
  * кадром Status до начала проверки; в блокирующем /api/chat остаётся пустым.
  */
 private suspend fun finalizeResponse(
-    aiClient: AIClient,
+    aiClient: LLMClient,
     body: ChatRequest,
     response: ChatResponse,
     session: Session?,
@@ -430,21 +464,55 @@ private suspend fun finalizeResponse(
  * дополнительно указывается модели в системной инструкции, чтобы ответ не обрывался.
  *
  * Если передана серверная сессия [session], между system-промтом и новым вопросом
- * вставляется обрезанная история диалога (SessionHistory.trim с запасом под «Топливо»);
- * идентификатор сессии возвращается в ChatResponse.sessionId. System-сообщения в
- * сессии не живут — они собираются в момент запроса.
+ * вставляется история диалога; идентификатор сессии возвращается в ChatResponse.sessionId.
+ * System-сообщения в сессии не живут — они собираются в момент запроса.
+ *
+ * Сжатие истории (если включено на запросе/в конфиге):
+ *  - merge выполняется СИНХРОННО до ответа модели: накопленное вне окна сжимается
+ *    в сводку, слитые сообщения удаляются из хранилища, сессия перечитывается;
+ *  - сбой суммаризатора чат не роняет: лог + прежний summary, summaryTokens=null;
+ *  - вид запроса собирается planView (сводка как system + окно), затем СТАДИЯ-2 —
+ *    SessionHistory.trim ПОСЛЕ инъекции сводки (последний этап, бюджет с учётом сводки).
  */
 private suspend fun handleSingle(
-    aiClient: AIClient,
+    aiClient: LLMClient,
     body: ChatRequest,
     mode: ReasoningMode,
-    session: Session?
+    session: Session?,
+    sessions: SessionStore,
+    config: AppConfig,
+    compressor: HistoryCompressor
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
-    val history = session
-        ?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) }
-        ?: emptyList()
+    val compressionOn = body.compressionEnabled ?: config.compressionEnabled
+
+    // 1) Синхронный merge до ответа. runCatching: исключение суммаризатора —
+    //    деградация (прежний summary остаётся), а не падение чата.
+    var mergeResult: MergeResult? = null
+    var viewSession: Session? = session
+    if (compressionOn && session != null) {
+        mergeResult = runCatching { compressor.merge(session.summary, session.messages) }
+            .onFailure { e ->
+                println(
+                    "Компрессия истории сессии «${session.id}»: суммаризатор не сработал (${e.message}); " +
+                        "продолжаю без обновления сводки"
+                )
+            }
+            .getOrNull()
+        if (mergeResult != null) {
+            viewSession = sessions.applyCompressionResult(session.id, mergeResult.newSummary, mergeResult.removeCount)
+                ?: session
+        }
+    }
+
+    // 2) Вид запроса: при компрессии — planView (сводка как system-сообщение + окно),
+    //    затем СТАДИЯ-2 SessionHistory.trim (последний этап). Без компрессии — как раньше.
+    val history = if (compressionOn && viewSession != null) {
+        SessionHistory.trim(compressor.planView(viewSession.summary, viewSession.messages), body.maxTokens ?: 0)
+    } else {
+        viewSession?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) } ?: emptyList()
+    }
 
     val context = if (mode == ReasoningMode.DEFAULT) {
         buildList {
@@ -481,7 +549,9 @@ private suspend fun handleSingle(
 
     return result.toResponse().copy(
         sessionId = session?.id,
-        exchanges = ExchangeLog.since(startSeq)
+        exchanges = ExchangeLog.since(startSeq),
+        summaryTokens = mergeResult?.tokens,
+        summaryApplied = compressionOn && viewSession?.summary != null
     )
 }
 
@@ -500,7 +570,7 @@ private suspend fun handleSingle(
  * (общий пост-when блок после ответа) в память не пишет.
  */
 private suspend fun handleAgent(
-    aiClient: AIClient,
+    aiClient: LLMClient,
     body: ChatRequest,
     provider: ProviderConfig,
     session: Session?,
@@ -555,7 +625,7 @@ private suspend fun handleAgent(
  * поровну на 4 вызова (3 роли + саммари); иначе суммарный объём превысил бы
  * установленный лимит в 4 раза. Токены всех вызовов суммируются.
  */
-private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatResponse =
+private suspend fun handleTeam(aiClient: LLMClient, body: ChatRequest): ChatResponse =
     coroutineScope {
         val startSeq = ExchangeLog.mark()
         val perCallBudget = body.maxTokens?.let { (it / 4).coerceAtLeast(1) }
@@ -656,7 +726,7 @@ private suspend fun handleTeam(aiClient: AIClient, body: ChatRequest): ChatRespo
  *    пользователю вместе с самим промтом.
  * Лимит maxTokens делится пополам между этапами.
  */
-private suspend fun handlePromptToPrompt(aiClient: AIClient, body: ChatRequest): ChatResponse {
+private suspend fun handlePromptToPrompt(aiClient: LLMClient, body: ChatRequest): ChatResponse {
     val startSeq = ExchangeLog.mark()
     val stageBudget = body.maxTokens?.let { (it / 2).coerceAtLeast(1) }
 
@@ -749,7 +819,7 @@ private fun sumTokens(values: List<Int?>): Int? =
  * ответ — вместо заключения возвращается отчёт с указанием причины.
  */
 private suspend fun runJudge(
-    aiClient: AIClient,
+    aiClient: LLMClient,
     body: ChatRequest,
     response: ChatResponse,
     elapsedMs: Long

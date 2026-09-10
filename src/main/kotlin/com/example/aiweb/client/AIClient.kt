@@ -98,7 +98,7 @@ class AIClient(private val provider: ProviderConfig) : LLMClient {
     /**
      * Запрашивает у провайдера список доступных моделей.
      */
-    suspend fun listModels(): List<String> =
+    override suspend fun listModels(): List<String> =
         if (provider.type == ProviderConfig.TYPE_OPENCODE) listOpenCodeModels() else listOpenAIModels()
 
     /** Список моделей OpenAI-совместимого API: GET {base}/models. */

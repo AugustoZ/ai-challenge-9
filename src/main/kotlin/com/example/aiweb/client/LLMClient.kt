@@ -10,6 +10,12 @@ import com.example.aiweb.model.OpenAIToolSpec
 interface LLMClient {
     /** Отправляет готовый контекст модели и возвращает результат обращения. */
     suspend fun ask(call: LLMCall): ChatResult
+
+    /**
+     * Список моделей провайдера; по умолчанию пуст — шов для тестовых фейков
+     * (реальные [AIClient] переопределяют запросом к API).
+     */
+    suspend fun listModels(): List<String> = emptyList()
 }
 
 /** Параметры одного обращения к LLM; null — параметр не задан (берётся из конфигурации провайдера). */
