@@ -8,6 +8,8 @@ import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.OpenAIMessage
+import com.example.aiweb.model.OpenAIToolCall
+import com.example.aiweb.model.OpenAIToolCallFunction
 import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.InMemorySessionStore
 import com.example.aiweb.session.Session
@@ -363,6 +365,159 @@ class CompressionRoutesTest {
     fun `поднятие Application с фейками - приватный порт, без внешних вызовов`() {
         withApp(config(enabled = true, window = 2, mergeEvery = 2)) {
             assertTrue(base.startsWith("http://127.0.0.1:"))
+        }
+    }
+
+    // --- 7. Агентный режим (задача 8): та же схема, что в одиночных, но seed цикла ---
+
+    /** Ход с инструментом: user → assistant(tool_calls) → role="tool" (паттерн AgentLoopTest). */
+    private fun toolTurn(question: String, callId: String): List<OpenAIMessage> = listOf(
+        user(question),
+        OpenAIMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(
+                OpenAIToolCall(
+                    id = callId,
+                    type = "function",
+                    function = OpenAIToolCallFunction(name = "calculator", arguments = "{\"expression\":\"2+2\"}")
+                )
+            )
+        ),
+        OpenAIMessage(role = "tool", content = "4", toolCallId = callId)
+    )
+
+    @Test
+    fun `агент - порог достигнут - merge до цикла, сводка в хранилище, слитые удалены, seed содержит system-сводку`() {
+        withApp(config(enabled = true, window = 2, mergeEvery = 2)) {
+            // 6 сообщений, окно 2 → вне окна 4 ≥ mergeEvery 2 → merge до запуска цикла
+            val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20))
+            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertTrue(parsed.summaryApplied, "сводка должна быть подставлена в seed цикла")
+            assertEquals(7, parsed.summaryTokens, "токены суммаризатора — в summaryTokens, не в TokenSums агента")
+            assertEquals("ответ сервера", parsed.reply, "агентный цикл отработал поверх сжатого seed")
+
+            // Merge ровно один раз, ДО цикла (суммаризатор не зван из шагов цикла)
+            assertEquals(1, summarizer.calls.size)
+
+            // Хранилище: summary записан, слитые ходы удалены, окно + новый ход агента на месте
+            val after = sessions.get(s.id)!!
+            assertEquals("сводка", after.summary)
+            assertEquals(4, after.messages.size)
+            assertEquals(listOf("вопрос 3", "ответ 3"), after.messages.take(2).map { it.content!!.take(8).trimEnd() })
+            assertEquals(listOf("новый вопрос", "ответ сервера"), after.messages.drop(2).map { it.content })
+            assertFalse(after.messages.any { it.content!!.startsWith("вопрос 1") })
+
+            // Первый LLMCall цикла: system-промт агента, затем seed со сводкой system
+            val firstCall = chat.calls.first()
+            val summaryIndex = firstCall.messages.indexOfFirst { it.role == "system" && it.content == "сводка" }
+            assertTrue(summaryIndex > 0, "сводка должна быть system-сообщением seed (после промта агента)")
+            val newUserIndex = firstCall.messages.indexOfFirst { it.role == "user" && it.content == "новый вопрос" }
+            assertTrue(newUserIndex > summaryIndex, "новый вопрос — после сводки")
+            assertTrue(
+                firstCall.messages.any { it.role == "user" && it.content!!.startsWith("вопрос 3") },
+                "окно после merge должно остаться в seed"
+            )
+            assertFalse(
+                firstCall.messages.any { it.content.orEmpty().startsWith("вопрос 1") },
+                "слитые в сводку ходы в seed не возвращаются"
+            )
+        }
+    }
+
+    @Test
+    fun `агент - сводка уже есть и порога нет - summaryApplied true, summaryTokens null, суммаризатор не зван`() {
+        withApp(config(enabled = true, window = 2, mergeEvery = 100)) {
+            val s = seed(turn(1, 20) + turn(2, 20), summary = "старая сводка")
+            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertTrue(parsed.summaryApplied)
+            assertNull(parsed.summaryTokens)
+            assertEquals(0, summarizer.calls.size)
+            assertTrue(
+                chat.calls.first().messages.any { it.role == "system" && it.content == "старая сводка" },
+                "сводка должна уйти в первый вызов цикла системным сообщением"
+            )
+        }
+    }
+
+    @Test
+    fun `агент - окно наезжает на tool - пара assistant(tool_calls) и tool в seed не разорвана`() {
+        withApp(config(enabled = true, window = 3, mergeEvery = 100)) {
+            // 9 сообщений; окно 3 начинается ровно с role="tool" (индекс 6) —
+            // sliceWindow обязан расшириться назад до user("вопрос 3")
+            val s = seed(turn(1, 20) + turn(2, 20) + toolTurn("вопрос 3", "call-1") + turn(4, 20))
+            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+
+            val firstCall = chat.calls.first().messages
+            assertTrue(
+                firstCall.any { it.role == "tool" && it.toolCallId == "call-1" },
+                "tool-сообщение должно попасть в seed — иначе сценарий наезда окна не воспроизведён"
+            )
+            // Инвариант пар: у каждого tool в seed есть предшествующий assistant(tool_calls) с тем же id
+            firstCall.forEachIndexed { index, message ->
+                if (message.role == "tool") {
+                    val owner = firstCall.subList(0, index).lastOrNull {
+                        it.role == "assistant" && it.toolCalls?.any { call -> call.id == message.toolCallId } == true
+                    }
+                    assertTrue(
+                        owner != null,
+                        "осиротевший tool без assistant(tool_calls) на позиции $index — провайдер вернёт 400"
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `агент - суммаризатор падает - агент отвечает, прежний summary сохранён, summaryTokens null`() {
+        withApp(config(enabled = true, window = 2, mergeEvery = 2)) {
+            val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20), summary = "старая сводка")
+            summarizer.failWith = RuntimeException("сбой суммаризатора")
+
+            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("ответ сервера", parsed.reply, "агент не падает от сбоя суммаризатора")
+            assertNull(parsed.summaryTokens, "сводка не обновлялась — токенов суммаризатора нет")
+            assertTrue(parsed.summaryApplied, "прежняя сводка подставлена в seed")
+            assertEquals(1, summarizer.calls.size)
+
+            val after = sessions.get(s.id)!!
+            assertEquals("старая сводка", after.summary, "прежний summary не потерян")
+            assertTrue(after.messages.any { it.content!!.startsWith("вопрос 1") }, "слиять нельзя — история не тронута")
+            assertEquals(8, after.messages.size, "6 исходных + новый ход, ничего не удалено")
+        }
+    }
+
+    @Test
+    fun `агент - компрессия явно выключена в запросе - seed как раньше, сводка нигде`() {
+        withApp(config(enabled = true, window = 2, mergeEvery = 2)) {
+            val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20), summary = "старая сводка")
+            val response = postChat("новый вопрос", s.id, compression = false, reasoningMode = "agent")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertFalse(parsed.summaryApplied, "явное false в запросе перекрывает конфиг true")
+            assertNull(parsed.summaryTokens)
+            assertEquals(0, summarizer.calls.size)
+
+            // Seed как раньше: полная история через trim, без system-сводки
+            val firstCall = chat.calls.first().messages
+            assertFalse(firstCall.any { it.role == "system" && it.content == "старая сводка" })
+            assertTrue(firstCall.any { it.role == "user" && it.content!!.startsWith("вопрос 1") }, "история не ужата")
+
+            val after = sessions.get(s.id)!!
+            assertEquals("старая сводка", after.summary, "сводка в хранилище не тронута")
+            assertEquals(8, after.messages.size, "ничего не ужато и не удалено")
         }
     }
 }

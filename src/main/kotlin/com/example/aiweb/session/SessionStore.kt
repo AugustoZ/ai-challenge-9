@@ -7,8 +7,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Серверная память диалога: выдаёт идентификаторы сессий и копит историю сообщений.
- * История ведётся только у одиночных режимов (default/direct/step_by_step);
- * «Команда» и Prompt-to-Prompt stateless — сессию не создают и в неё не пишут.
+ * История ведётся у режимов с памятью (default/direct/step_by_step/agent — агентный
+ * режим пишет user/assistant после ответа через finalizeResponse); «Команда» и
+ * Prompt-to-Prompt stateless — сессию не создают и в неё не пишут.
  */
 interface SessionStore {
     /** Создаёт пустую сессию с новым уникальным идентификатором. */

@@ -145,7 +145,10 @@ fun Route.aiRoutes(
             val response = when (chat.mode) {
                 ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
                 ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
-                ReasoningMode.AGENT -> handleAgent(chat.aiClient, body, chat.provider, chat.session, registry)
+                ReasoningMode.AGENT -> handleAgent(
+                    chat.aiClient, body, chat.provider, chat.session,
+                    sessions, config, compressors.getValue(chat.provider), registry
+                )
                 else -> handleSingle(
                     chat.aiClient, body, chat.mode, chat.session,
                     sessions, config, compressors.getValue(chat.provider)
@@ -189,7 +192,10 @@ fun Route.aiRoutes(
                     val response = when (chat.mode) {
                         ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
                         ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
-                        ReasoningMode.AGENT -> handleAgent(chat.aiClient, body, chat.provider, chat.session, registry) { event ->
+                        ReasoningMode.AGENT -> handleAgent(
+                            chat.aiClient, body, chat.provider, chat.session,
+                            sessions, config, compressors.getValue(chat.provider), registry
+                        ) { event ->
                             frames.trySend(StreamEvent.Agent(event))
                         }
                         else -> handleSingle(
@@ -568,12 +574,27 @@ private suspend fun handleSingle(
  * события в дополнение к коплению списка. В историю сессии попадают только
  * пользовательское сообщение и финальный ответ — промежуточный трафик инструментов
  * (общий пост-when блок после ответа) в память не пишет.
+ *
+ * Сжатие истории (задача 8) — та же схема, что в одиночных режимах ([handleSingle]):
+ *  - merge выполняется СИНХРОННО до запуска цикла; сбой суммаризатора — деградация
+ *    (лог, прежний summary, summaryTokens=null), агентный прогон не падает;
+ *  - seed цикла = planView (сводка как system-сообщение + окно) + новый вопрос,
+ *    затем СТАДИЯ-2 SessionHistory.trim — последний этап; пары
+ *    assistant(tool_calls) → role="tool" в seed не рвутся;
+ *  - AgentLoop без изменений: сводка для цикла — обычные сообщения seed (system-
+ *    промт агент добавляет сам); у провайдера type=opencode сводка вплетается во
+ *    флаттененный prompt как «Системная инструкция: …» — флаттенинг не чинится;
+ *  - токены суммаризатора в TokenSums агента не входят: они уходят отдельно в
+ *    ChatResponse.summaryTokens, токены самого агента цикл суммирует как раньше.
  */
 private suspend fun handleAgent(
     aiClient: LLMClient,
     body: ChatRequest,
     provider: ProviderConfig,
     session: Session?,
+    sessions: SessionStore,
+    config: AppConfig,
+    compressor: HistoryCompressor,
     registry: ToolRegistry,
     onEvent: suspend (AgentEvent) -> Unit = {}
 ): ChatResponse {
@@ -585,10 +606,41 @@ private suspend fun handleAgent(
         registry = registry
     )
 
-    val history = session
-        ?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) }
-        ?: emptyList()
-    val seed = history + OpenAIMessage(role = "user", content = body.message)
+    // 1) Синхронный merge до запуска агентного цикла (как в handleSingle): сбой
+    //    суммаризатора — деградация, а не падение прогона.
+    val compressionOn = body.compressionEnabled ?: config.compressionEnabled
+    var mergeResult: MergeResult? = null
+    var viewSession: Session? = session
+    if (compressionOn && session != null) {
+        mergeResult = runCatching { compressor.merge(session.summary, session.messages) }
+            .onFailure { e ->
+                println(
+                    "Компрессия истории сессии «${session.id}»: суммаризатор не сработал (${e.message}); " +
+                        "продолжаю без обновления сводки"
+                )
+            }
+            .getOrNull()
+        if (mergeResult != null) {
+            viewSession = sessions.applyCompressionResult(session.id, mergeResult.newSummary, mergeResult.removeCount)
+                ?: session
+        }
+    }
+
+    // 2) Seed цикла: при компрессии — planView (сводка system + окно) + новый вопрос,
+    //    затем СТАДИЯ-2 SessionHistory.trim (последний этап, сводка не выпадает).
+    //    Без компрессии — прежний trim-стек.
+    val seed = if (compressionOn && viewSession != null) {
+        SessionHistory.trim(
+            compressor.planView(viewSession.summary, viewSession.messages) +
+                OpenAIMessage(role = "user", content = body.message),
+            body.maxTokens ?: 0
+        )
+    } else {
+        val history = viewSession
+            ?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) }
+            ?: emptyList()
+        history + OpenAIMessage(role = "user", content = body.message)
+    }
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(
@@ -612,7 +664,9 @@ private suspend fun handleAgent(
         totalTokens = outcome.totalTokens,
         sessionId = session?.id,
         events = events,
-        exchanges = ExchangeLog.since(startSeq)
+        exchanges = ExchangeLog.since(startSeq),
+        summaryTokens = mergeResult?.tokens,
+        summaryApplied = compressionOn && viewSession?.summary != null
     )
 }
 
