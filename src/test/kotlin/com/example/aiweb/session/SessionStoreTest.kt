@@ -71,6 +71,38 @@ class SessionStoreTest {
     }
 
     @Test
+    fun `applyCompressionResult устанавливает summary и удаляет первые removeCount сообщений`() {
+        val store = newStore()
+        val session = store.create()
+        repeat(6) { i -> store.append(session.id, user("ход $i")) }
+
+        val updated = assertNotNull(store.applyCompressionResult(session.id, "сводка", 4))
+
+        assertEquals("сводка", updated.summary)
+        assertEquals(listOf("ход 4", "ход 5"), updated.messages.mapNotNull { it.content })
+        val reread = assertNotNull(store.get(session.id))
+        assertEquals(2, reread.messages.size)
+        assertEquals("сводка", reread.summary)
+    }
+
+    @Test
+    fun `applyCompressionResult — removeCount больше размера обрезается до размера`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("единственный ход"))
+
+        val updated = assertNotNull(store.applyCompressionResult(session.id, "сводка", 99))
+
+        assertEquals("сводка", updated.summary)
+        assertTrue(updated.messages.isEmpty())
+    }
+
+    @Test
+    fun `applyCompressionResult на неизвестной сессии возвращает null`() {
+        assertNull(newStore().applyCompressionResult("нет-такого", "сводка", 3))
+    }
+
+    @Test
     fun `delete удаляет сессию и идемпотентен`() {
         val store = newStore()
         val session = store.create()

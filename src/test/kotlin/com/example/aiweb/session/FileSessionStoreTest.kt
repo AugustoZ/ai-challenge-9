@@ -111,6 +111,59 @@ class FileSessionStoreTest {
     }
 
     @Test
+    fun `сессия со summary переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+        store.append(session.id, assistant("ответ"))
+
+        store.applyCompressionResult(session.id, "сводка диалога", 1)
+
+        val loaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals("сводка диалога", loaded.summary)
+        assertEquals(1, loaded.messages.size)
+        assertEquals("ответ", loaded.messages.single().content)
+    }
+
+    @Test
+    fun `старый json-файл сессии без summary читается с summary null`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-2.json").writeText(
+            """{"id":"old-2","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val loaded = assertNotNull(newStore(dir).get("old-2"))
+
+        assertNull(loaded.summary)
+        assertEquals(1, loaded.messages.size)
+        assertEquals("старый вопрос", loaded.messages.single().content)
+    }
+
+    @Test
+    fun `applyCompressionResult атомарен — файл на диске совпадает с памятью`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        repeat(10) { i -> store.append(session.id, user("ход $i")) }
+
+        val updated = assertNotNull(store.applyCompressionResult(session.id, "сводка", 6))
+        assertEquals(4, updated.messages.size)
+        assertEquals("сводка", updated.summary)
+
+        val clamped = assertNotNull(store.applyCompressionResult(session.id, "жёсткая сводка", 99))
+        assertTrue(clamped.messages.isEmpty())
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(clamped, reloaded)
+        assertTrue(
+            File(dir, "sessions/${session.id}.json").readText().contains("жёсткая сводка"),
+            "Файл должен содержать summary"
+        )
+    }
+
+    @Test
     fun `delete удаляет сессию вместе с файлом и идемпотентен`() {
         val dir = newDir()
         val store = newStore(dir)

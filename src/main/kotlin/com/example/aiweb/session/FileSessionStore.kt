@@ -78,6 +78,16 @@ class FileSessionStore(
     }
 
     @Synchronized
+    override fun applyCompressionResult(sessionId: String, newSummary: String?, removeCount: Int): Session? {
+        val current = sessions[sessionId] ?: return null
+        val messages = current.messages.drop(removeCount.coerceIn(0, current.messages.size))
+        val updated = current.copy(messages = messages, summary = newSummary, updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
     override fun list(): List<Session> =
         sessions.values.sortedByDescending { it.updatedAt }
 

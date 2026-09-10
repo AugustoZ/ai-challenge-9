@@ -20,6 +20,17 @@ interface SessionStore {
     /** Дописывает сообщение в историю сессии; неизвестный идентификатор игнорируется. */
     fun append(sessionId: String, message: OpenAIMessage)
 
+    /**
+     * Атомарно применяет результат компрессии истории: устанавливает сводку
+     * [newSummary] (null — сбрасывает) и удаляет первые [removeCount] сообщений
+     * (consume-семантика: слитые в сводку ходы из истории исчезают).
+     *
+     * [removeCount] обрезается до размера истории: запрос удалить больше сообщений,
+     * чем есть, ошибкой не является — удаляется всё. Возвращает обновлённый
+     * снимок сессии; null — сессия не существует.
+     */
+    fun applyCompressionResult(sessionId: String, newSummary: String?, removeCount: Int): Session?
+
     /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
     fun list(): List<Session>
 
@@ -39,6 +50,8 @@ interface SessionStore {
 data class Session(
     val id: String,
     val messages: List<OpenAIMessage> = emptyList(),
+    /** Rolling-summary более старой истории (компрессия); null — сжатие ещё не выполнялось. */
+    val summary: String? = null,
     val createdAt: Long,
     val updatedAt: Long
 )
@@ -76,6 +89,9 @@ class InMemorySessionStore(
         val messages = mutableListOf<OpenAIMessage>()
 
         @Volatile
+        var summary: String? = null
+
+        @Volatile
         var updatedAt: Long = createdAt
     }
 
@@ -99,6 +115,16 @@ class InMemorySessionStore(
             entry.messages.add(message)
             trimSessionHistory(entry.messages)
             entry.updatedAt = now()
+        }
+    }
+
+    override fun applyCompressionResult(sessionId: String, newSummary: String?, removeCount: Int): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            entry.messages.subList(0, removeCount.coerceIn(0, entry.messages.size)).clear()
+            entry.summary = newSummary
+            entry.updatedAt = now()
+            entry.snapshot()
         }
     }
 
@@ -131,6 +157,7 @@ class InMemorySessionStore(
         Session(
             id = id,
             messages = messages.toList(),
+            summary = summary,
             createdAt = createdAt,
             updatedAt = updatedAt
         )
