@@ -16,6 +16,7 @@ import com.example.aiweb.tools.ToolResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
+import kotlin.math.ceil
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -340,6 +341,43 @@ class AgentLoopTest {
         // серию падений одного инструмента ловит отдельный гвард
         assertEquals("зацикливание", outcome.reason)
         assertEquals(4, fake.calls.size)
+    }
+
+    @Test
+    fun `контекст отправки режется до 30 тысяч токенов`() = runBlocking {
+        val oldTurn = "Х".repeat(30_000) // ~12 000 токенов старой истории
+        val fatTool = object : Tool {
+            override val name = "fat"
+            override val description = "Возвращает результат на капе"
+            override val parametersJsonSchema: JsonElement = buildJsonObject { }
+            override suspend fun execute(argsJson: String) =
+                ToolResult(ok = true, content = "X".repeat(AgentLoop.TOOL_CONTENT_LIMIT))
+        }
+        val fake = FakeLLMClient((1..8).map { toolCallResult("fat", "{\"n\":$it}") } + textResult("Готово"))
+        val seed = listOf(
+            OpenAIMessage(role = "user", content = oldTurn),
+            OpenAIMessage(role = "assistant", content = "Прежний ответ"),
+            OpenAIMessage(role = "user", content = "Цель")
+        )
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry(linkedMapOf("fat" to fatTool)))
+            .run(seed, maxTokens = null, onEvent = {})
+
+        assertEquals("Готово", outcome.reply)
+        for ((idx, call) in fake.calls.withIndex()) {
+            val est = call.messages.sumOf { ceil((it.content?.length ?: 0) / 2.5).toInt() }
+            assertTrue(est <= AgentLoop.MAX_CONTEXT_TOKENS + 500, "вызов №${idx + 1}: перелив $est")
+            call.messages.forEachIndexed { i, m ->
+                if (m.role == "tool") {
+                    val prev = call.messages[i - 1]
+                    assertTrue(prev.role == "assistant" && prev.toolCalls != null, "вызов №${idx + 1}: разрыв пары на $i")
+                }
+            }
+        }
+        // Старый тяжёлый ход вытеснен целиком, цель пользователя сохранена
+        val last = fake.calls.last().messages
+        assertTrue(last.none { it.content == oldTurn }, "старый ход должен вытесниться")
+        assertTrue(last.any { it.content == "Цель" }, "цель пользователя сохранена")
     }
 
     @Test

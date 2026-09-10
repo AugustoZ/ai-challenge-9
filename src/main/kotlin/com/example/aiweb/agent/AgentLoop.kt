@@ -6,6 +6,7 @@ import com.example.aiweb.client.LLMClient
 import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.OpenAIMessage
+import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.tools.ToolRegistry
 import com.example.aiweb.tools.ToolResult
 import com.example.aiweb.tools.ToolTransport
@@ -37,9 +38,13 @@ data class AgentRunResult(
  *  - топливо доносится до модели не только параметром API, но и словами: к системному
  *    промту добавляется указание уложиться в лимит (как в одиночных режимах),
  *    иначе модель не планирует объём, пишет длинно и обрывается по лимиту токенов;
- *  - tool-результат входит в контекст цикла ограниченно ([TOOL_CONTENT_LIMIT] символов,
- *    начало и хвост): страница или дамп на мегабайты иначе переотправлялись бы
- *    целиком на каждом шаге и сжигали токены провайдера;
+     *  - tool-результат входит в контекст цикла ограниченно ([TOOL_CONTENT_LIMIT] символов,
+     *    начало и хвост): страница или дамп на мегабайты иначе переотправлялись бы
+     *    целиком на каждом шаге и сжигали токены провайдера;
+     *  - объём отправляемого контекста ограничен [MAX_CONTEXT_TOKENS] токенов (оценка
+     *    SessionHistory.estimateTokens): срез неразрушающий, при переполнении старые
+     *    группы «assistant с вызовами + его tool-результаты» вытесняются целиком,
+     *    пары не рвутся, цель пользователя сохраняется всегда;
      *  - гварды: дедлайн [AGENT_DEADLINE_MS] до начала каждого шага, лимит шагов,
      *    детект зацикливания по [LOOP_THRESHOLD] одинаковым вызовам подряд и по
      *    [SAME_TOOL_FAIL_THRESHOLD] падениям одного инструмента подряд (перебор
@@ -113,8 +118,9 @@ class AgentLoop(
                 ?: FORCED_FINAL_NOTE
             val result = client.ask(
                 LLMCall(
-                    messages = conversation +
-                        OpenAIMessage(role = "system", content = forcedNote),
+                    messages = trimContext(
+                        conversation + OpenAIMessage(role = "system", content = forcedNote)
+                    ),
                     model = model,
                     maxTokens = maxTokens,
                     temperature = temperature,
@@ -150,7 +156,7 @@ class AgentLoop(
             onEvent(AgentEvent.StepStarted(step))
             val result = transport.ask(
                 LLMCall(
-                    messages = conversation,
+                    messages = trimContext(conversation),
                     model = model,
                     maxTokens = maxTokens,
                     temperature = temperature,
@@ -244,6 +250,59 @@ class AgentLoop(
     }
 
     /**
+     * Срез разговоров под кап [MAX_CONTEXT_TOKENS]; неразрушающий: полный разговор
+     * живёт в цикле, на отправку идут ведущие system-сообщения и группы с хвоста.
+     * Группа «assistant с tool_calls + его tool-результаты» неделима — модель
+     * не видит «висячих» tool-сообщений. Приоритет при переполнении: свежие шаги,
+     * затем цель пользователя (сохраняется всегда, как «последний ход» в
+     * SessionHistory.trim), затем старая история по остатку бюджета.
+     */
+    private fun trimContext(messages: List<OpenAIMessage>): List<OpenAIMessage> {
+        val leading = messages.takeWhile { it.role == "system" }
+        val rest = messages.drop(leading.size)
+        if (rest.isEmpty()) return messages
+
+        val budget = (MAX_CONTEXT_TOKENS - leading.sumOf { SessionHistory.estimateTokens(it) })
+            .coerceAtLeast(0)
+        val lastUser = rest.indexOfLast { it.role == "user" }
+
+        // Группы от свежих к старым; tool-сообщения приклеиваются к своему assistant
+        val groups = ArrayList<IntRange>()
+        var end = rest.size
+        while (end > 0) {
+            var start = end
+            while (start > 0 && rest[start - 1].role == "tool") start--
+            if (start in 1 until end && rest[start - 1].role == "assistant" && rest[start - 1].toolCalls != null) start--
+            if (start == end) start--
+            groups.add(start until end)
+            end = start
+        }
+
+        var used = 0
+        val kept = ArrayDeque<List<OpenAIMessage>>()
+        fun fits(range: IntRange): Boolean {
+            val group = rest.subList(range.first, range.last + 1)
+            val cost = group.sumOf { SessionHistory.estimateTokens(it) }
+            if (used + cost > budget) return false
+            used += cost
+            kept.addFirst(group)
+            return true
+        }
+
+        val questionIdx = groups.indexOfFirst { lastUser in it }
+        if (questionIdx < 0) {
+            for (range in groups) if (!fits(range)) break
+        } else {
+            for (i in 0 until questionIdx) if (!fits(groups[i])) break
+            val range = groups[questionIdx]
+            used += rest.subList(range.first, range.last + 1).sumOf { SessionHistory.estimateTokens(it) }
+            kept.addFirst(rest.subList(range.first, range.last + 1))
+            for (i in questionIdx + 1 until groups.size) if (!fits(groups[i])) break
+        }
+        return leading + kept.flatten()
+    }
+
+    /**
      * Ограничивает текст tool-результата, входящего в контекст цикла: сохраняет
      * начало и хвост, середину заменяет пометкой. Хвост нужен — ошибки и итоги
      * часто в конце (JSON-ответы, статусы выполнения).
@@ -291,6 +350,13 @@ class AgentLoop(
 
         /** Сколько символов хвоста результата сохраняется при обрезке (ошибки и итоги часто в конце). */
         private const val TOOL_TAIL_KEEP = 2_000
+
+        /**
+         * Кап оценки отправляемого контекста (токены, символы/2.5): история +
+         * накопленные tool-результаты не должны раздувать вызов сверх лимита
+         * провайдера; лишнее вытесняется с хвоста перед каждой отправкой.
+         */
+        const val MAX_CONTEXT_TOKENS = 30_000
 
         /** Сколько подряд идущих одинаковых вызовов (tool, args) считаются зацикливанием. */
         const val LOOP_THRESHOLD = 3
