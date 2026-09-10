@@ -66,7 +66,18 @@ data class AppConfig(
      * null — сегодняшнее поведение (три встроенных инструмента, sandbox выключены).
      * Только конфиг-файл: переменных окружения для инструментов нет.
      */
-    val tools: FileToolsConfig? = null
+    val tools: FileToolsConfig? = null,
+    /**
+     * Сжатие истории диалога: null-поле запроса compressionEnabled трактуется как
+     * это значение (приоритет: поле запроса > конфиг). Только конфиг-файл.
+     */
+    val compressionEnabled: Boolean = false,
+    /** Окно последних сообщений, уходящих в запрос «как есть» (≥ 1). */
+    val compressionWindowSize: Int = 5,
+    /** Порог слияния: сообщений вне окна, после которых выполняется один merge (≥ 1). */
+    val compressionMergeEvery: Int = 5,
+    /** Бюджет сводки диалога в токенах (≥ 50). */
+    val compressionSummaryMaxTokens: Int = 400
 ) {
     val providers: List<ProviderConfig> get() = listOf(default) + extraProviders
 
@@ -85,7 +96,11 @@ data class AppConfig(
                 apiUrl = "https://api.openai.com/v1/chat/completions",
                 apiKey = "ВАШ_API_КЛЮЧ",
                 model = "gpt-3.5-turbo"
-            )
+            ),
+            compressionEnabled = false,
+            compressionWindowSize = 5,
+            compressionMergeEvery = 5,
+            compressionSummaryMaxTokens = 400
         )
 
         const val DEFAULT_PROVIDER_ID = "default"
@@ -124,7 +139,7 @@ data class AppConfig(
                 ?.takeIf { it.equals("true", ignoreCase = true) || it == "1" }
                 ?.let { config = config.copy(default = config.default.copy(supportsTools = true)) }
 
-            return config
+            return config.validate()
         }
 
         /**
@@ -139,7 +154,7 @@ data class AppConfig(
             if (fileConfig != null) {
                 config = config.applyFile(fileConfig)
             }
-            return config
+            return config.validate()
         }
 
         /**
@@ -177,8 +192,33 @@ data class AppConfig(
                 extraProviders = extras,
                 allowedModels = fc.allowedModels.orEmpty().filter { it.isNotBlank() },
                 dataDir = fc.dataDir?.takeIf { it.isNotBlank() } ?: dataDir,
-                tools = fc.tools ?: tools
+                tools = fc.tools ?: tools,
+                compressionEnabled = fc.compressionEnabled ?: compressionEnabled,
+                compressionWindowSize = fc.compressionWindowSize ?: compressionWindowSize,
+                compressionMergeEvery = fc.compressionMergeEvery ?: compressionMergeEvery,
+                compressionSummaryMaxTokens = fc.compressionSummaryMaxTokens ?: compressionSummaryMaxTokens
             )
+        }
+
+        /**
+         * Проверяет настройки компрессии; нарушение — падение старта с внятным
+         * сообщением (невалидные значения молча превращают компрессию в no-op
+         * или в полную потерю контекста, поэтому предпочтительно упасть рано).
+         */
+        private fun AppConfig.validate(): AppConfig {
+            require(compressionWindowSize >= 1) {
+                "compressionWindowSize должен быть не меньше 1 (получено: $compressionWindowSize) — " +
+                    "окно последних сообщений не может быть пустым"
+            }
+            require(compressionMergeEvery >= 1) {
+                "compressionMergeEvery должен быть не меньше 1 (получено: $compressionMergeEvery) — " +
+                    "порог слияния истории не может быть нулевым"
+            }
+            require(compressionSummaryMaxTokens >= 50) {
+                "compressionSummaryMaxTokens должен быть не меньше 50 (получено: $compressionSummaryMaxTokens) — " +
+                    "слишком маленький бюджет для сводки диалога"
+            }
+            return this
         }
 
         private fun AppConfig.withDefaultApiUrl(value: String): AppConfig =

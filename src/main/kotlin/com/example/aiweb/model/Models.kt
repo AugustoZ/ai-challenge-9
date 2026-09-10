@@ -29,6 +29,18 @@ data class FileConfig(
     /** Поддержка нативного function calling — для провайдера по умолчанию. */
     val supportsTools: Boolean? = null,
     /**
+     * Настройки компрессии истории диалога; null/отсутствие поля — значение по
+     * умолчанию из AppConfig (выключено, окно 5, порог 5, бюджет 400).
+     * Только конфиг-файл: переменных окружения для компрессии нет.
+     */
+    val compressionEnabled: Boolean? = null,
+    /** Окно последних сообщений, уходящих в запрос «как есть» (≥ 1). */
+    val compressionWindowSize: Int? = null,
+    /** Порог слияния: сколько сообщений вне окна запускает один merge (≥ 1). */
+    val compressionMergeEvery: Int? = null,
+    /** Бюджет сводки диалога в токенах (≥ 50). */
+    val compressionSummaryMaxTokens: Int? = null,
+    /**
      * Раздел инструментов: вкл/выкл встроенных и подключение sandbox-инструментов
      * (исполнение кода и чтение файлов в изолированном контейнере).
      * null/отсутствие раздела — сегодняшнее поведение: три встроенных инструмента,
@@ -123,6 +135,8 @@ data class ChatRequest(
     val model: String? = null,
     /** Режим «Судья»: true → после ответа выполняется контрольная проверка отдельным вызовом LLM. */
     val judgeEnabled: Boolean? = null,
+    /** Сжатие истории для этого запроса; null — брать из конфигурации (приоритет: поле запроса > конфиг). */
+    val compressionEnabled: Boolean? = null,
     /** Управление цепочкой рассуждений модели: true → thinking {type: enabled}, false → {type: disabled}, null — не передавать. */
     val thinkingEnabled: Boolean? = null,
     val maxTokens: Int? = null,
@@ -140,6 +154,16 @@ data class ChatResponse(
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
     val totalTokens: Int? = null,
+    /** Токены вызова суммаризатора при сжатии истории; null — сводка не обновлялась. */
+    // @EncodeDefault(ALWAYS): серверный Json имеет encodeDefaults=false — без аннотации
+    // ключи omitились бы из ответа, ломая контракт DTO для фронтенда (задача 7).
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val summaryTokens: Int? = null,
+    /** Подставлена ли сводка в контекст этого запроса. */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val summaryApplied: Boolean = false,
     /** Полное время обработки запроса на сервере (все вызовы LLM), мс. */
     val elapsedMs: Long? = null,
     /** Заключение судьи (режим «Судья»); null — проверка не выполнялась. */
