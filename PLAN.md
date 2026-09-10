@@ -14,6 +14,7 @@
 | 4 | **`reasoningMode="agent"`** на существующем `/api/chat`; события через **sink** (`suspend (AgentEvent) -> Unit`), не через `List` | Отдельный эндпоинт дублирует валидацию/judge/ExchangeLog. Sink — заготовка под SSE: P1 просто начнёт стримить тот же поток |
 | 5 | **OpenCode в P0 остаётся one-shot** | Его цикл с инструментами транслировать в `AgentEvent` — задача P1 (у `opencode serve` уже есть SSE `GET /event` с `message.part.updated`) |
 | 6 | **Docker — корпус агента, не источник агентности**: named volume под данные + sandbox-контейнер для опасных инструментов | Агентность дают инструменты + цикл (Фазы 2–3); докер даёт персистентность, изоляцию и безопасное исполнение действий |
+| 7 | **Компрессия истории: consume-and-store** — последние 5 сообщений as-is + rolling summary старших (один merge на все накопившиеся внеоконные), сводка в отдельном поле `Session.summary`, merge синхронный до ответа | Честное падение `prompt_tokens`: слитые ходы удаляются из истории, а не прячутся во view. Синхронность даёт детерминизм зеркального сравнения. Lossiness (сводка хуже оригинала) — осознанный расход; деструктивный 200-кап остаётся safety-net |
 
 ## Фаза 0 — Контракты и тестовый каркас (~2 ч)
 
@@ -206,6 +207,69 @@ SSE-трансляция, egress-allowlist с выборочным доступ�
 **Отложено в P2:** sandbox-исполнение кода/файлов (нужны сами инструменты `run_code`/
 `read_file`), трансляция SSE `opencode serve` в `AgentEvent`, инструменты из конфига.
 
+## Компрессия истории и режим сравнения (выполнено, ветка lesson-9)
+
+Укорачивание контекста одиночных режимов: последние 5 сообщений as-is + rolling
+summary более старшей истории (один merge на все накопившиеся внеоконные), плюс
+зеркальный режим сравнения «без сжатия / со сжатием» бок о бок.
+
+**Файлы:** новый `session/HistoryCompressor.kt`, `session/SessionStore.kt`
+(`Session.summary` + `applyCompressionResult`), новый `client/SummaryPrompts.kt`,
+новый `client/OpenAIHistorySummarizer.kt`, `client/LLMClient.kt` + `client/AIClient.kt`
+(шов `listModels`), `session/SessionHistory.kt` (trim сохраняет ведущие system-сводки),
+`config/AppConfig.kt` + `model/Models.kt` (4 compression-поля,
+`ChatRequest.compressionEnabled`, `ChatResponse.summaryTokens/summaryApplied`),
+`routes/Routes.kt` (проводка `handleSingle`/`handleAgent`), статика
+(`index.html`, `script.js`, `style.css`), `scripts/mock-llm.py` + `config.dev.json`
+
+1. **Контракт сессии** (`session/SessionStore.kt`): `Session.summary: String? = null`
+   (default обязателен, back-compat через `ignoreUnknownKeys`) + операция
+   `applyCompressionResult(sessionId, newSummary, removeCount)` — атомарно ставит
+   сводку (null — сбрасывает) и снимает первые `removeCount` сообщений
+   (consume-and-store, `removeCount` зжимается `coerceIn(0, size)`); InMemory —
+   `synchronized(entry)`, File — `@Synchronized` + `copy()` + persist (tmp+rename).
+2. **Чистая логика** (`session/HistoryCompressor.kt`): `sliceWindow` (окно
+   `windowSize`, расширение назад до `user` при наезде на `tool`), `planView`
+   (сводка как `system`-сообщение + окно), `merge` (порог `mergeEvery`, один вызов
+   суммаризатора на всё накопившееся, pre-trim батча до
+   `SUMMARY_BATCH_TOKEN_BUDGET = 12_000` по user-границам, oversized-сводка → один
+   retry «сожми жёстче» через параметр `previous`, затем hardCut). Исключения
+   суммаризатора **пробрасываются** вызывающему.
+3. **Суммаризатор** (`client/OpenAIHistorySummarizer.kt`, паттерн `runJudge`):
+   обёртка `LLMClient.ask` с `SummaryPrompts` (маркер «Сводка ранее»),
+   `temperature=0.1`, `maxTokens=compressionSummaryMaxTokens`, `thinkingEnabled=false`.
+4. **Проводка** (`routes/Routes.kt`): `compressionOn = body.compressionEnabled
+   ?: config.compressionEnabled` (приоритет: запрос > конфиг) → синхронный
+   `runCatching { compressor.merge(session.summary, session.messages) }` до
+   ответа/цикла (сбой → лог + прежний summary) → `applyCompressionResult` →
+   view/seed = `SessionHistory.trim(compressor.planView(...) [+ новый user], maxTokens)`.
+   `ChatResponse.summaryTokens = mergeResult?.tokens`,
+   `summaryApplied = compressionOn && viewSession?.summary != null`.
+   `AgentLoop` не модифицируется (seed со сводкой для него — обычные сообщения).
+5. **`SessionHistory.trim` дополнен** (`session/SessionHistory.kt`): stage-2 trim
+   после инъекции сохраняет ведущие system-сводки и вычитает их оценку из бюджета
+   (иначе user-якорный алгоритм отбрасывал сводку). Backward-compatible.
+6. **Фронтенд** (статика): секция «Память» (аннунциаторы `#compressionToggle` /
+   `#mirrorToggle`, `aria-pressed`), зеркальный режим — два параллельных
+   `/api/chat/stream` в twin-сессии, `.mirror-grid` side-by-side, бейдж
+   «Сводка применена», «н/д» при null usage; настройки в `ai-assistant.settings.v1`
+   (новые поля `compressionEnabled`/`mirrorMode`).
+7. **QA-инфраструктура**: `scripts/mock-llm.py` (OpenAI-совместимый
+   детерминированный mock, usage = `ceil(chars/2.5)`) + `config.dev.json`
+   (apiUrl → 18080, dataDir `build/dev-data`).
+
+**Риски / осознанные решения:**
+
+- **Consume-and-store** — сводка теряет детали (lossiness): осознанный расход за
+  честное падение `prompt_tokens`; деструктивный 200-кап остаётся safety-net.
+- **Синхронный merge до ответа** — добавляет один LLM-вызов на порог в задержку
+  сжатой стороны; цена за детерминизм зеркального сравнения.
+- **Протокол OpenCode флаттенит историю** — сводка вплетается во флаттенед prompt
+  как «Системная инструкция: …»; сам флаттенинг не чинится (одна строка KDoc в
+  проводке `handleAgent`).
+- **Оценка качества за пользователем** — LLM-as-judge в сравнение не встроен;
+  twin-метрики не персистируются (заготовка P1 ниже).
+
 ## Заготовки под P1 (встроены дизайном, не кодом)
 
 | P1-задача | Заготовка из P0 |
@@ -217,6 +281,7 @@ SSE-трансляция, egress-allowlist с выборочным доступ�
 | Агентные события OpenCode | Трансляция SSE-событий `opencode serve` (`GET /event`: `message.part.updated`, `session.idle`) в `AgentEvent` вместо собственного цикла |
 | Персистентность в Docker | Volume `aiweb-data:/app/data` + `AI_DATA_DIR`; P1-impl пишет туда без правки compose |
 | Sandbox инструментов | Классификация риска + сервис `tool-sandbox` (`profiles: ["sandbox"]`), включается с появлением code/file-инструментов |
+| Персистентные метрики качества | Режим сравнения уже считает накопленные итоги сторон и экономию в `mirrorState` (память страницы, не переживает reload); P1 = вынос метрик в персистентное хранилище, чтобы качество компрессии можно было мерить во времени |
 
 ## Факты по стеку (проверено по исходникам и документации)
 
