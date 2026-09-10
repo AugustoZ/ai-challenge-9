@@ -3,6 +3,7 @@ package com.example.aiweb.agent
 import com.example.aiweb.client.ChatResult
 import com.example.aiweb.client.LLMCall
 import com.example.aiweb.client.LLMClient
+import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.tools.ToolRegistry
@@ -33,6 +34,9 @@ data class AgentRunResult(
  *  - бюджет шага — [maxTokens], делённый на [MAX_STEPS], но не меньше [MIN_STEP_BUDGET]
  *    токенов: рассуждающей модели 128 токенов не хватает даже на собственное мышление
  *    (обрыв посреди мысли, без вызова инструмента);
+ *  - топливо доносится до модели не только параметром API, но и словами: к системному
+ *    промту добавляется указание уложиться в шаговый бюджет (как в одиночных режимах),
+ *    иначе модель не планирует объём, пишет длинно и обрывается по лимиту токенов;
  *  - гварды: дедлайн [AGENT_DEADLINE_MS] до начала каждого шага, лимит шагов,
  *    детект зацикливания по [LOOP_THRESHOLD] одинаковым вызовам подряд, обрыв
  *    генерации по лимиту токенов (finishReason == "length") — текст усечён и не
@@ -41,8 +45,9 @@ data class AgentRunResult(
  *    с полным бюджетом [maxTokens] (не шаговым) и системной заметкой
  *    «собери ответ из уже собранного».
  *
- * Системный промт агента принадлежит этому пакету ([SYSTEM_PROMPT]); ReasoningPrompts
- * не затрагивается. В [seed] Routes передаёт обрезанную историю сессии и цель пользователя
+ * Системный промт агента принадлежит этому пакету ([SYSTEM_PROMPT]); из ReasoningPrompts
+ * берётся только общий для всех режимов текст указания лимита ([ReasoningPrompts.budgetNote]) —
+ * сам объект не меняется. В [seed] Routes передаёт обрезанную историю сессии и цель пользователя
  * ([OpenAIMessage] role="user"); system-промт цикл добавляет сам.
  *
  * @param client     обращение к LLM (нативный вызов используется только принудительным финалом)
@@ -60,7 +65,8 @@ class AgentLoop(
      *
      * @param seed    контекст без system-промта: история сессии + user-сообщение с целью
      * @param maxTokens  «Топливо» из интерфейса; делится на шаги с нижней границей
-     *                   [MIN_STEP_BUDGET], null — без бюджета
+     *                   [MIN_STEP_BUDGET] и указывается модели в системной инструкции,
+     *                   null — без бюджета
      * @param onEvent sink событий хода работы; вызывается по порядку, suspend — заготовка SSE
      * @param model   модель из запроса (как в остальных режимах); null — модель провайдера
      * @param temperature / topP / stop / thinkingEnabled — параметры из ChatRequest
@@ -80,8 +86,12 @@ class AgentLoop(
         val deadlineAt = System.currentTimeMillis() + AGENT_DEADLINE_MS
         val sums = TokenSums()
 
+        // Топливо доносится до модели и словами: без предупреждения модель не планирует объём и обрывается по лимиту токенов
+        val systemPrompt = ReasoningPrompts.budgetNote(perStepBudget)
+            ?.let { "$SYSTEM_PROMPT\n\n$it" }
+            ?: SYSTEM_PROMPT
         var conversation: List<OpenAIMessage> =
-            listOf(OpenAIMessage(role = "system", content = SYSTEM_PROMPT)) + seed
+            listOf(OpenAIMessage(role = "system", content = systemPrompt)) + seed
         var lastAssistantText = ""
         var lastSignature: String? = null
         var repeatCount = 0
@@ -94,10 +104,14 @@ class AgentLoop(
          * заметкой собрать ответ из уже добытых данных.
          */
         suspend fun forcedFinal(reason: String): AgentRunResult {
+            // Лимит у финала полный (maxTokens, не шаговый) — модель должна знать его, чтобы снова не оборвать ответ
+            val forcedNote = ReasoningPrompts.budgetNote(maxTokens)
+                ?.let { "$FORCED_FINAL_NOTE $it" }
+                ?: FORCED_FINAL_NOTE
             val result = client.ask(
                 LLMCall(
                     messages = conversation +
-                        OpenAIMessage(role = "system", content = FORCED_FINAL_NOTE),
+                        OpenAIMessage(role = "system", content = forcedNote),
                     model = model,
                     maxTokens = maxTokens,
                     temperature = temperature,
@@ -257,7 +271,10 @@ class AgentLoop(
               пользователь скачает его по ссылке.
         """.trimIndent()
 
-        /** Системная заметка перед принудительным финалом по гварду. */
+        /**
+         * Системная заметка перед принудительным финалом по гварду; при заданном
+         * «Топливе» дополняется текстом [ReasoningPrompts.budgetNote] с полным бюджетом.
+         */
         private const val FORCED_FINAL_NOTE =
             "Инструменты больше недоступны — дай финальный ответ на основе собранной информации. Ответ дай по-русски."
 

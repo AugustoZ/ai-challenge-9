@@ -69,6 +69,35 @@ class ToolRegistryConfigTest {
     }
 
     @Test
+    fun `hostDir доносится до описаний файловых инструментов`() {
+        val registry = ToolRegistry.forConfig(
+            FileToolsConfig(
+                readFile = SandboxToolConfig(enabled = true, hostDir = "/Users/example/Downloads"),
+                writeFile = SandboxToolConfig(enabled = true, hostDir = "/Users/example/Downloads")
+            )
+        )
+        for (name in listOf("read_file", "write_file")) {
+            val description = registry.specs().first { it.function.name == name }.function.description
+            assertTrue(description.contains("host-files"), "$name: должно упоминаться расположение папки хоста")
+            assertTrue(description.contains("/Users/example/Downloads"), "$name: должен быть виден путь хоста")
+        }
+    }
+
+    @Test
+    fun `без hostDir описания без упоминания папки хоста`() {
+        val registry = ToolRegistry.forConfig(
+            FileToolsConfig(
+                readFile = SandboxToolConfig(enabled = true),
+                writeFile = SandboxToolConfig(enabled = true)
+            )
+        )
+        for (name in listOf("read_file", "write_file")) {
+            val description = registry.specs().first { it.function.name == name }.function.description
+            assertTrue(!description.contains("host-files"), "$name: без hostDir упоминания быть не должно")
+        }
+    }
+
+    @Test
     fun `fileClient привязан к файловому инструменту и null без него`() {
         assertNull(
             ToolRegistry.forConfig(FileToolsConfig()).fileClient(),

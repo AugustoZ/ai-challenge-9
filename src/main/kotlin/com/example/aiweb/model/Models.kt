@@ -74,7 +74,14 @@ data class SandboxToolConfig(
     /** Базовый адрес sandbox-сервиса (внутреннее имя docker-compose). */
     val url: String = "http://tool-sandbox:8080",
     /** Таймаут исполнения кода, секунды (только run_code; зажимается в 1..60). */
-    val timeoutSeconds: Int = 30
+    val timeoutSeconds: Int = 30,
+    /**
+     * Папка хоста, смонтированная в песочницу как /sandbox/workspace/host-files
+     * (см. docker-compose). Влияет только на описания файловых инструментов:
+     * модель узнаёт, что файлы хоста доступны по путям вида host-files/<имя>.
+     * null — папка хоста не подключена, описание без упоминания.
+     */
+    val hostDir: String? = null
 )
 
 /** Дополнительный провайдер в конфиг-файле. */

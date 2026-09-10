@@ -127,12 +127,32 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+/* Топливо в полосе — клавиша: нажатие открывает топливомер. Сброс облика
+   кнопки, показания остаются зелёными; наведение — зелёная лампа, как у
+   направлений «→ запрос» в самописце */
 .fuel {
     font-family: var(--mono);
     font-size: 12px;
     letter-spacing: 0.06em;
     color: var(--green);
     font-variant-numeric: tabular-nums;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+}
+
+.fuel:hover {
+    color: var(--lamp-green);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-cool), 0.95),
+        0 0 7px rgba(var(--lamp-cool), 0.7),
+        0 0 15px rgba(var(--lamp-cool), 0.35);
+}
+
+.fuel:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
 }
 
 .fuel.hidden {
@@ -2046,6 +2066,182 @@ body.maint-on .raw-exchange {
 
 .recorder-empty.fault {
     color: var(--red);
+}
+
+/* ---------- Топливомер: расход топлива за сессию ---------- */
+
+/* Окно топливомера чуть уже самописца: двум графикам хватает */
+.fuel-modal {
+    width: min(760px, 100%);
+    height: min(78vh, 660px);
+}
+
+/* Сводка: четыре колодца показаний — запрос, ответ, сумма, цена */
+.fuel-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.fuel-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 10px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+}
+
+.fuel-cell-name {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+/* Показания — зелёные, по дисциплине цвета */
+.fuel-cell-value {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Пластина графика: колодец с гравированной шапкой */
+.fuel-chart {
+    margin-top: 12px;
+    padding: 10px 12px 8px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.fuel-chart-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.fuel-chart-caption {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+/* Легенда составного столбца: пара цветов направлений из самописца —
+   «→ запрос» зелёный, «← ответ» янтарный */
+.fuel-legend {
+    display: flex;
+    gap: 14px;
+}
+
+.fuel-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-dim);
+}
+
+.fuel-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+
+.fuel-swatch.fuel-swatch-prompt {
+    background: var(--green);
+}
+
+.fuel-swatch.fuel-swatch-completion {
+    background: var(--amber);
+}
+
+/* Чертёж: SVG тянется viewBox'ом, подписи — моно-гравировка */
+.fuel-chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 4px;
+}
+
+.fuel-grid {
+    stroke: var(--bezel);
+    stroke-width: 1;
+}
+
+.fuel-axis-line {
+    stroke: var(--bezel-lit);
+    stroke-width: 1;
+}
+
+.fuel-axis-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Составной столбец: запрос (зелёный) снизу, ответ (янтарный) сверху */
+.fuel-bar-prompt {
+    fill: var(--green);
+}
+
+.fuel-bar-completion {
+    fill: var(--amber);
+}
+
+.fuel-bar rect {
+    transition: filter 0.12s var(--ease-snap);
+}
+
+.fuel-bar:hover rect {
+    filter: brightness(1.2);
+}
+
+/* Линия цены: показание — зелёное со свечением, как дуга шкалы */
+.fuel-line {
+    fill: none;
+    stroke: var(--green);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-cool), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-cool), 0.3));
+}
+
+.fuel-dot {
+    fill: var(--ground);
+    stroke: var(--green);
+    stroke-width: 1.5;
+}
+
+.fuel-dot:hover {
+    fill: var(--green);
+}
+
+.fuel-tariff {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+}
+
+@media (max-width: 600px) {
+    .fuel-summary {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 
 @media (max-width: 600px) {

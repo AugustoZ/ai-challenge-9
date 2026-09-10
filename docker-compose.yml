@@ -42,7 +42,11 @@ services:
   #  - egress запрещён ЦЕЛИКОМ: сеть sandbox объявлена internal: true —
   #    строжайший «allowlist» (пустой); aiweb при этом сохраняет интернет
   #    через сеть default (LLM API);
-  #  - порты наружу НЕ публикуются, docker socket НЕ монтируется;
+  # #  - порты наружу НЕ публикуются, docker socket НЕ монтируется;
+ #  - папка хоста (по умолчанию /Users/augustoz/Downloads) монтируется внутрь
+ #    workspace как host-files — единственная точка доступа агента к файлам
+ #    компьютера: read_file/write_file работают с ней по относительным путям,
+ #    изоляция песочницы (non-root, без egress) сохраняется;
   #  - таймаут HTTP-вызова к sandbox — на стороне оркестратора (aiweb);
   #    сервер дополнительно капит таймаут кода на 60 с.
   tool-sandbox:
@@ -63,6 +67,13 @@ services:
     pids_limit: 100
     volumes:
       - sandbox-work:/sandbox/workspace
+      # Папка хоста внутри workspace: агент читает и пишет файлы компьютера
+      # инструментами read_file/write_file по путям вида host-files/<имя>.
+      # Путь задаётся переменной HOST_FILES_DIR (.env или окружение); для
+      # режима «только чтение» добавьте ":ro" к монтированию.
+      # В config.json добавьте "hostDir" в read_file/write_file — тогда модели
+      # в описании инструментов будет видно, что host-files — папка хоста.
+      - ${HOST_FILES_DIR:-/Users/augustoz/Downloads}:/sandbox/workspace/host-files
     networks:
       - sandbox
     # ports НЕ публикуются — доступ только по внутренней сети sandbox.

@@ -236,15 +236,28 @@ class RunCodeTool(
  * не длиннее капа, не абсолютный и не содержит «..». Любая ошибка возвращается
  * как [ToolResult] с понятным текстом — исключения наружу не пробрасываются.
  */
-class ReadFileTool(private val client: SandboxClient) : Tool {
+class ReadFileTool(
+    private val client: SandboxClient,
+    /** Папка хоста, смонтированная в песочницу как host-files; null — не упоминать. */
+    private val hostDir: String? = null
+) : Tool {
 
     override val name = NAME
 
-    override val description =
-        "Читает текстовый файл из рабочей папки через sandbox-контейнер и возвращает содержимое " +
-            "(при превышении лимита сервиса файл обрезается). Примеры: посмотреть report.txt, " +
-            "заглянуть в результат работы run_code. Относительные пути в пределах рабочей папки; " +
-            "абсолютные пути и «..» запрещены."
+    override val description = buildString {
+        append(
+            "Читает текстовый файл из рабочей папки через sandbox-контейнер и возвращает содержимое " +
+                "(при превышении лимита сервиса файл обрезается). Примеры: посмотреть report.txt, " +
+                "заглянуть в результат работы run_code. Относительные пути в пределах рабочей папки; " +
+                "абсолютные пути и «..» запрещены."
+        )
+        hostDir?.let {
+            append(
+                " В рабочей папке также есть папка «host-files» — это папка хоста $it: " +
+                    "файлы пользователя читайте по путям вида host-files/<имя>."
+            )
+        }
+    }
 
     override val parametersJsonSchema: JsonElement = buildJsonObject {
         put("type", "object")
@@ -314,15 +327,28 @@ class ReadFileTool(private val client: SandboxClient) : Tool {
  * ошибка возвращается как [ToolResult] с понятным текстом — исключения наружу
  * не пробрасываются.
  */
-class WriteFileTool(private val client: SandboxClient) : Tool {
+class WriteFileTool(
+    private val client: SandboxClient,
+    /** Папка хоста, смонтированная в песочницу как host-files; null — не упоминать. */
+    private val hostDir: String? = null
+) : Tool {
 
     override val name = NAME
 
-    override val description =
-        "Записывает текстовый файл в рабочую папку через sandbox-контейнер; существующий файл " +
-            "перезаписывается. Примеры: сохранить исходный код игры snake.py, положить отчёт " +
-            "report.txt для пользователя. Относительные пути в пределах рабочей папки; " +
-            "абсолютные пути и «..» запрещены."
+    override val description = buildString {
+        append(
+            "Записывает текстовый файл в рабочую папку через sandbox-контейнер; существующий файл " +
+                "перезаписывается. Примеры: сохранить исходный код игры snake.py, положить отчёт " +
+                "report.txt для пользователя. Относительные пути в пределах рабочей папки; " +
+                "абсолютные пути и «..» запрещены."
+        )
+        hostDir?.let {
+            append(
+                " В рабочей папке также есть папка «host-files» — это папка хоста $it: " +
+                    "файлы на компьютере пользователя создавайте и обновляйте по путям вида host-files/<имя>."
+            )
+        }
+    }
 
     override val parametersJsonSchema: JsonElement = buildJsonObject {
         put("type", "object")

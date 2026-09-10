@@ -23,7 +23,8 @@
             <span class="repeater" id="modeRepeater">ПО УМОЛЧАНИЮ</span>
             <div class="strip-right">
                 <span class="clock" id="clock">--:--:--</span>
-                <span class="fuel hidden" id="tokenCounter">Топливо 0</span>
+                <button type="button" class="fuel hidden" id="tokenCounter"
+                        aria-haspopup="dialog" aria-controls="fuelOverlay">Топливо 0</button>
                 <button type="button" class="drawer-toggle" id="settingsToggle"
                         aria-expanded="false" aria-controls="settings" aria-label="Показать приборы">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -135,7 +136,7 @@
                                         aria-controls="tip-fuel" aria-describedby="tip-fuel"
                                         aria-label="Описание параметра «Топливо»">?</button>
                             </div>
-                            <span class="tooltip" role="tooltip" id="tip-fuel">Бюджет всего ответа в токенах: у «Команды» делится на четыре вызова, у Prompt-to-Prompt — пополам</span>
+                            <span class="tooltip" role="tooltip" id="tip-fuel">Бюджет всего ответа в токенах: у «Команды» делится на четыре вызова, у Prompt-to-Prompt — пополам, у «Агента» — на шаги цикла</span>
                         </div>
 
                         <div class="gauge">
@@ -275,6 +276,28 @@
                 </div>
             </header>
             <div class="recorder-body" id="recorderBody"></div>
+        </div>
+    </div>
+
+    <!-- Топливомер: расход топлива за сессию -->
+    <div class="recorder-overlay" id="fuelOverlay" hidden>
+        <div class="recorder fuel-modal" role="dialog" aria-modal="true" aria-labelledby="fuelTitle">
+            <header class="recorder-head">
+                <div class="recorder-heading">
+                    <h2 class="recorder-title" id="fuelTitle">Топливомер</h2>
+                    <span class="recorder-sub">расход топлива за сессию</span>
+                </div>
+                <div class="recorder-actions">
+                    <button type="button" class="recorder-close" id="fuelClose" aria-label="Закрыть топливомер">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+            <div class="recorder-body fuel-body" id="fuelBody"></div>
         </div>
     </div>
 

@@ -45,12 +45,25 @@ Python-кода) и `read_file` (чтение файлов из рабочей �
 больше 1 МиБ → `400`. Сервер слушает `0.0.0.0:8080`, порты наружу не
 публикуются — только внутренняя docker-сеть.
 
+### Папка хоста — `host-files/`
+
+В workspace смонтирована папка хоста (по умолчанию `/Users/augustoz/Downloads`,
+путь настраивается переменной `HOST_FILES_DIR` в docker-compose): агент читает
+и записывает файлы компьютера инструментами `read_file`/`write_file` по
+относительным путям вида `host-files/<имя>`, а `run_code` видит её как
+`sandbox/workspace/host-files`. Запись на хост выполняется от non-root
+песочницы; все ограничения сервера (капы 2 МиБ, защита путей) действуют и
+здесь. Чтобы папка была только для чтения — добавьте `:ro` к монтированию в
+docker-compose.yml. Если `hostDir` задан в config.json, модели в описаниях
+инструментов сообщается, что `host-files` — папка хоста.
+
 ## Модель безопасности
 
 | Слой | Механизм |
 |---|---|
 | Процесс | non-root (uid 65534), `no-new-privileges` |
 | ФС контейнера | `read_only: true` (корневая ФС), записываемое — только `/tmp` (tmpfs) и volume `sandbox-work:/sandbox/workspace` |
+| Папка хоста | единственный bind mount — `HOST_FILES_DIR` (по умолчанию `~/Downloads`) → `/sandbox/workspace/host-files`; доступ только изнутри песочницы, от её non-root пользователя |
 | Возможности | `cap_drop: ALL`, docker socket не монтируется |
 | Сеть | сеть `sandbox` с `internal: true` — полный запрет egress (строжайший allowlist = пустой); aiweb ходит в LLM API через обычную сеть `default` (двухсетевая схема) |
 | Дочерний процесс | `resource`-лимиты: RLIMIT_AS 512 МиБ, RLIMIT_CPU = таймаут+2 с, RLIMIT_FSIZE 10 МиБ, RLIMIT_NPROC 64; минимальное окружение (PATH, HOME=/tmp, LANG); `start_new_session` + `killpg` — по таймауту убивается вся группа процессов |

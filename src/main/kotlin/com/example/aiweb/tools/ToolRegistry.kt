@@ -87,12 +87,12 @@ class ToolRegistry(
             }
             tools.readFile?.takeIf { it.enabled }?.let { config ->
                 val client = sandboxClient(config)
-                registered[ReadFileTool.NAME] = ReadFileTool(client)
+                registered[ReadFileTool.NAME] = ReadFileTool(client, config.hostDir)
                 fileClient = client
             }
             tools.writeFile?.takeIf { it.enabled }?.let { config ->
                 val client = sandboxClient(config)
-                registered[WriteFileTool.NAME] = WriteFileTool(client)
+                registered[WriteFileTool.NAME] = WriteFileTool(client, config.hostDir)
                 fileClient = client
             }
             return ToolRegistry(registered, fileClient)

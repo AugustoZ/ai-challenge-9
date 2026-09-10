@@ -227,6 +227,31 @@ class AgentLoopTest {
     }
 
     @Test
+    fun `топливо доносится до модели в системном промте`() = runBlocking {
+        val fake = FakeLLMClient(listOf(textResult("Ответ: 4")))
+
+        AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
+            .run(seed(), maxTokens = 8192, onEvent = {})
+
+        // Шаговый бюджет 8192 / MAX_STEPS = 1024 — модель предупреждена о нём словами,
+        // как в одиночных режимах, иначе она не планирует объём ответа
+        val system = fake.calls.first().messages.first()
+        assertEquals("system", system.role)
+        assertTrue(system.content.orEmpty().contains("бортовой агент"))
+        assertTrue(system.content.orEmpty().contains("уложи ответ примерно в 1024 токенов"))
+    }
+
+    @Test
+    fun `без топлива системный промт без указания бюджета`() = runBlocking {
+        val fake = FakeLLMClient(listOf(textResult("Ответ: 4")))
+
+        AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
+            .run(seed(), maxTokens = null, onEvent = {})
+
+        assertTrue(!fake.calls.first().messages.first().content.orEmpty().contains("токенов"))
+    }
+
+    @Test
     fun `обрыв по лимиту токенов включает принудительный финал`() = runBlocking {
         val forcedReply = "Готовое решение из уже проделанных шагов."
         val fake = FakeLLMClient(
@@ -254,6 +279,8 @@ class AgentLoopTest {
         assertNull(fake.calls.last().tools)
         assertEquals(2048, fake.calls.last().maxTokens)
         assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("Инструменты больше недоступны"))
+        // Полный бюджет доносится и словами — финал не должен оборваться снова
+        assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("2048 токенов"))
     }
 
     @Test

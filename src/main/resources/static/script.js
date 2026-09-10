@@ -44,6 +44,9 @@ const WELCOME_MARKUP = chat.innerHTML;
 
 let currentMode = DEFAULTS.reasoningMode;
 let sessionTotalTokens = 0;
+/* Расход топлива по ответам: одна запись {promptTokens, completionTokens,
+   totalTokens} на каждый ответ модели — сырьё для топливомера */
+let sessionTokenHistory = [];
 /* Идентификатор сессии диалога: выдаёт сервер (ChatResponse.sessionId),
    хранится в настройках. Одиночные режимы продолжают диалог, «Команда» и
    Prompt-to-Prompt отвечают null — сессия у них не ведётся. */
@@ -164,7 +167,11 @@ function addBotMessage(text, tokenData, exchanges = []) {
         parts.push({ fuel: true, text: bits.join(' · ') });
     }
     if (tokenData && tokenData.totalTokens != null) {
-        parts.push({ fuel: true, text: `Топливо ${tokenData.promptTokens ?? 0}/${tokenData.completionTokens ?? 0}/${tokenData.totalTokens}` });
+        /* Топливо с расшифровкой: токены запроса + токены ответа = сумма */
+        parts.push({
+            fuel: true,
+            text: `Топливо: запрос ${tokenData.promptTokens ?? 0} + ответ ${tokenData.completionTokens ?? 0} = ${tokenData.totalTokens}`,
+        });
     }
     entry.appendChild(buildEntryHead('Ответ', parts));
 
@@ -195,6 +202,12 @@ function addBotMessage(text, tokenData, exchanges = []) {
 
     if (tokenData && tokenData.totalTokens != null) {
         sessionTotalTokens += tokenData.totalTokens;
+        /* Запись в историю топливомера: один обмен = один столбец графика */
+        sessionTokenHistory.push({
+            promptTokens: tokenData.promptTokens ?? 0,
+            completionTokens: tokenData.completionTokens ?? 0,
+            totalTokens: tokenData.totalTokens,
+        });
         updateTokenCounter();
     }
     return messageDiv;
@@ -202,8 +215,16 @@ function addBotMessage(text, tokenData, exchanges = []) {
 
 /* Общий счётчик топлива за сессию */
 function updateTokenCounter() {
-    tokenCounter.textContent = `Топливо ${sessionTotalTokens}`;
+    tokenCounter.textContent = `Топливо за сессию ${sessionTotalTokens}`;
+    tokenCounter.title = 'Сумма токенов (запрос + ответ) за все ответы сессии · Нажмите — график расхода за сессию';
     tokenCounter.classList.remove('hidden');
+}
+
+/* Полный сброс топливомера: новая сессия начинается с чистого табло */
+function resetSessionFuel() {
+    sessionTotalTokens = 0;
+    sessionTokenHistory = [];
+    tokenCounter.classList.add('hidden');
 }
 
 /* Служебная запись журнала: уведомление без ответа модели — отмена и т.п. */
@@ -941,6 +962,10 @@ document.addEventListener('keydown', (e) => {
         closeRecorder();
         return;
     }
+    if (fuelOpen) {
+        closeFuelModal();
+        return;
+    }
     if (sidebar.classList.contains('open')) closeSettings();
 });
 
@@ -1120,6 +1145,313 @@ recorderOverlay.addEventListener('click', (e) => {
     if (e.target === recorderOverlay) closeRecorder();
 });
 
+/* ---------- Топливомер: расход топлива за сессию ---------- */
+
+/* Тариф: ровно $0,00000036 за один токен — запрос и ответ по одной цене */
+const TOKEN_TARIFF = 0.00000036;
+
+const fuelOverlay = document.getElementById('fuelOverlay');
+const fuelBody = document.getElementById('fuelBody');
+const fuelClose = document.getElementById('fuelClose');
+
+let fuelOpen = false;
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/* Элемент SVG с атрибутами: оба графика чертятся вручную, без библиотек */
+function svgEl(name, attrs = {}) {
+    const el = document.createElementNS(SVG_NS, name);
+    for (const [key, value] of Object.entries(attrs)) {
+        el.setAttribute(key, String(value));
+    }
+    return el;
+}
+
+/* Деньги: значения копеечные — sig значащих цифр без экспоненты, запятая
+   по-русски (например, $0,00212); очень малые значения не уводим в e-нотацию */
+function fmtMoney(value, sig = 3) {
+    if (!Number.isFinite(value) || value <= 0) return '$0';
+    let str;
+    if (value >= 1) {
+        str = value.toFixed(2);
+    } else {
+        const digits = Math.min(12, Math.max(0, sig - 1 - Math.floor(Math.log10(value))));
+        str = value.toFixed(digits);
+    }
+    if (str.includes('.')) str = str.replace(/0+$/, '').replace(/\.$/, '');
+    return '$' + str.replace('.', ',');
+}
+
+/* Ось Y: круглая верхняя граница и 3–4 линии сетки. Пары «шаг/линии»
+   подобраны так, чтобы промежуточные подписи тоже были круглыми
+   (5542 → 6000 по 2000; 1200 → 2000 по 500) */
+function niceScale(value) {
+    if (!(value > 0)) return { max: 1, lines: 3 };
+    const pow = Math.pow(10, Math.floor(Math.log10(value)));
+    const norm = value / pow;
+    const steps = [[1, 4], [2, 4], [3, 3], [4, 4], [6, 3], [8, 4], [12, 4]];
+    for (const [step, lines] of steps) {
+        if (norm <= step) return { max: step * pow, lines };
+    }
+    return { max: 10 * pow, lines: 5 };
+}
+
+/* Сетка и подписи оси Y — общая часть обоих графиков */
+function buildFuelAxis(svg, left, right, bottom, plotH, max, lines, fmt) {
+    for (let i = 1; i <= lines; i++) {
+        const y = bottom - (plotH * i) / lines;
+        svg.appendChild(svgEl('line', { class: 'fuel-grid', x1: left, y1: y.toFixed(1), x2: right, y2: y.toFixed(1) }));
+        const label = svgEl('text', {
+            class: 'fuel-axis-label',
+            x: left - 6,
+            y: (y + 3).toFixed(1),
+            'text-anchor': 'end',
+        });
+        label.textContent = fmt((max * i) / lines);
+        svg.appendChild(label);
+    }
+    svg.appendChild(svgEl('line', { class: 'fuel-axis-line', x1: left, y1: bottom, x2: right, y2: bottom }));
+}
+
+/* График расхода: составной столбец на каждый обмен — запрос (зелёный)
+   снизу и ответ (янтарный) сверху; цвета направлений из самописца */
+function buildTokenChart(history) {
+    const W = 560, H = 210, L = 44, R = 6, T = 10, B = 22;
+    const plotW = W - L - R;
+    const plotH = H - T - B;
+    const bottom = T + plotH;
+
+    const totals = history.map((rec) => rec.totalTokens || 0);
+    const { max, lines } = niceScale(Math.max(...totals));
+
+    const svg = svgEl('svg', {
+        class: 'fuel-chart-svg',
+        viewBox: `0 0 ${W} ${H}`,
+        role: 'img',
+        'aria-label': 'Расход токенов по обменам за сессию',
+    });
+
+    buildFuelAxis(svg, L, W - R, bottom, plotH, max, lines, fmtFuel);
+
+    /* Ширина паза на столбец: при многих обменах столбцы жмутся и мелеют,
+       но не вылезают за ось; подписи номеров прореживаются */
+    const slot = plotW / history.length;
+    const barW = Math.max(1.5, Math.min(34, slot * 0.62));
+    const showEvery = slot >= 16 ? 1 : Math.ceil(16 / slot);
+
+    history.forEach((rec, i) => {
+        const prompt = rec.promptTokens || 0;
+        const completion = rec.completionTokens || 0;
+        const cx = L + slot * i + slot / 2;
+        const x = cx - barW / 2;
+        const promptH = prompt ? Math.max(1, (plotH * prompt) / max) : 0;
+        const completionH = completion ? Math.max(1, (plotH * completion) / max) : 0;
+
+        const bar = svgEl('g', { class: 'fuel-bar' });
+        const title = svgEl('title');
+        title.textContent = `Запрос ${i + 1}: +${prompt} / ответ ${completion}`;
+        bar.appendChild(title);
+
+        if (completionH) {
+            bar.appendChild(svgEl('rect', {
+                class: 'fuel-bar-completion',
+                x: x.toFixed(1),
+                y: (bottom - promptH - completionH).toFixed(1),
+                width: barW.toFixed(1),
+                height: completionH.toFixed(1),
+            }));
+        }
+        if (promptH) {
+            bar.appendChild(svgEl('rect', {
+                class: 'fuel-bar-prompt',
+                x: x.toFixed(1),
+                y: (bottom - promptH).toFixed(1),
+                width: barW.toFixed(1),
+                height: promptH.toFixed(1),
+            }));
+        }
+        svg.appendChild(bar);
+
+        if (i % showEvery === 0) {
+            const tick = svgEl('text', {
+                class: 'fuel-axis-label',
+                x: cx.toFixed(1),
+                y: bottom + 14,
+                'text-anchor': 'middle',
+            });
+            tick.textContent = String(i + 1);
+            svg.appendChild(tick);
+        }
+    });
+
+    return svg;
+}
+
+/* График цены: накопленная стоимость сессии по обменам */
+function buildPriceChart(history) {
+    const W = 560, H = 210, L = 56, R = 6, T = 10, B = 22;
+    const plotW = W - L - R;
+    const plotH = H - T - B;
+    const bottom = T + plotH;
+
+    let running = 0;
+    const costs = history.map((rec) => {
+        running += (rec.totalTokens || 0) * TOKEN_TARIFF;
+        return running;
+    });
+    const { max, lines } = niceScale(costs[costs.length - 1]);
+
+    const svg = svgEl('svg', {
+        class: 'fuel-chart-svg',
+        viewBox: `0 0 ${W} ${H}`,
+        role: 'img',
+        'aria-label': 'Стоимость сессии по обменам',
+    });
+
+    buildFuelAxis(svg, L, W - R, bottom, plotH, max, lines, (v) => fmtMoney(v, 2));
+
+    /* Один обмен — точка в центре; несколько — плечи по всей ширине оси */
+    const step = plotW / Math.max(1, history.length - 1);
+    const points = costs.map((cost, i) => ({
+        x: history.length === 1 ? L + plotW / 2 : L + step * i,
+        y: bottom - (plotH * cost) / max,
+        cost,
+    }));
+
+    svg.appendChild(svgEl('polyline', {
+        class: 'fuel-line',
+        points: points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '),
+    }));
+
+    points.forEach((p, i) => {
+        const dot = svgEl('circle', { class: 'fuel-dot', cx: p.x.toFixed(1), cy: p.y.toFixed(1), r: 3 });
+        const title = svgEl('title');
+        title.textContent = `Обмен ${i + 1}: ${fmtMoney(p.cost)} за сессию`;
+        dot.appendChild(title);
+        svg.appendChild(dot);
+    });
+
+    return svg;
+}
+
+function buildFuelCell(nameText, valueText) {
+    const cell = document.createElement('div');
+    cell.className = 'fuel-cell';
+
+    const name = document.createElement('span');
+    name.className = 'fuel-cell-name';
+    name.textContent = nameText;
+
+    const value = document.createElement('span');
+    value.className = 'fuel-cell-value';
+    value.textContent = valueText;
+
+    cell.appendChild(name);
+    cell.appendChild(value);
+    return cell;
+}
+
+/* Легенда составного столбца: цвета — как направления обмена в самописце */
+function buildFuelLegend() {
+    const legend = document.createElement('div');
+    legend.className = 'fuel-legend';
+    const items = [['fuel-swatch-prompt', 'Запрос'], ['fuel-swatch-completion', 'Ответ']];
+    for (const [cls, text] of items) {
+        const item = document.createElement('span');
+        item.className = 'fuel-legend-item';
+
+        const swatch = document.createElement('span');
+        swatch.className = `fuel-swatch ${cls}`;
+
+        const name = document.createElement('span');
+        name.textContent = text;
+
+        item.appendChild(swatch);
+        item.appendChild(name);
+        legend.appendChild(item);
+    }
+    return legend;
+}
+
+function buildFuelChartBlock(captionText, svg, legend) {
+    const block = document.createElement('div');
+    block.className = 'fuel-chart';
+
+    const head = document.createElement('div');
+    head.className = 'fuel-chart-head';
+    const caption = document.createElement('span');
+    caption.className = 'fuel-chart-caption';
+    caption.textContent = captionText;
+    head.appendChild(caption);
+    if (legend) head.appendChild(legend);
+
+    block.appendChild(head);
+    block.appendChild(svg);
+    return block;
+}
+
+/* Содержимое топливомера: сводка, оба графика и тариф. Перестраивается при
+   каждом открытии — данные берутся из живой истории текущей сессии */
+function renderFuelModal() {
+    const history = sessionTokenHistory;
+    const wrap = document.createDocumentFragment();
+
+    /* Сводка: расход запроса и ответа, сумма и цена; без обменов — нули */
+    const promptSum = history.reduce((acc, rec) => acc + (rec.promptTokens || 0), 0);
+    const completionSum = history.reduce((acc, rec) => acc + (rec.completionTokens || 0), 0);
+    const totalSum = promptSum + completionSum;
+
+    const summary = document.createElement('div');
+    summary.className = 'fuel-summary';
+    summary.appendChild(buildFuelCell('Запрос', promptSum));
+    summary.appendChild(buildFuelCell('Ответ', completionSum));
+    summary.appendChild(buildFuelCell('Сумма', totalSum));
+    summary.appendChild(buildFuelCell('Цена за сессию', fmtMoney(totalSum * TOKEN_TARIFF)));
+    wrap.appendChild(summary);
+
+    if (!history.length) {
+        const empty = document.createElement('p');
+        empty.className = 'recorder-empty';
+        empty.textContent = 'Топливо ещё не расходовалось — задайте вопрос, и здесь появится график расхода';
+        wrap.appendChild(empty);
+    } else {
+        wrap.appendChild(buildFuelChartBlock('Расход по обменам', buildTokenChart(history), buildFuelLegend()));
+        wrap.appendChild(buildFuelChartBlock('Стоимость за сессию', buildPriceChart(history), null));
+    }
+
+    const tariff = document.createElement('p');
+    tariff.className = 'fuel-tariff';
+    tariff.textContent = 'Тариф: $0,00000036 за 1 токен';
+    wrap.appendChild(tariff);
+
+    fuelBody.replaceChildren(wrap);
+}
+
+function openFuelModal() {
+    fuelOpen = true;
+    fuelOverlay.hidden = false;
+    renderFuelModal();
+    fuelClose.focus();
+}
+
+function closeFuelModal() {
+    fuelOpen = false;
+    fuelOverlay.hidden = true;
+    tokenCounter.focus();
+}
+
+/* Клик по счётчику топлива в полосе открывает и закрывает топливомер */
+tokenCounter.addEventListener('click', () => {
+    if (fuelOpen) closeFuelModal();
+    else openFuelModal();
+});
+
+fuelClose.addEventListener('click', closeFuelModal);
+
+fuelOverlay.addEventListener('click', (e) => {
+    if (e.target === fuelOverlay) closeFuelModal();
+});
+
 /* ---------- Новый диалог ---------- */
 
 const newChatBtn = document.getElementById('newChatBtn');
@@ -1131,6 +1463,8 @@ newChatBtn.addEventListener('click', () => {
     sessionId = null;
     saveSettings();
     chat.innerHTML = WELCOME_MARKUP;
+    /* Топливомер обнуляется: новый диалог — новый расход */
+    resetSessionFuel();
     setDirective('ready', 'Готов к передаче');
     /* Прежняя сессия остаётся в перечне, лампа активной записи гаснет */
     loadSessions();
@@ -1178,6 +1512,7 @@ clearAllBtn.addEventListener('click', async () => {
         sessionId = null;
         saveSettings();
         chat.innerHTML = WELCOME_MARKUP;
+        resetSessionFuel();
         setDirective('ready', `Все сессии стёрты (${deleted})`);
         loadSessions();
         input.focus();
