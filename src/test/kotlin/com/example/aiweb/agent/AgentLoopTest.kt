@@ -10,8 +10,12 @@ import com.example.aiweb.model.OpenAIToolCallFunction
 import com.example.aiweb.tools.CalculatorTool
 import com.example.aiweb.tools.NativeToolTransport
 import com.example.aiweb.tools.PromptToolTransport
+import com.example.aiweb.tools.Tool
 import com.example.aiweb.tools.ToolRegistry
+import com.example.aiweb.tools.ToolResult
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -104,8 +108,8 @@ class AgentLoopTest {
         assertEquals(17, outcome.promptTokens)
         assertEquals(5, outcome.completionTokens)
         assertEquals(22, outcome.totalTokens)
-        // Бюджет шага: 800 / MAX_STEPS = 100, но нижняя граница удерживает 1024 на шаг
-        assertEquals(1024, fake.calls.first().maxTokens)
+        // «Топливо» — лимит ответа шага: доходит в API-параметр как есть, без деления
+        assertEquals(800, fake.calls.first().maxTokens)
         // Второй вызов получил пару assistant(tool_calls) → role="tool" в контексте
         val followUp = fake.calls[1].messages
         val assistant = followUp[followUp.size - 2]
@@ -211,7 +215,7 @@ class AgentLoopTest {
     }
 
     @Test
-    fun `бюджет шага не опускается ниже нижней границы`() = runBlocking {
+    fun `топливо передаётся в шаг как есть без деления`() = runBlocking {
         val fake = FakeLLMClient(
             listOf(
                 toolCallResult(CalculatorTool.NAME, "{\"expression\":\"2+2\"}"),
@@ -220,10 +224,11 @@ class AgentLoopTest {
         )
 
         AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
-            .run(seed(), maxTokens = 1024, onEvent = {})
+            .run(seed(), maxTokens = 1500, onEvent = {})
 
-        // 1024 / MAX_STEPS = 128, но нижняя граница удерживает полный 1024 на шаг
-        assertEquals(1024, fake.calls.first().maxTokens)
+        // Прежний код делил топливо на MAX_STEPS с нижней границей (1500/8 → 1024);
+        // теперь лимит ответа шага равен установленному «Топливу»
+        assertEquals(1500, fake.calls.first().maxTokens)
     }
 
     @Test
@@ -233,12 +238,12 @@ class AgentLoopTest {
         AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
             .run(seed(), maxTokens = 8192, onEvent = {})
 
-        // Шаговый бюджет 8192 / MAX_STEPS = 1024 — модель предупреждена о нём словами,
-        // как в одиночных режимах, иначе она не планирует объём ответа
+        // Модель предупреждена о лимите словами, как в одиночных режимах, —
+        // иначе она не планирует объём ответа; лимит тот же, что в параметре API
         val system = fake.calls.first().messages.first()
         assertEquals("system", system.role)
         assertTrue(system.content.orEmpty().contains("бортовой агент"))
-        assertTrue(system.content.orEmpty().contains("уложи ответ примерно в 1024 токенов"))
+        assertTrue(system.content.orEmpty().contains("уложи ответ примерно в 8192 токенов"))
     }
 
     @Test
@@ -281,6 +286,34 @@ class AgentLoopTest {
         assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("Инструменты больше недоступны"))
         // Полный бюджет доносится и словами — финал не должен оборваться снова
         assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("2048 токенов"))
+    }
+
+    @Test
+    fun `огромный результат инструмента обрезается в контексте цикла`() = runBlocking {
+        val huge = "Х".repeat(AgentLoop.TOOL_CONTENT_LIMIT + 10_000)
+        val hugeTool = object : Tool {
+            override val name = "huge"
+            override val description = "Возвращает огромный текст"
+            override val parametersJsonSchema: JsonElement = buildJsonObject { }
+            override suspend fun execute(argsJson: String) = ToolResult(ok = true, content = huge)
+        }
+        val fake = FakeLLMClient(
+            listOf(
+                toolCallResult("huge", "{}"),
+                textResult("Готово")
+            )
+        )
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry(linkedMapOf("huge" to hugeTool)))
+            .run(seed(), maxTokens = null, onEvent = {})
+
+        // В контекст ушёл кап (начало + пометка + хвост), а не 50 тысяч символов
+        val toolMessage = fake.calls[1].messages.last { it.role == "tool" }
+        val capped = toolMessage.content.orEmpty()
+        assertTrue(capped.length < AgentLoop.TOOL_CONTENT_LIMIT + 1_000, "контекст: ${capped.length} символов")
+        assertTrue(capped.contains("результат обрезан"))
+        assertTrue(capped.endsWith("Х".repeat(2_000)), "хвост результата сохранён")
+        assertEquals("Готово", outcome.reply)
     }
 
     @Test
