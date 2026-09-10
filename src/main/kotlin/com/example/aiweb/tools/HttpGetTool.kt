@@ -39,7 +39,10 @@ import java.net.URL
  *    перепроверкой каждого нового адреса (иначе редирект на 169.254.169.254
  *    обходил бы блок);
  *  - кап размера ответа 2 МБ, таймаут запроса ~10 секунд;
- *  - принимаются только текстовые типы и application/json.
+ *  - принимаются текстовые типы (text/plain, text/html и прочие text-),
+ *    application/json и XML-типы (application/xml, text/xml, RSS/Atom);
+ *  - HTML отдаётся модели извлечённым читаемым текстом: сырая разметка
+ *    без JS-данных сжигает лимит контекста цикла и ответа.
  *
  * Любая ошибка возвращается как [ToolResult] с ok = false и понятным текстом —
  * исключения наружу не пробрасываются. Аргумент: {"url": "https://..."}.
@@ -49,9 +52,9 @@ class HttpGetTool : Tool {
     override val name = NAME
 
     override val description =
-        "Получает текстовое содержимое страницы по HTTP/HTTPS. Доступны только публичные адреса " +
-            "(защита от SSRF), не более 3 перенаправлений, размер ответа до 2 МБ, " +
-            "типы содержимого text/* и application/json."
+        "Получает содержимое страницы по HTTP/HTTPS: text/*, application/json и XML (RSS/Atom); " +
+            "из HTML возвращается извлечённый читаемый текст. Только публичные адреса " +
+            "(защита от SSRF), не более 3 перенаправлений, размер ответа до 2 МБ."
 
     override val parametersJsonSchema: JsonElement = buildJsonObject {
         put("type", "object")
@@ -141,19 +144,64 @@ class HttpGetTool : Tool {
         if (contentType == null || !isAcceptedType(contentType)) {
             return Hop.Failed(
                 "Недопустимый тип содержимого: ${contentType?.withoutParameters() ?: "не указан"} — " +
-                    "принимаются только text/* и application/json"
+                    "принимаются только text/*, application/json и XML"
             )
         }
         return try {
-            Hop.Done(readCapped(response.bodyAsChannel()))
+            val raw = readCapped(response.bodyAsChannel())
+            Hop.Done(if (isHtmlContent(contentType)) htmlToText(raw) else raw)
         } catch (e: ContentTooLargeException) {
             Hop.Failed("Ответ превышает лимит размера (${MAX_BODY_BYTES / (1024 * 1024)} МБ)")
         }
     }
 
-    /** Принимаются только текстовые типы и application/json; остальное (binary и т.п.) — отказ. */
-    private fun isAcceptedType(type: ContentType): Boolean =
-        type.match(ContentType.Text.Any) || type.match(ContentType.Application.Json)
+    /** Текстовые типы: любые text- (plain, html…), JSON и XML-производные (application/xml, RSS, Atom, XHTML). */
+    internal fun isAcceptedType(type: ContentType): Boolean {
+        val normalized = type.withoutParameters().toString().lowercase()
+        return normalized.startsWith("text/") || "json" in normalized || "xml" in normalized
+    }
+
+    /** HTML-ответы отдаются извлечённым текстом (см. [htmlToText]). */
+    internal fun isHtmlContent(type: ContentType): Boolean =
+        "html" in type.withoutParameters().toString().lowercase()
+
+    /**
+     * Извлечение читаемого текста из HTML штатными регэкспами, детерминированно.
+     * Порядок применения регэкспов важен: сначала комментарии и блоки со
+     * «невидимым» содержимым (иначе текст скриптов попал бы в выдачу), затем
+     * границы блоков в переводы строк, потом снятие остальных тегов, раскрытие
+     * сущностей и схлопывание пустоты. Модель видит из этого ~8k символов
+     * (TOOL_CONTENT_LIMIT агентного цикла), ей нужен видимый текст, а не разметка.
+     */
+    internal fun htmlToText(html: String): String =
+        html.replace(HTML_COMMENTS, " ")
+            .replace(HTML_BLOCK_ELEMENTS, " ")
+            .replace(HTML_BLOCK_BOUNDARY, "\n")
+            .replace(HTML_TAG, "")
+            .let(::decodeEntities)
+            .replace(SPACES_RUN, " ")
+            .lines()
+            .joinToString("\n") { it.trim() }
+            .replace(BLANK_LINES, "\n\n")
+            .trim()
+
+    /** Раскрытие HTML-сущностей; &amp; — последним, чтобы не разворачивать &amp;lt; дважды. */
+    private fun decodeEntities(text: String): String =
+        NUMERIC_ENTITY.replace(text) { match ->
+            val body = match.groupValues[1]
+            val codePoint = try {
+                if (body[0] == 'x' || body[0] == 'X') body.substring(1).toInt(16) else body.toInt()
+            } catch (e: NumberFormatException) {
+                -1
+            }
+            if (codePoint in 1..0x10FFFF) String(Character.toChars(codePoint)) else ""
+        }
+            .replace("&nbsp;", " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
 
     /** Читает канал, но не больше [MAX_BODY_BYTES]; превышение — внутренний маркер-исключение. */
     private suspend fun readCapped(channel: ByteReadChannel): String {
@@ -264,5 +312,22 @@ class HttpGetTool : Tool {
 
         /** Статусы перенаправления. */
         private val REDIRECT_STATUSES = listOf(301, 302, 303, 307, 308)
+
+        /** Регэкспы [htmlToText]; применение строго в порядке объявления в функции. */
+        private val HTML_COMMENTS = Regex("(?s)<!--.*?-->")
+
+        /** Блоки со «служебным» содержимым, которое не должно попасть в текст. */
+        private val HTML_BLOCK_ELEMENTS = Regex("(?is)<(script|style|noscript|svg|iframe)\\b.*?</\\1\\s*>")
+
+        /** Границы блоковых элементов — кандидаты на перевод строки. */
+        private val HTML_BLOCK_BOUNDARY = Regex(
+            "(?i)<br\\s*/?>|<hr\\s*/?>|" +
+                "</?(?:p|div|li|tr|td|th|ul|ol|table|tbody|thead|caption|h[1-6]|blockquote|" +
+                "section|article|header|footer|nav|main|form)\\b[^>]*>"
+        )
+        private val HTML_TAG = Regex("<[^>]*>")
+        private val NUMERIC_ENTITY = Regex("&#(x[0-9a-fA-F]+|[0-9]+);")
+        private val SPACES_RUN = Regex("[ \t\r\u000C\u000B]+")
+        private val BLANK_LINES = Regex("\n{3,}")
     }
 }
