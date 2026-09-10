@@ -317,6 +317,32 @@ class AgentLoopTest {
     }
 
     @Test
+    fun `три падения одного инструмента подряд режутся гвардом`() = runBlocking {
+        val flaky = object : Tool {
+            override val name = "flaky"
+            override val description = "Всегда падает"
+            override val parametersJsonSchema: JsonElement = buildJsonObject { }
+            override suspend fun execute(argsJson: String) = ToolResult(ok = false, content = "упс")
+        }
+        val fake = FakeLLMClient(
+            listOf(
+                toolCallResult("flaky", "{\"q\":\"1\"}"),
+                toolCallResult("flaky", "{\"q\":\"2\"}"),
+                toolCallResult("flaky", "{\"q\":\"3\"}"),
+                textResult("Собрал что смог")
+            )
+        )
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry(linkedMapOf("flaky" to flaky)))
+            .run(seed(), maxTokens = null, onEvent = {})
+
+        // Аргументы у вызовов разные — гвард одинаковых подписей молчит;
+        // серию падений одного инструмента ловит отдельный гвард
+        assertEquals("зацикливание", outcome.reason)
+        assertEquals(4, fake.calls.size)
+    }
+
+    @Test
     fun `промт-транспорт проходит цикл end-to-end`() = runBlocking {
         val fenced =
             "```json\n{\"tool\": \"calculator\", \"arguments\": {\"expression\": \"2*3\"}}\n```"

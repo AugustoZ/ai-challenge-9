@@ -1825,7 +1825,7 @@ function finishMirror() {
 
 /* Карточка одной передачи в колонке: ответ + строка топлива,
     либо карточка отказа — ошибка не выходит за свою сторону */
-function buildMirrorCard(result) {
+function buildMirrorCard(result, side) {
     const card = document.createElement('article');
     card.className = 'mirror-card';
 
@@ -1851,6 +1851,8 @@ function buildMirrorCard(result) {
         + ` = ${mirrorTokensOrNd(result.totalTokens)}`;
     if (result.summaryApplied && result.summaryTokens != null) {
         fuelText += ` (+сводка: ${result.summaryTokens})`;
+    } else if (side && side.key === 'compressed' && !result.summaryApplied) {
+        fuelText += ' · сжатие включено, сводки пока не было';
     }
     parts.push({ fuel: true, text: fuelText });
     card.appendChild(buildEntryHead('Ответ', parts));
@@ -1885,10 +1887,15 @@ function renderMirrorTotals() {
     const saving = full.total != null && comp.total != null && full.total > 0
         ? `экономия: ${Math.round(((full.total - comp.total) / full.total) * 100)}%`
         : 'экономия: н/д';
+    const summaryPart = !comp.exchanges
+        ? '(из них сводка: н/д)'
+        : (comp.summaryTotal > 0
+            ? `(из них сводка: ${comp.summaryTotal})`
+            : '(сводка ещё не применялась)');
     mirrorVerdict.textContent =
         `Без сжатия: ${mirrorTokensOrNd(full.total)} ток`
         + ` · Со сжатия: ${mirrorTokensOrNd(comp.total)} ток`
-        + ` (из них сводка: ${mirrorTokensOrNd(comp.exchanges ? comp.summaryTotal : null)})`
+        + ` ${summaryPart}`
         + ` · ${saving}`;
 }
 
@@ -1897,7 +1904,7 @@ function renderMirrorTotals() {
 function settleTwin(side, result) {
     if (result.fault) {
         const body = mirrorBodies[side.key];
-        body.appendChild(buildMirrorCard({ fault: true, message: result.message }));
+        body.appendChild(buildMirrorCard({ fault: true, message: result.message }, side));
         body.scrollTop = body.scrollHeight;
     }
     return result;
@@ -1913,7 +1920,7 @@ function applyTwinResponse(side, data) {
     }
     if (data.summaryTokens != null) st.summaryTotal += data.summaryTokens;
     st.exchanges += 1;
-    mirrorBodies[side.key].appendChild(buildMirrorCard(data));
+    mirrorBodies[side.key].appendChild(buildMirrorCard(data, side));
     mirrorBodies[side.key].scrollTop = mirrorBodies[side.key].scrollHeight;
     renderMirrorTotals();
 }

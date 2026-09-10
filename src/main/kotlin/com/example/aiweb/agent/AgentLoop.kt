@@ -40,10 +40,11 @@ data class AgentRunResult(
  *  - tool-результат входит в контекст цикла ограниченно ([TOOL_CONTENT_LIMIT] символов,
  *    начало и хвост): страница или дамп на мегабайты иначе переотправлялись бы
  *    целиком на каждом шаге и сжигали токены провайдера;
- *  - гварды: дедлайн [AGENT_DEADLINE_MS] до начала каждого шага, лимит шагов,
- *    детект зацикливания по [LOOP_THRESHOLD] одинаковым вызовам подряд, обрыв
- *    генерации по лимиту токенов (finishReason == "length") — текст усечён и не
- *    годится в финальный ответ;
+     *  - гварды: дедлайн [AGENT_DEADLINE_MS] до начала каждого шага, лимит шагов,
+     *    детект зацикливания по [LOOP_THRESHOLD] одинаковым вызовам подряд и по
+     *    [SAME_TOOL_FAIL_THRESHOLD] падениям одного инструмента подряд (перебор
+     *    аргументов), обрыв генерации по лимиту токенов (finishReason == "length") —
+     *    текст усечён и не годится в финальный ответ;
  *    по любому гварду — принудительный финал: один вызов клиента без инструментов
  *    с бюджетом [maxTokens] и системной заметкой
  *    «собери ответ из уже собранного».
@@ -96,6 +97,8 @@ class AgentLoop(
         var lastAssistantText = ""
         var lastSignature: String? = null
         var repeatCount = 0
+        var lastFailedTool: String? = null
+        var failedToolRun = 0
         var step = 0
 
         /**
@@ -207,6 +210,16 @@ class AgentLoop(
                     )
                 }
                 onEvent(AgentEvent.ToolResult(step, name, outcome.ok, outcome.content.take(EVENT_CONTENT_LIMIT)))
+                // Гвард падений: успех сбрасывает серию, падение того же инструмента — наращивает
+                if (outcome.ok) {
+                    failedToolRun = 0
+                    lastFailedTool = null
+                } else if (name == lastFailedTool) {
+                    failedToolRun++
+                } else {
+                    failedToolRun = 1
+                    lastFailedTool = name
+                }
                 // В контекст цикла результат входит ограниченно (TOOL_CONTENT_LIMIT):
                 // страница или дамп на мегабайты иначе переотправлялись бы на каждом шаге
                 conversation += OpenAIMessage(
@@ -219,6 +232,12 @@ class AgentLoop(
             // Третий одинаковый вызов подряд — принудительный финал; вызов исполнен,
             // поэтому контекст остаётся валидным (нет «висячих» assistant tool_calls)
             if (repeatCount >= LOOP_THRESHOLD) {
+                return forcedFinal(REASON_LOOP)
+            }
+
+            // Три падения одного инструмента подряд — перебор аргументов на сломанном
+            // пути; собираем ответ из уже добытых данных, не тратя оставшиеся шаги
+            if (failedToolRun >= SAME_TOOL_FAIL_THRESHOLD) {
                 return forcedFinal(REASON_LOOP)
             }
         }
@@ -275,6 +294,13 @@ class AgentLoop(
 
         /** Сколько подряд идущих одинаковых вызовов (tool, args) считаются зацикливанием. */
         const val LOOP_THRESHOLD = 3
+
+        /**
+         * Сколько падений одного и того же инструмента подряд считаются топтанием
+         * на месте: модель меняет аргументы (подписи разные — гвард одинаковых
+         * вызовов слеп), но долбит заведомо сломанный путь.
+         */
+        const val SAME_TOOL_FAIL_THRESHOLD = 3
 
         /** Системный промт агента: живёт в agent/, ReasoningPrompts не затрагивается. */
         private val SYSTEM_PROMPT = """
