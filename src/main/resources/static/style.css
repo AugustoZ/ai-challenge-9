@@ -353,6 +353,11 @@ body {
     color: var(--lamp-red);
 }
 
+/* Нечётный хвост из пяти клавиш «Стратегия памяти» — последняя на всю ширину */
+.strategy-annunciators .annunciator:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+
 /* --- Круглые шкалы параметров --- */
 
 .gauges {
@@ -697,10 +702,68 @@ body {
 }
 
 /* Стоп-фраза набрана — текст горит лампой, как надписи на активных клавишах;
-   пустое поле остаётся гравировкой (placeholder) */
+    пустое поле остаётся гравировкой (placeholder) */
 .setting-inline .text-input:not(:placeholder-shown) {
     color: var(--lamp-text);
     text-shadow: var(--lamp-label-shadow);
+}
+
+/* --- Панель фактов: показания стратегии «Факты» --- */
+
+/* Утопленный колодец выписки: факты — показания прибора, читать может
+    только пилот (ввода в панели нет); ключ — зелёная цифра, значение — тёплый
+    приглушённый текст */
+.facts-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.facts-panel[hidden] {
+    display: none;
+}
+
+.facts-caption {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+.facts-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 132px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--ink-dim);
+    overflow-wrap: break-word;
+}
+
+.facts-list .facts-key {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--green);
+}
+
+.facts-list .facts-empty {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
 }
 
 .sidebar-foot {
@@ -2305,9 +2368,9 @@ body.maint-on .raw-exchange {
 /* ---------- Зеркальный режим: пара twin-сессий ---------- */
 
 /* Пульт сравнения под журналом: две приборные панели бок о бок.
-   Дисциплина цвета: эталонная сторона «Без сжатия» — зелёная лампа
-   (показания), испытуемая «Со сжатия» — янтарная (механика под проверкой),
-   отказы — красным. */
+    Дисциплина цвета: левая колонка — зелёная лампа (показания), правая —
+    янтарная (механика под проверкой), отказы — красным. Стратегия каждой
+    колонки выбирается селектом в её шапке. */
 .mirror {
     flex-shrink: 0;
     padding: 10px 20px 12px;
@@ -2336,9 +2399,9 @@ body.maint-on .raw-exchange {
 
 .mirror-col-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    gap: 10px;
+    gap: 8px;
     padding: 7px 10px;
     border-bottom: 1px solid var(--bezel);
 }
@@ -2348,6 +2411,8 @@ body.maint-on .raw-exchange {
     align-items: center;
     gap: 7px;
     margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
     font-family: var(--mono);
     font-size: 10.5px;
     font-weight: 700;
@@ -2383,6 +2448,38 @@ body.maint-on .raw-exchange {
     font-variant-numeric: tabular-nums;
     color: var(--green);
     white-space: nowrap;
+}
+
+/* Селект стратегии в шапке колонки: компактный колодец в тон приборки.
+    Тёмная схема обязательна — иначе выпадающий список рендерится светлым */
+.mirror-strategy-select {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 2px 3px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    color-scheme: dark;
+    cursor: pointer;
+    transition: border-color 0.12s var(--ease-snap), color 0.12s var(--ease-snap);
+}
+
+.mirror-strategy-select:hover {
+    border-color: var(--bezel-lit);
+    color: var(--ink);
+}
+
+.mirror-strategy-select:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+}
+
+.mirror-strategy-select option {
+    background: var(--panel-deep);
+    color: var(--ink);
 }
 
 /* Показания сторон накапливаются: прокрутка живёт внутри колонки,

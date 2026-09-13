@@ -201,13 +201,33 @@
                 <section class="panel-section">
                     <h2 class="section-caption">Память</h2>
                     <div class="setting-inline">
-                        <span class="setting-label">Сжатие</span>
+                        <span class="setting-label">Стратегия</span>
                         <button type="button" class="info-btn" aria-expanded="false"
-                                aria-controls="tip-compression" aria-describedby="tip-compression"
-                                aria-label="Описание параметра «Сжатие истории»">?</button>
-                        <button type="button" class="annunciator compression-toggle" id="compressionToggle"
-                                aria-pressed="false">Сжатие истории: ВЫКЛ</button>
-                        <span class="tooltip" role="tooltip" id="tip-compression">Сжатие истории диалога: в контекст уходят последние 5 сообщений и сводка более старых — вместо полного перечня</span>
+                                aria-controls="tip-strategy" aria-describedby="tip-strategy"
+                                aria-label="Описание параметра «Стратегия памяти»">?</button>
+                        <span class="tooltip" role="tooltip" id="tip-strategy">Стратегия памяти диалога: полная история, окно последних 5 сообщений, сводка старых плюс окно, факты плюс 3 последних сообщения или авто-ветвление</span>
+                    </div>
+                    <div class="annunciators strategy-annunciators" role="radiogroup" aria-label="Стратегия памяти" id="strategyMode">
+                        <button type="button" class="annunciator" role="radio" aria-checked="true"
+                                data-strategy="off"
+                                data-caption="Контекст: полная история диалога">Выкл</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-strategy="window"
+                                data-caption="Контекст: последние 5 сообщений диалога">Окно</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-strategy="summary"
+                                data-caption="Контекст: сводка старых сообщений плюс окно последних 5">Сводка</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-strategy="facts"
+                                data-caption="Контекст: факты диалога плюс 3 последних сообщения">Факты</button>
+                        <button type="button" class="annunciator" role="radio" aria-checked="false"
+                                data-strategy="branching"
+                                data-caption="Контекст: авто-ветвление диалога">Ветки</button>
+                    </div>
+                    <p class="hint" id="strategyHint">Контекст: полная история диалога</p>
+                    <div class="facts-panel" id="factsPanel" hidden>
+                        <h3 class="facts-caption">Факты диалога</h3>
+                        <ul class="facts-list" id="factsList" aria-live="polite"></ul>
                     </div>
                     <div class="setting-inline">
                         <span class="setting-label">Сравнение</span>
@@ -216,9 +236,9 @@
                                 aria-label="Описание режима «Режим сравнения»">?</button>
                         <button type="button" class="annunciator mirror-toggle" id="mirrorToggle"
                                 aria-pressed="false">Режим сравнения: ВЫКЛ</button>
-                        <span class="tooltip" role="tooltip" id="tip-mirror">Зеркальный режим: каждый запрос уходит параллельно в две сессии — без сжатия и со сжатием; ответы и расход топлива сравниваются бок о бок под журналом</span>
+                        <span class="tooltip" role="tooltip" id="tip-mirror">Зеркальный режим: каждый запрос уходит параллельно в две сессии — каждая со своей стратегией памяти (селект в шапке колонки); ответы и расход топлива сравниваются бок о бок под журналом</span>
                     </div>
-                    <p class="hint">Сжатие укорачивает контекст: последние 5 сообщений плюс сводка старых; «Режим сравнения» ведёт параллельную пару сессий и показывает расход топлива обеих</p>
+                    <p class="hint">Стратегия памяти задаёт, что уходит в контекст; «Режим сравнения» ведёт параллельную пару сессий со своими стратегиями и показывает расход топлива обеих</p>
                 </section>
 
                 <section class="panel-section">
@@ -256,16 +276,30 @@
             <!-- Зеркальный режим: пара twin-сессий бок о бок -->
             <div id="mirrorBlock" class="mirror" hidden>
                 <div class="mirror-grid">
-                    <section class="mirror-col" data-side="full" aria-label="Ответы без сжатия истории">
+                    <section class="mirror-col" data-side="full" aria-label="Левая колонка сравнения">
                         <header class="mirror-col-head">
-                            <h3 class="mirror-col-title">Без сжатия</h3>
+                            <h3 class="mirror-col-title" id="mirrorTitleFull">Выкл</h3>
+                            <select id="mirrorStrategyFull" class="mirror-strategy-select select-input" autocomplete="off"
+                                    aria-label="Стратегия памяти левой колонки">
+                                <option value="off" selected>Выкл</option>
+                                <option value="window">Окно</option>
+                                <option value="summary">Сводка</option>
+                                <option value="facts">Факты</option>
+                            </select>
                             <span class="mirror-col-total" id="mirrorTotalFull">Итог: —</span>
                         </header>
                         <div class="mirror-col-body" id="mirrorBodyFull"></div>
                     </section>
-                    <section class="mirror-col" data-side="compressed" aria-label="Ответы со сжатием истории">
+                    <section class="mirror-col" data-side="compressed" aria-label="Правая колонка сравнения">
                         <header class="mirror-col-head">
-                            <h3 class="mirror-col-title">Со сжатием</h3>
+                            <h3 class="mirror-col-title" id="mirrorTitleComp">Сводка</h3>
+                            <select id="mirrorStrategyComp" class="mirror-strategy-select select-input" autocomplete="off"
+                                    aria-label="Стратегия памяти правой колонки">
+                                <option value="off">Выкл</option>
+                                <option value="window">Окно</option>
+                                <option value="summary" selected>Сводка</option>
+                                <option value="facts">Факты</option>
+                            </select>
                             <span class="mirror-col-total" id="mirrorTotalComp">Итог: —</span>
                         </header>
                         <div class="mirror-col-body" id="mirrorBodyComp"></div>

@@ -16,7 +16,6 @@ const clock = document.getElementById('clock');
 const stopInput = document.getElementById('stopSeq');
 const thinkingToggle = document.getElementById('thinkingToggle');
 const judgeToggle = document.getElementById('judgeToggle');
-const compressionToggle = document.getElementById('compressionToggle');
 const mirrorToggle = document.getElementById('mirrorToggle');
 const modelSelect = document.getElementById('modelSelect');
 const resetBtn = document.getElementById('resetBtn');
@@ -27,6 +26,13 @@ const modeButtons = Array.from(modeGroup.querySelectorAll('.annunciator'));
 const reasoningHint = document.getElementById('reasoningHint');
 const modeRepeater = document.getElementById('modeRepeater');
 
+/* Табло-аннунциаторы стратегии памяти + панель фактов */
+const strategyGroup = document.getElementById('strategyMode');
+const strategyButtons = Array.from(strategyGroup.querySelectorAll('.annunciator'));
+const strategyHint = document.getElementById('strategyHint');
+const factsPanel = document.getElementById('factsPanel');
+const factsList = document.getElementById('factsList');
+
 const MODE_LABELS = {
     default: 'По умолчанию',
     direct: 'Прямой ответ',
@@ -36,16 +42,34 @@ const MODE_LABELS = {
     agent: 'Агент',
 };
 
+const STRATEGY_LABELS = {
+    off: 'Выкл',
+    window: 'Окно',
+    summary: 'Сводка',
+    facts: 'Факты',
+    branching: 'Ветки',
+};
+
+/* Стратегии, доступные колонкам зеркала: «Ветки» там не участвует */
+const MIRROR_STRATEGY_LABELS = {
+    off: 'Выкл',
+    window: 'Окно',
+    summary: 'Сводка',
+    facts: 'Факты',
+};
+
 const SETTINGS_STORAGE_KEY = 'ai-assistant.settings.v1';
 const DEFAULTS = {
     reasoningMode: 'default', temperature: 0.7, maxTokens: 1024, topP: 1.0, stop: '', thinking: true, judge: false,
-    compressionEnabled: false, mirrorMode: false,
+    contextStrategy: 'off', mirrorMode: false,
+    mirrorStrategyFull: 'off', mirrorStrategyComp: 'summary',
 };
 
 /* Исходный вид бортового журнала — «Новый диалог» возвращает его на место */
 const WELCOME_MARKUP = chat.innerHTML;
 
 let currentMode = DEFAULTS.reasoningMode;
+let currentStrategy = DEFAULTS.contextStrategy;
 let sessionTotalTokens = 0;
 /* Расход топлива по ответам: одна запись {promptTokens, completionTokens,
    totalTokens} на каждый ответ модели — сырьё для топливомера */
@@ -818,8 +842,10 @@ function readSettings() {
         reasoningMode: currentMode,
         thinking: thinkingToggle.getAttribute('aria-pressed') === 'true',
         judge: judgeToggle.getAttribute('aria-pressed') === 'true',
-        compressionEnabled: compressionToggle.getAttribute('aria-pressed') === 'true',
+        contextStrategy: currentStrategy,
         mirrorMode: mirrorToggle.getAttribute('aria-pressed') === 'true',
+        mirrorStrategyFull: mirrorStrategyFull.value || DEFAULTS.mirrorStrategyFull,
+        mirrorStrategyComp: mirrorStrategyComp.value || DEFAULTS.mirrorStrategyComp,
         temperature: settingsControls.temperature.value,
         maxTokens: Math.round(settingsControls.maxTokens.value),
         topP: settingsControls.topP.value,
@@ -861,16 +887,39 @@ function loadSettings() {
     const judge = stored && typeof stored.judge === 'boolean' ? stored.judge : DEFAULTS.judge;
     setJudge(judge, { save: false });
 
-    const compression = stored && typeof stored.compressionEnabled === 'boolean'
-        ? stored.compressionEnabled
-        : DEFAULTS.compressionEnabled;
-    setCompression(compression, { save: false });
+    /* Однократная миграция со старого тумблера сжатия: включённое «Сжатие
+       истории» трактуется как стратегия «Сводка» и сразу фиксируется в
+       хранилище (один раз — по наличию contextStrategy миграция не повторится) */
+    const legacyCompression = Boolean(stored && stored.compressionEnabled === true && !stored.contextStrategy);
+    const strategy = stored && typeof stored.contextStrategy === 'string' && stored.contextStrategy
+        ? stored.contextStrategy
+        : (legacyCompression ? 'summary' : null);
+    setStrategy(strategy, { save: false });
 
     const mirror = stored && typeof stored.mirrorMode === 'boolean' ? stored.mirrorMode : DEFAULTS.mirrorMode;
     setMirror(mirror, { save: false });
 
+    mirrorStrategyFull.value = stored && MIRROR_STRATEGY_LABELS[stored.mirrorStrategyFull]
+        ? stored.mirrorStrategyFull
+        : DEFAULTS.mirrorStrategyFull;
+    mirrorStrategyComp.value = stored && MIRROR_STRATEGY_LABELS[stored.mirrorStrategyComp]
+        ? stored.mirrorStrategyComp
+        : DEFAULTS.mirrorStrategyComp;
+    syncMirrorSides();
+
     setMode(stored && stored.reasoningMode, { save: false });
     loadModels(stored && typeof stored.model === 'string' ? stored.model : '');
+
+    if (legacyCompression && stored) {
+        /* В хранилище добавляется только новый ключ: остальные сохранённые
+           настройки (модель, сессия, шкалы) переносятся как были */
+        stored.contextStrategy = 'summary';
+        try {
+            localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(stored));
+        } catch (err) {
+            // localStorage может быть недоступен — миграция повторится при следующем запуске
+        }
+    }
 }
 
 /* ---------- Выбор модели LLM ---------- */
@@ -956,23 +1005,91 @@ judgeToggle.addEventListener('click', () => {
     setJudge(judgeToggle.getAttribute('aria-pressed') !== 'true');
 });
 
-/* Тумблер «Сжатие истории»: ВКЛ → в контекст уходят последние 5 сообщений
-   и сводка более старых вместо полного перечня. */
-function setCompression(on, { save = true } = {}) {
-    const enabled = Boolean(on);
-    compressionToggle.setAttribute('aria-pressed', String(enabled));
-    compressionToggle.textContent = enabled ? 'Сжатие истории: ВКЛ' : 'Сжатие истории: ВЫКЛ';
+/* ---------- Радиогруппа «Стратегия памяти» + панель фактов ---------- */
+
+/* Панель фактов — показания стратегии «Факты»: читаемая сводка того, что
+   сервер извлёк из диалога. Только чтение: ввода в ней нет по определению. */
+function renderFacts(facts) {
+    factsList.replaceChildren();
+    for (const fact of Array.isArray(facts) ? facts : []) {
+        const key = fact && typeof fact.key === 'string' ? fact.key : '';
+        if (!key) continue;
+        const value = fact.value == null ? '' : String(fact.value);
+        const li = document.createElement('li');
+        const keySpan = document.createElement('span');
+        keySpan.className = 'facts-key';
+        keySpan.textContent = key;
+        li.appendChild(keySpan);
+        li.appendChild(document.createTextNode(': ' + value));
+        factsList.appendChild(li);
+    }
+    if (!factsList.children.length) {
+        const empty = document.createElement('li');
+        empty.className = 'facts-empty';
+        empty.textContent = 'Фактов пока нет';
+        factsList.appendChild(empty);
+    }
+}
+
+/* Видимость панели следует за активной стратегией: «Факты» — панель на виду
+   (с присланными фактами или честным «пока нет»), остальные — панель скрыта */
+function updateFactsPanel(data) {
+    if (currentStrategy !== 'facts') {
+        factsPanel.hidden = true;
+        factsList.replaceChildren();
+        return;
+    }
+    factsPanel.hidden = false;
+    const facts = data && Array.isArray(data.facts) ? data.facts : [];
+    renderFacts(facts);
+}
+
+function setStrategy(rawStrategy, { save = true } = {}) {
+    currentStrategy = rawStrategy && Object.prototype.hasOwnProperty.call(STRATEGY_LABELS, rawStrategy)
+        ? rawStrategy
+        : DEFAULTS.contextStrategy;
+
+    for (const btn of strategyButtons) {
+        btn.setAttribute('aria-checked', String(btn.dataset.strategy === currentStrategy));
+        if (btn.dataset.strategy === currentStrategy) {
+            strategyHint.textContent = btn.dataset.caption;
+        }
+    }
+    // APG radio: в группе tabbable только выбранная стратегия
+    strategyButtons.forEach((btn) => {
+        btn.tabIndex = btn.dataset.strategy === currentStrategy ? 0 : -1;
+    });
+
+    updateFactsPanel();
     if (save) saveSettings();
 }
 
-compressionToggle.addEventListener('click', () => {
-    setCompression(compressionToggle.getAttribute('aria-pressed') !== 'true');
+strategyButtons.forEach((btn) => {
+    btn.addEventListener('click', () => setStrategy(btn.dataset.strategy));
+});
+
+strategyGroup.addEventListener('keydown', (e) => {
+    const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    e.preventDefault();
+
+    const idx = strategyButtons.findIndex((b) => b.dataset.strategy === currentStrategy);
+    let next = idx;
+    if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = strategyButtons.length - 1;
+    else {
+        const dir = (e.key === 'ArrowDown' || e.key === 'ArrowRight') ? 1 : -1;
+        next = (idx + dir + strategyButtons.length) % strategyButtons.length;
+    }
+    setStrategy(strategyButtons[next].dataset.strategy);
+    strategyButtons[next].focus();
 });
 
 /* Тумблер «Режим сравнения»: ВКЛ → каждый запрос уходит параллельно в пару
-   twin-сессий (без сжатия и со сжатием), ответы сравниваются под журналом.
-   Выключение стирает накопленные показания зеркала; twin-сессии остаются
-   на сервере как обычные, основной диалог не затрагивается. */
+   twin-сессий, каждой со своей стратегией памяти (селект в шапке колонки),
+   ответы сравниваются под журналом. Выключение стирает накопленные показания
+   зеркала; twin-сессии остаются на сервере как обычные, основной диалог
+   не затрагивается. */
 function setMirror(on, { save = true } = {}) {
     const enabled = Boolean(on);
     mirrorToggle.setAttribute('aria-pressed', String(enabled));
@@ -1049,7 +1166,7 @@ resetBtn.addEventListener('click', () => {
     stopInput.value = '';
     setThinking(DEFAULTS.thinking);
     setJudge(DEFAULTS.judge);
-    setCompression(DEFAULTS.compressionEnabled);
+    setStrategy(DEFAULTS.contextStrategy);
     setMirror(DEFAULTS.mirrorMode);
     setMode(DEFAULTS.reasoningMode);
     if (modelSelect.options.length) modelSelect.selectedIndex = 0;
@@ -1850,11 +1967,43 @@ const mirrorTotals = {
 };
 const mirrorVerdict = document.getElementById('mirrorVerdict');
 
-/* Две стороны сравнения: эталон без сжатия и испытуемая сторона со сжатием */
+/* Селекты стратегий в шапках колонок: источник истины по каждой стороне */
+const mirrorStrategyFull = document.getElementById('mirrorStrategyFull');
+const mirrorStrategyComp = document.getElementById('mirrorStrategyComp');
+const mirrorTitles = {
+    full: document.getElementById('mirrorTitleFull'),
+    compressed: document.getElementById('mirrorTitleComp'),
+};
+
+/* Две стороны сравнения. Стратегия памяти читается из селекта колонки перед
+   каждым обменом — кэшировать нельзя: выбор может измениться между передачами. */
 const MIRROR_SIDES = [
-    { key: 'full', compression: false, label: 'Без сжатия' },
-    { key: 'compressed', compression: true, label: 'Со сжатием' },
+    { key: 'full', select: mirrorStrategyFull },
+    { key: 'compressed', select: mirrorStrategyComp },
 ];
+
+/* Стратегия стороны на текущий обмен; «Ветки» в зеркале не участвует —
+   неизвестное значение селекта трактуются как «Выкл» */
+function sideStrategy(side) {
+    return MIRROR_STRATEGY_LABELS[side.select.value] ? side.select.value : 'off';
+}
+
+/* Заголовок колонки всегда показывает действующую стратегию своей колонки */
+function syncMirrorSide(side) {
+    mirrorTitles[side.key].textContent = MIRROR_STRATEGY_LABELS[sideStrategy(side)];
+}
+
+function syncMirrorSides() {
+    for (const side of MIRROR_SIDES) syncMirrorSide(side);
+}
+
+for (const side of MIRROR_SIDES) {
+    side.select.addEventListener('change', () => {
+        syncMirrorSide(side);
+        saveSettings();
+    });
+}
+syncMirrorSides();
 
 /* Состояние зеркала живёт в JS-памяти страницы и не переживает перезагрузку.
     По стороне: sessionId twin-сессии (выдаёт сервер первым обменом),
@@ -1916,8 +2065,8 @@ function buildMirrorCard(result, side) {
         + ` = ${mirrorTokensOrNd(result.totalTokens)}`;
     if (result.summaryApplied && result.summaryTokens != null) {
         fuelText += ` (+сводка: ${result.summaryTokens})`;
-    } else if (side && side.key === 'compressed' && !result.summaryApplied) {
-        fuelText += ' · сжатие включено, сводки пока не было';
+    } else if (side && sideStrategy(side) === 'summary' && !result.summaryApplied) {
+        fuelText += ' · сводка включена, сводки пока не было';
     }
     parts.push({ fuel: true, text: fuelText });
     card.appendChild(buildEntryHead('Ответ', parts));
@@ -1958,8 +2107,8 @@ function renderMirrorTotals() {
             ? `(из них сводка: ${comp.summaryTotal})`
             : '(сводка ещё не применялась)');
     mirrorVerdict.textContent =
-        `Без сжатия: ${mirrorTokensOrNd(full.total)} ток`
-        + ` · Со сжатия: ${mirrorTokensOrNd(comp.total)} ток`
+        `${MIRROR_STRATEGY_LABELS[sideStrategy(MIRROR_SIDES[0])]}: ${mirrorTokensOrNd(full.total)} ток`
+        + ` · ${MIRROR_STRATEGY_LABELS[sideStrategy(MIRROR_SIDES[1])]}: ${mirrorTokensOrNd(comp.total)} ток`
         + ` ${summaryPart}`
         + ` · ${saving}`;
 }
@@ -2036,7 +2185,7 @@ async function sendTwinStream(side, requestData) {
         const handleEvent = (event) => {
             switch (event.type) {
                 case 'status':
-                    setStreamStatus(`${side.label}: ${typeof event.text === 'string' ? event.text : ''}`);
+                    setStreamStatus(`${MIRROR_STRATEGY_LABELS[sideStrategy(side)]}: ${typeof event.text === 'string' ? event.text : ''}`);
                     return false;
                 case 'final':
                     if (event.response && typeof event.response === 'object') {
@@ -2097,7 +2246,8 @@ async function sendTwinStream(side, requestData) {
 
 /* Пара параллельных передач: оба fetch отправляются одновременно —
     ожидание одной стороны ради другой лишило бы сравнение смысла.
-    Каждый twin несёт свой sessionId и явное compressionEnabled. */
+    Каждый twin несёт свой sessionId и стратегию памяти своей колонки,
+    прочитанную из селекта в момент отправки. */
 async function runMirrorExchange(baseRequest) {
     for (const side of MIRROR_SIDES) {
         if (!mirrorState[side.key].exchanges) {
@@ -2110,7 +2260,7 @@ async function runMirrorExchange(baseRequest) {
             ...baseRequest,
             sessionId: mirrorState[side.key].sessionId,
             judgeEnabled: false,
-            compressionEnabled: side.compression,
+            contextStrategy: sideStrategy(side),
         };
         return sendTwinStream(side, requestData);
     });
@@ -2176,6 +2326,8 @@ function applyChatResponse(data) {
         sessionId = data.sessionId;
         saveSettings();
     }
+    // Факты из ответа (стратегия «Факты») — в панель, если она на виду
+    updateFactsPanel(data);
     setDirective('ready', 'Передача завершена');
     /* Перечень сессий устарел — время и число записей изменились.
        Итог потока приходит сюда же, отдельный вызов не нужен. */
@@ -2365,7 +2517,7 @@ form.addEventListener('submit', async (e) => {
     sendBtn.disabled = true;
     input.disabled = true;
     showTyping();
-    const { reasoningMode, thinking, judge, compressionEnabled, temperature, maxTokens, topP, stop, model } = readSettings();
+    const { reasoningMode, thinking, judge, contextStrategy, temperature, maxTokens, topP, stop, model } = readSettings();
     const selected = splitModelValue(model || '');
     setDirective('busy', mirrorOn
         ? 'Идёт сравнение · пара параллельных передач'
@@ -2392,7 +2544,7 @@ form.addEventListener('submit', async (e) => {
                 ...commonRequest,
                 sessionId: sessionId || null,
                 judgeEnabled: judge,
-                compressionEnabled,
+                contextStrategy,
             };
             // Живой поток хода агента; при его недоступности — блокирующий запрос
             await sendChatStream(requestData, makeRequestId());
