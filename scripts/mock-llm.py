@@ -25,6 +25,9 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
       mirror-режима визуально различались);
     - если в messages есть system-сообщение, содержащее фразу «Сводка ранее»
       (маркер запроса к суммаризатору) → фиксированный короткий «summary-ответ»;
+    - если в messages есть system-сообщение, содержащее фразу «Извлечение фактов»
+      (маркер запроса к экстрактору фактов, задача 5) → детерминированный KV-JSON
+      [{"key":"цель","value":"<текст из последнего user-сообщения>"}];
     - tools в запросе игнорируются (обычный ответ, без tool_calls).
 
 Запуск:
@@ -45,6 +48,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # Маркер суммаризационного запроса (согласовано с задачей 4/6: промпт
 # суммаризации содержит в system-сообщении эту фразу).
 SUMMARY_MARKER = "Сводка ранее"
+
+# Маркер запроса на извлечение фактов (согласовано с FactPrompts.FACTS_MARKER,
+# задача 5): system-промпт содержит эту фразу — отвечаем детерминированным KV-JSON.
+FACTS_MARKER = "Извлечение фактов"
 
 # Фиксированный «summary-ответ» — короткий, как результат сжатия истории.
 SUMMARY_REPLY = (
@@ -92,13 +99,34 @@ def _compute_usage(raw_body, messages):
     }
 
 
+def _facts_reply(messages):
+    """Детерминированный KV-JSON фактов: key="цель", value — текст из последнего
+    user-сообщения (часть после «Новое сообщение пользователя: », если есть).
+    Одинаковый вход → одинаковый выход, для воспроизводимых QA-сценариев."""
+    last_user = ""
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "user":
+            content = message.get("content")
+            if isinstance(content, str):
+                last_user = content
+    marker = "Новое сообщение пользователя: "
+    idx = last_user.rfind(marker)
+    text = last_user[idx + len(marker):] if idx >= 0 else last_user
+    return json.dumps([{"key": "цель", "value": text}], ensure_ascii=False)
+
+
 def _pick_reply(messages):
-    """Сводка — фиксированный ответ; иначе — следующая реплика из ротации."""
+    """Сводка/факты — фиксированные ответы по маркерам; иначе — реплика из ротации."""
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "system":
             continue
         content = message.get("content")
-        if isinstance(content, str) and SUMMARY_MARKER in content:
+        if not isinstance(content, str):
+            continue
+        if FACTS_MARKER in content:
+            print("mock-llm: запрос на извлечение фактов (маркер «%s»)" % FACTS_MARKER, flush=True)
+            return _facts_reply(messages)
+        if SUMMARY_MARKER in content:
             return SUMMARY_REPLY
     global _counter
     with _lock:
