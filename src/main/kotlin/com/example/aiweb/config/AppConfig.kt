@@ -1,5 +1,6 @@
 package com.example.aiweb.config
 
+import com.example.aiweb.model.ContextStrategy
 import com.example.aiweb.model.FileConfig
 import com.example.aiweb.model.FileProvider
 import com.example.aiweb.model.FileToolsConfig
@@ -77,7 +78,21 @@ data class AppConfig(
     /** Порог слияния: сообщений вне окна, после которых выполняется один merge (≥ 1). */
     val compressionMergeEvery: Int = 5,
     /** Бюджет сводки диалога в токенах (≥ 50). */
-    val compressionSummaryMaxTokens: Int = 400
+    val compressionSummaryMaxTokens: Int = 400,
+    /**
+     * Стратегия формирования контекста из конфиг-файла — нижний уровень
+     * приоритета: действует, когда запрос не несёт ни явной стратегии, ни
+     * legacy-флага. Только конфиг-файл: переменных окружения нет.
+     */
+    val contextStrategy: ContextStrategy = ContextStrategy.OFF,
+    /** Каждое сколько-е user-сообщение создавать чекпоинт ветки (≥ 1). */
+    val branchCheckpointEvery: Int = 5,
+    /**
+     * Сырое значение ключа contextStrategy из конфиг-файла — только для
+     * fail-fast в [validate]: невалидная строка падает стартом. null — ключ
+     * в файле отсутствовал.
+     */
+    val contextStrategyRaw: String? = null
 ) {
     val providers: List<ProviderConfig> get() = listOf(default) + extraProviders
 
@@ -196,7 +211,10 @@ data class AppConfig(
                 compressionEnabled = fc.compressionEnabled ?: compressionEnabled,
                 compressionWindowSize = fc.compressionWindowSize ?: compressionWindowSize,
                 compressionMergeEvery = fc.compressionMergeEvery ?: compressionMergeEvery,
-                compressionSummaryMaxTokens = fc.compressionSummaryMaxTokens ?: compressionSummaryMaxTokens
+                compressionSummaryMaxTokens = fc.compressionSummaryMaxTokens ?: compressionSummaryMaxTokens,
+                contextStrategy = ContextStrategy.fromId(fc.contextStrategy) ?: contextStrategy,
+                contextStrategyRaw = fc.contextStrategy,
+                branchCheckpointEvery = fc.branchCheckpointEvery ?: branchCheckpointEvery
             )
         }
 
@@ -217,6 +235,14 @@ data class AppConfig(
             require(compressionSummaryMaxTokens >= 50) {
                 "compressionSummaryMaxTokens должен быть не меньше 50 (получено: $compressionSummaryMaxTokens) — " +
                     "слишком маленький бюджет для сводки диалога"
+            }
+            require(contextStrategyRaw == null || ContextStrategy.fromId(contextStrategyRaw) != null) {
+                "contextStrategy: неизвестная стратегия '$contextStrategyRaw' " +
+                    "(допустимо: ${ContextStrategy.values().joinToString(", ") { it.id }})"
+            }
+            require(branchCheckpointEvery >= 1) {
+                "branchCheckpointEvery должен быть не меньше 1 (получено: $branchCheckpointEvery) — " +
+                    "частота чекпоинтов ветки не может быть нулевой"
             }
             return this
         }

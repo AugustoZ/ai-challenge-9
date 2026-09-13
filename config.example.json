@@ -10,6 +10,8 @@
   "compressionWindowSize": 5,
   "compressionMergeEvery": 5,
   "compressionSummaryMaxTokens": 400,
+  "contextStrategy": "off",
+  "branchCheckpointEvery": 5,
   "tools": {
     "current_datetime": true,
     "calculator": true,

@@ -40,6 +40,10 @@ data class FileConfig(
     val compressionMergeEvery: Int? = null,
     /** Бюджет сводки диалога в токенах (≥ 50). */
     val compressionSummaryMaxTokens: Int? = null,
+    /** Стратегия формирования контекста: off | window | summary | facts | branching (отсутствует — off). */
+    val contextStrategy: String = "off",
+    /** Каждое сколько-е user-сообщение создавать чекпоинт ветки (≥ 1). */
+    val branchCheckpointEvery: Int = 5,
     /**
      * Раздел инструментов: вкл/выкл встроенных и подключение sandbox-инструментов
      * (исполнение кода и чтение файлов в изолированном контейнере).
@@ -137,6 +141,10 @@ data class ChatRequest(
     val judgeEnabled: Boolean? = null,
     /** Сжатие истории для этого запроса; null — брать из конфигурации (приоритет: поле запроса > конфиг). */
     val compressionEnabled: Boolean? = null,
+    /** Стратегия формирования контекста: off | window | summary | facts | branching; null — разрешить по приоритету (legacy-флаг, затем конфиг). */
+    val contextStrategy: String? = null,
+    /** Ветка, с которой продолжает диалог (стратегия branching); null — без переключения ветки. */
+    val branchId: String? = null,
     /** Управление цепочкой рассуждений модели: true → thinking {type: enabled}, false → {type: disabled}, null — не передавать. */
     val thinkingEnabled: Boolean? = null,
     val maxTokens: Int? = null,
@@ -164,6 +172,16 @@ data class ChatResponse(
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val summaryApplied: Boolean = false,
+    /** Разрешённая для запроса стратегия контекста (echo); null — режим, где стратегия не действует. */
+    // @EncodeDefault(ALWAYS): серверный Json имеет encodeDefaults=false — без аннотации
+    // ключи omitились бы из ответа, ломая контракт DTO для фронтенда (echo-семантика).
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val contextStrategy: String? = null,
+    /** Ветка, на которую переключилась сессия (стратегия branching); null — без ветки. */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val branchId: String? = null,
     /** Полное время обработки запроса на сервере (все вызовы LLM), мс. */
     val elapsedMs: Long? = null,
     /** Заключение судьи (режим «Судья»); null — проверка не выполнялась. */
@@ -174,6 +192,13 @@ data class ChatResponse(
     val exchanges: List<ExchangeInfo> = emptyList(),
     /** События хода работы агента (режим «Агент»); у остальных режимов пусто. */
     val events: List<AgentEvent> = emptyList()
+)
+
+/** Один выделенный факт диалога (стратегия «Факты»). */
+@Serializable
+data class Fact(
+    val key: String,
+    val value: String
 )
 
 /** Одна запись сырого обмена с LLM: запрос или ответ (режим ТО и самописец). */

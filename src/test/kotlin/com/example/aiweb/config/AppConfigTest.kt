@@ -2,6 +2,7 @@ package com.example.aiweb.config
 
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
+import com.example.aiweb.model.ContextStrategy
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.AfterTest
@@ -261,6 +262,78 @@ class AppConfigTest {
         assertTrue(root.containsKey("summaryApplied"), "ключ summaryApplied обязан присутствовать: $text")
         assertEquals("false", root["summaryApplied"]?.jsonPrimitive?.content)
         assertEquals("42", root["totalTokens"]?.jsonPrimitive?.content, "старые поля не изменились")
+    }
+
+    // --- Стратегии контекста: конфиг ---
+
+    @Test
+    fun `дефолты стратегии контекста — off и чекпоинты каждые 5 сообщений`() {
+        val config = AppConfig.fromFile("несуществующий-конфиг.json")
+
+        assertEquals(ContextStrategy.OFF, config.contextStrategy)
+        assertEquals(5, config.branchCheckpointEvery)
+    }
+
+    @Test
+    fun `старый JSON без ключей стратегии парсится с дефолтами`() {
+        val path = writeConfig(
+            """
+            {
+              "port": 8080,
+              "apiUrl": "https://old.example/v1",
+              "model": "old-model"
+            }
+            """.trimIndent()
+        )
+
+        val config = AppConfig.fromFile(path)
+
+        assertEquals(ContextStrategy.OFF, config.contextStrategy, "отсутствие ключа — off")
+        assertEquals(5, config.branchCheckpointEvery, "отсутствие ключа — 5")
+        assertEquals("old-model", config.default.model, "старые поля читаются как раньше")
+    }
+
+    @Test
+    fun `конфиг-файл — ключи стратегии применяются`() {
+        val path = writeConfig(
+            """
+            {
+              "contextStrategy": "facts",
+              "branchCheckpointEvery": 3
+            }
+            """.trimIndent()
+        )
+
+        val config = AppConfig.fromFile(path)
+
+        assertEquals(ContextStrategy.FACTS, config.contextStrategy)
+        assertEquals(3, config.branchCheckpointEvery)
+    }
+
+    @Test
+    fun `конфиг-файл — невалидная стратегия падает валидацией с сообщением`() {
+        val path = writeConfig("""{"contextStrategy": "sliding"}""")
+
+        val error = assertFailsWith<IllegalArgumentException> { AppConfig.fromFile(path) }
+        assertTrue(
+            "contextStrategy" in error.message!!,
+            "сообщение должно называть ключ и значение: ${error.message}"
+        )
+        assertTrue(
+            "sliding" in error.message!!,
+            "сообщение должно называть невалидное значение: ${error.message}"
+        )
+    }
+
+    @Test
+    fun `branchCheckpointEvery меньше 1 — падение валидации`() {
+        val path = writeConfig("""{"branchCheckpointEvery": 0}""")
+
+        val error = assertFailsWith<IllegalArgumentException> { AppConfig.fromFile(path) }
+        assertTrue(
+            "branchCheckpointEvery" in error.message!!,
+            "сообщение должно называть ключ: ${error.message}"
+        )
     }
 
     @Test
