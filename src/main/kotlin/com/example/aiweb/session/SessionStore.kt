@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import kotlinx.serialization.Serializable
 import java.util.UUID
@@ -32,6 +33,38 @@ interface SessionStore {
      */
     fun applyCompressionResult(sessionId: String, newSummary: String?, removeCount: Int): Session?
 
+    /**
+     * Создаёт близнец-ветку: снимок активного состояния сессии (messages, summary,
+     * facts) в новую ветку с id «b<seq>» и label «Ветка <seq>» (нумерация сквозная,
+     * из [Session.branchSeq]). Активное состояние не меняется; у близнеца
+     * [Branch.userCountSinceFork] = 0.
+     *
+     * Возвращает созданную ветку; null — сессия не существует или достигнут кап
+     * [InMemorySessionStore.MAX_BRANCHES] веток (форк пропускается).
+     */
+    fun forkTwin(sessionId: String): Branch?
+
+    /**
+     * Переключает активное состояние сессии на снимок ветки [branchId]: содержимое
+     * ветки (messages, summary, facts) становится активным, а прежнее активное
+     * состояние сохраняется как новая ветка «b<seq>»/«Ветка <seq>» — своп без потерь.
+     * Счётчики прежней активной переносятся в её новую запись
+     * ([Branch.userCountSinceFork] = user-сообщения активной минус провенанс её
+     * происхождения). [Session.activeBranchId] переключается на [branchId].
+     *
+     * Возвращает обновлённую сессию; null — сессия или ветка не существует
+     * (без мутации) либо достигнут кап [InMemorySessionStore.MAX_BRANCHES] веток
+     * (своп не выполняется: прежнее активное состояние некуда сохранить).
+     * Повторная активация уже активной ветки состояние не меняет.
+     */
+    fun activateBranch(sessionId: String, branchId: String): Session?
+
+    /**
+     * Заменяет список фактов активного состояния сессии. Возвращает обновлённую
+     * сессию; null — сессия не существует.
+     */
+    fun setFacts(sessionId: String, facts: List<Fact>): Session?
+
     /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
     fun list(): List<Session>
 
@@ -53,8 +86,39 @@ data class Session(
     val messages: List<OpenAIMessage> = emptyList(),
     /** Rolling-summary более старой истории (компрессия); null — сжатие ещё не выполнялось. */
     val summary: String? = null,
+    /** Близнец-ветки сессии — плоский набор снимков; у legacy-сессий пусто. */
+    val branches: List<Branch> = emptyList(),
+    /** Идентификатор активной ветки; null — активна исходная история (legacy-сессии). */
+    val activeBranchId: String? = null,
+    /** Порядковый номер последней созданной ветки; из него растут id «b<seq>». */
+    val branchSeq: Int = 0,
+    /** Выделенные факты диалога (стратегия «Факты») активного состояния. */
+    val facts: List<Fact> = emptyList(),
     val createdAt: Long,
     val updatedAt: Long
+)
+
+/**
+ * Близнец-ветка сессии: снимок состояния (messages, summary, facts) на момент
+ * создания. Ветки плоские, без дерева; id «b1», «b2», …, label «Ветка 1», …
+ *
+ * [forkUserCount] — провенанс содержимого: число user-сообщений в состоянии,
+ * из которого создана эта запись ветки. [userCountSinceFork] — user-сообщения,
+ * добавленные в ветку после её создания; для активной ветки счётчик выводится:
+ * user-сообщения активной минус [forkUserCount] активной ветки (для исходной
+ * истории — минус ноль). Запись ветки, развёрнутой в активное состояние,
+ * хранит её снимок на момент активации («зеркало»).
+ */
+@Serializable
+data class Branch(
+    val branchId: String,
+    val label: String,
+    val forkUserCount: Int,
+    val userCountSinceFork: Int,
+    val messages: List<OpenAIMessage>,
+    val summary: String? = null,
+    val facts: List<Fact> = emptyList(),
+    val createdAt: Long
 )
 
 /**
@@ -80,6 +144,9 @@ class InMemorySessionStore(
 
         /** Жёсткий кап сообщений одной сессии. */
         const val MAX_MESSAGES = 200
+
+        /** Кап числа веток одной сессии; форк сверх капа пропускается (null). */
+        const val MAX_BRANCHES = 8
     }
 
     /** Изменяемое внутреннее состояние сессии; [Session] — его снимок. */
@@ -91,6 +158,18 @@ class InMemorySessionStore(
 
         @Volatile
         var summary: String? = null
+
+        @Volatile
+        var branches: List<Branch> = emptyList()
+
+        @Volatile
+        var activeBranchId: String? = null
+
+        @Volatile
+        var branchSeq: Int = 0
+
+        @Volatile
+        var facts: List<Fact> = emptyList()
 
         @Volatile
         var updatedAt: Long = createdAt
@@ -129,6 +208,77 @@ class InMemorySessionStore(
         }
     }
 
+    override fun forkTwin(sessionId: String): Branch? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            if (entry.branches.size >= MAX_BRANCHES) return@synchronized null
+            val seq = entry.branchSeq + 1
+            val branch = Branch(
+                branchId = "b$seq",
+                label = "Ветка $seq",
+                forkUserCount = entry.messages.count { it.role == ROLE_USER },
+                userCountSinceFork = 0,
+                messages = entry.messages.toList(),
+                summary = entry.summary,
+                facts = entry.facts.toList(),
+                createdAt = now()
+            )
+            entry.branches = entry.branches + branch
+            entry.branchSeq = seq
+            entry.updatedAt = now()
+            branch
+        }
+    }
+
+    override fun activateBranch(sessionId: String, branchId: String): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            val branch = entry.branches.firstOrNull { it.branchId == branchId }
+                ?: return@synchronized null
+            if (branchId == entry.activeBranchId) return@synchronized entry.snapshot()
+            if (entry.branches.size >= MAX_BRANCHES) return@synchronized null
+
+            // Провенанс активного состояния: ветка, из которой оно было развёрнуто
+            // (для исходной истории — пустая сессия, провенанс нулевой)
+            val activeOriginFork = entry.activeBranchId
+                ?.let { activeId -> entry.branches.firstOrNull { it.branchId == activeId }?.forkUserCount }
+                ?: 0
+            val activeUserCount = entry.messages.count { it.role == ROLE_USER }
+            val seq = entry.branchSeq + 1
+
+            // Прежнее активное состояние сохраняется как новая ветка — своп без потерь
+            val folded = Branch(
+                branchId = "b$seq",
+                label = "Ветка $seq",
+                forkUserCount = activeOriginFork,
+                userCountSinceFork = activeUserCount - activeOriginFork,
+                messages = entry.messages.toList(),
+                summary = entry.summary,
+                facts = entry.facts.toList(),
+                createdAt = now()
+            )
+            // Активным становится снимок выбранной ветки
+            entry.messages.clear()
+            entry.messages.addAll(branch.messages)
+            entry.summary = branch.summary
+            entry.facts = branch.facts
+            entry.branches = entry.branches + folded
+            entry.branchSeq = seq
+            entry.activeBranchId = branchId
+            entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
+    override fun setFacts(sessionId: String, facts: List<Fact>): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            entry.facts = facts.toList()
+            entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
     override fun list(): List<Session> =
         sessions.values.map { it.snapshot() }.sortedByDescending { it.updatedAt }
 
@@ -159,6 +309,10 @@ class InMemorySessionStore(
             id = id,
             messages = messages.toList(),
             summary = summary,
+            branches = branches,
+            activeBranchId = activeBranchId,
+            branchSeq = branchSeq,
+            facts = facts,
             createdAt = createdAt,
             updatedAt = updatedAt
         )

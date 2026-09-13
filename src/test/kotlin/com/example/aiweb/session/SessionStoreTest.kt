@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIToolCall
 import java.util.concurrent.atomic.AtomicLong
@@ -229,5 +230,235 @@ class SessionStoreTest {
                 assertNotNull(prev.toolCalls)
             }
         }
+    }
+
+    // ── Ветки и факты: forkTwin / activateBranch / setFacts ──
+
+    @Test
+    fun `forkTwin создаёт близнеца с копией активного состояния и не меняет активную`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.append(session.id, user("вопрос 2"))
+
+        val branch = assertNotNull(store.forkTwin(session.id))
+
+        assertEquals("b1", branch.branchId)
+        assertEquals("Ветка 1", branch.label)
+        assertEquals(2, branch.forkUserCount)
+        assertEquals(0, branch.userCountSinceFork)
+        assertEquals(
+            listOf("вопрос 1", "ответ 1", "вопрос 2"),
+            branch.messages.mapNotNull { it.content }
+        )
+
+        // Активное состояние не изменилось; близнец виден в сессии
+        val active = assertNotNull(store.get(session.id))
+        assertEquals(3, active.messages.size)
+        assertEquals(listOf("b1"), active.branches.map { it.branchId })
+        assertEquals(1, active.branchSeq)
+        assertNull(active.activeBranchId)
+
+        // Дописали в активную — близнец остался прежним
+        store.append(session.id, assistant("ответ 2"))
+        val reread = assertNotNull(store.get(session.id))
+        assertEquals(4, reread.messages.size)
+        assertEquals(3, reread.branches.single().messages.size)
+        assertEquals(0, reread.branches.single().userCountSinceFork)
+    }
+
+    @Test
+    fun `forkTwin копирует summary и facts активного состояния`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.setFacts(session.id, listOf(Fact("тема", "змейка")))
+        store.applyCompressionResult(session.id, "сводка", 0)
+
+        val branch = assertNotNull(store.forkTwin(session.id))
+
+        assertEquals("сводка", branch.summary)
+        assertEquals(listOf(Fact("тема", "змейка")), branch.facts)
+    }
+
+    @Test
+    fun `кап веток — после MAX_BRANCHES форков следующий возвращает null`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+
+        repeat(InMemorySessionStore.MAX_BRANCHES) { i ->
+            val branch = assertNotNull(store.forkTwin(session.id), "Форк ${i + 1} должен удаться")
+            assertEquals("b${i + 1}", branch.branchId)
+        }
+
+        assertNull(store.forkTwin(session.id))
+        val active = assertNotNull(store.get(session.id))
+        assertEquals(InMemorySessionStore.MAX_BRANCHES, active.branches.size)
+        assertEquals(InMemorySessionStore.MAX_BRANCHES, active.branchSeq)
+    }
+
+    @Test
+    fun `кап веток — активация при полном наборе возвращает null без мутации`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+        repeat(InMemorySessionStore.MAX_BRANCHES) { store.forkTwin(session.id) }
+        val before = assertNotNull(store.get(session.id))
+
+        assertNull(store.activateBranch(session.id, "b1"))
+
+        assertEquals(before, assertNotNull(store.get(session.id)))
+    }
+
+    @Test
+    fun `activateBranch свопает активное состояние с веткой без потерь`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.append(session.id, user("вопрос 2"))
+        store.forkTwin(session.id)
+        store.append(session.id, assistant("ответ 2"))
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        // Активным стал снимок близнеца (3 хода)
+        assertEquals(3, activated.messages.size)
+        assertEquals(
+            listOf("вопрос 1", "ответ 1", "вопрос 2"),
+            activated.messages.mapNotNull { it.content }
+        )
+        assertEquals("b1", activated.activeBranchId)
+        // Прежняя активная ушла в branches со своими 4 ходами
+        val folded = activated.branches.single { it.branchId == "b2" }
+        assertEquals(4, folded.messages.size)
+        assertEquals(
+            listOf("вопрос 1", "ответ 1", "вопрос 2", "ответ 2"),
+            folded.messages.mapNotNull { it.content }
+        )
+        // Счётчики прежней активной: исходная история — происхождение пустая сессия
+        assertEquals(0, folded.forkUserCount)
+        assertEquals(2, folded.userCountSinceFork)
+        // Снимок близнеца в списке веток не изменился
+        val twin = activated.branches.single { it.branchId == "b1" }
+        assertEquals(3, twin.messages.size)
+        assertEquals(0, twin.userCountSinceFork)
+        assertEquals(2, twin.forkUserCount)
+        // В хранилище то же состояние
+        val reread = assertNotNull(store.get(session.id))
+        assertEquals(activated, reread)
+        // Потерь нет: 3 хода в активной + 4 в ветке; пары tool не рвутся.
+        // Снимок активной ветки — зеркало активного состояния, в уникальный счёт не входит
+        assertEquals(
+            7,
+            reread.messages.size +
+                reread.branches
+                    .filter { it.branchId != reread.activeBranchId }
+                    .sumOf { it.messages.size }
+        )
+        reread.messages.forEachIndexed { index, message ->
+            if (message.role == "tool") {
+                assertEquals("assistant", reread.messages[index - 1].role)
+            }
+        }
+    }
+
+    @Test
+    fun `activateBranch свопает messages, summary и facts со снимком ветки`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.append(session.id, user("вопрос 2"))
+        store.setFacts(session.id, listOf(Fact("тема", "змейка")))
+        store.applyCompressionResult(session.id, "сводка до форка", 0)
+        store.forkTwin(session.id)
+
+        // Активное состояние уходит от снимка близнеца
+        store.append(session.id, assistant("ответ 2"))
+        store.setFacts(session.id, listOf(Fact("тема", "крестики")))
+        store.applyCompressionResult(session.id, "сводка после форка", 0)
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        // Активное = снимок близнеца
+        assertEquals("сводка до форка", activated.summary)
+        assertEquals(listOf(Fact("тема", "змейка")), activated.facts)
+        assertEquals(3, activated.messages.size)
+        // Прежнее активное — в новой ветке со своими summary и facts
+        val folded = activated.branches.single { it.branchId == "b2" }
+        assertEquals("сводка после форка", folded.summary)
+        assertEquals(listOf(Fact("тема", "крестики")), folded.facts)
+        assertEquals(4, folded.messages.size)
+    }
+
+    @Test
+    fun `activateBranch неизвестной ветки возвращает null и не меняет сессию`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.forkTwin(session.id)
+        val before = assertNotNull(store.get(session.id))
+
+        assertNull(store.activateBranch(session.id, "b999"))
+        assertNull(store.activateBranch(session.id, ""))
+
+        assertEquals(before, assertNotNull(store.get(session.id)))
+    }
+
+    @Test
+    fun `activateBranch на неизвестной сессии возвращает null`() {
+        assertNull(newStore().activateBranch("нет-такого", "b1"))
+    }
+
+    @Test
+    fun `activateBranch уже активной ветки не меняет состояние`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.forkTwin(session.id)
+        store.append(session.id, assistant("ответ 1"))
+        store.activateBranch(session.id, "b1")
+
+        val before = assertNotNull(store.get(session.id))
+        val again = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        assertEquals(before, again)
+        assertEquals(2, again.branches.size)
+    }
+
+    @Test
+    fun `setFacts заменяет список фактов активного состояния`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+
+        val updated = assertNotNull(
+            store.setFacts(session.id, listOf(Fact("тема", "змейка"), Fact("язык", "python")))
+        )
+
+        assertEquals(listOf(Fact("тема", "змейка"), Fact("язык", "python")), updated.facts)
+        val reread = assertNotNull(store.get(session.id))
+        assertEquals(2, reread.facts.size)
+
+        // Повторный вызов заменяет список, а не дополняет
+        store.setFacts(session.id, listOf(Fact("тема", "морской бой")))
+        val reread2 = assertNotNull(store.get(session.id))
+        assertEquals(listOf(Fact("тема", "морской бой")), reread2.facts)
+    }
+
+    @Test
+    fun `setFacts пустым списком сбрасывает факты и на неизвестной сессии возвращает null`() {
+        val store = newStore()
+        val session = store.create()
+        store.setFacts(session.id, listOf(Fact("тема", "змейка")))
+
+        val cleared = assertNotNull(store.setFacts(session.id, emptyList()))
+        assertTrue(cleared.facts.isEmpty())
+
+        assertNull(store.setFacts("нет-такого", listOf(Fact("тема", "змейка"))))
     }
 }

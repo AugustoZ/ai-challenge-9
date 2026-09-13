@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -82,6 +83,79 @@ class FileSessionStore(
         val current = sessions[sessionId] ?: return null
         val messages = current.messages.drop(removeCount.coerceIn(0, current.messages.size))
         val updated = current.copy(messages = messages, summary = newSummary, updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
+    override fun forkTwin(sessionId: String): Branch? {
+        val current = sessions[sessionId] ?: return null
+        if (current.branches.size >= InMemorySessionStore.MAX_BRANCHES) return null
+        val seq = current.branchSeq + 1
+        val branch = Branch(
+            branchId = "b$seq",
+            label = "Ветка $seq",
+            forkUserCount = current.messages.count { it.role == ROLE_USER },
+            userCountSinceFork = 0,
+            messages = current.messages,
+            summary = current.summary,
+            facts = current.facts,
+            createdAt = now()
+        )
+        val updated = current.copy(
+            branches = current.branches + branch,
+            branchSeq = seq,
+            updatedAt = now()
+        )
+        sessions[sessionId] = updated
+        persist(updated)
+        return branch
+    }
+
+    @Synchronized
+    override fun activateBranch(sessionId: String, branchId: String): Session? {
+        val current = sessions[sessionId] ?: return null
+        val branch = current.branches.firstOrNull { it.branchId == branchId } ?: return null
+        if (branchId == current.activeBranchId) return current
+        if (current.branches.size >= InMemorySessionStore.MAX_BRANCHES) return null
+
+        // Провенанс активного состояния: ветка, из которой оно было развёрнуто
+        // (для исходной истории — пустая сессия, провенанс нулевой)
+        val activeOriginFork = current.activeBranchId
+            ?.let { activeId -> current.branches.firstOrNull { it.branchId == activeId }?.forkUserCount }
+            ?: 0
+        val activeUserCount = current.messages.count { it.role == ROLE_USER }
+        val seq = current.branchSeq + 1
+
+        // Прежнее активное состояние сохраняется как новая ветка — своп без потерь
+        val updated = current.copy(
+            messages = branch.messages,
+            summary = branch.summary,
+            facts = branch.facts,
+            branches = current.branches + Branch(
+                branchId = "b$seq",
+                label = "Ветка $seq",
+                forkUserCount = activeOriginFork,
+                userCountSinceFork = activeUserCount - activeOriginFork,
+                messages = current.messages,
+                summary = current.summary,
+                facts = current.facts,
+                createdAt = now()
+            ),
+            branchSeq = seq,
+            activeBranchId = branchId,
+            updatedAt = now()
+        )
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
+    override fun setFacts(sessionId: String, facts: List<Fact>): Session? {
+        val current = sessions[sessionId] ?: return null
+        val updated = current.copy(facts = facts.toList(), updatedAt = now())
         sessions[sessionId] = updated
         persist(updated)
         return updated
@@ -185,3 +259,5 @@ class FileSessionStore(
         val MAX_SESSIONS = InMemorySessionStore.MAX_SESSIONS
     }
 }
+
+private const val ROLE_USER = "user"

@@ -1,6 +1,7 @@
 package com.example.aiweb.session
 
 import com.example.aiweb.model.AgentEvent
+import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import java.io.File
 import java.nio.file.Files
@@ -300,5 +301,81 @@ class FileSessionStoreTest {
 
         val dir = newDir()
         assertTrue(sessionStoreFor(dir.absolutePath) is FileSessionStore)
+    }
+
+    // ── Ветки и факты: персист и back-compat ──
+
+    @Test
+    fun `ветки и факты переживают пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.append(session.id, user("вопрос 2"))
+        store.setFacts(session.id, listOf(Fact("тема", "змейка")))
+        store.applyCompressionResult(session.id, "сводка", 0)
+        store.forkTwin(session.id)
+        store.append(session.id, assistant("ответ 2"))
+        store.activateBranch(session.id, "b1")
+
+        val loaded = assertNotNull(newStore(dir).get(session.id))
+
+        assertEquals("b1", loaded.activeBranchId)
+        assertEquals(3, loaded.messages.size)
+        assertEquals(listOf(Fact("тема", "змейка")), loaded.facts)
+        assertEquals(2, loaded.branches.size)
+        assertEquals(2, loaded.branchSeq)
+
+        // Активная ветка и её снимок в branches совпадают (зеркало)
+        val b1 = loaded.branches.single { it.branchId == "b1" }
+        assertEquals("Ветка 1", b1.label)
+        assertEquals(2, b1.forkUserCount)
+        assertEquals(loaded.messages, b1.messages)
+        assertEquals("сводка", b1.summary)
+        assertEquals(listOf(Fact("тема", "змейка")), b1.facts)
+
+        // Прежняя активная сохранена отдельной веткой
+        val b2 = loaded.branches.single { it.branchId == "b2" }
+        assertEquals(4, b2.messages.size)
+        assertEquals(0, b2.forkUserCount)
+        assertEquals(2, b2.userCountSinceFork)
+    }
+
+    @Test
+    fun `старый json-файл сессии без веток и фактов читается с пустыми значениями`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-3.json").writeText(
+            """{"id":"old-3","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val store = newStore(dir)
+        val loaded = assertNotNull(store.get("old-3"))
+
+        assertTrue(loaded.branches.isEmpty())
+        assertNull(loaded.activeBranchId)
+        assertEquals(0, loaded.branchSeq)
+        assertTrue(loaded.facts.isEmpty())
+
+        // forkTwin на legacy-сессии работает
+        val branch = assertNotNull(store.forkTwin("old-3"))
+        assertEquals("b1", branch.branchId)
+        assertEquals("Ветка 1", branch.label)
+        assertEquals(listOf("старый вопрос"), branch.messages.mapNotNull { it.content })
+
+        // После форка файл перезаписан и содержит ветки; временных файлов не осталось
+        val raw = File(sessionsDir, "old-3.json").readText()
+        assertTrue(raw.contains("\"branches\""), "Файл: $raw")
+        assertTrue(raw.contains("\"branchSeq\":1"), "Файл: $raw")
+        assertTrue(raw.contains("Ветка 1"), "Файл: $raw")
+        assertFalse(
+            sessionsDir.listFiles()!!.any { it.name.endsWith(".json.tmp") },
+            "Временный файл должен быть переименован"
+        )
+        // Форк не переключает активную ветку: активной остаётся исходная история
+        val reread = assertNotNull(newStore(dir).get("old-3"))
+        assertNull(reread.activeBranchId)
+        assertEquals(listOf("b1"), reread.branches.map { it.branchId })
     }
 }
