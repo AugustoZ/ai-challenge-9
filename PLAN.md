@@ -249,7 +249,7 @@ summary более старшей истории (один merge на все н�
 5. **`SessionHistory.trim` дополнен** (`session/SessionHistory.kt`): stage-2 trim
    после инъекции сохраняет ведущие system-сводки и вычитает их оценку из бюджета
    (иначе user-якорный алгоритм отбрасывал сводку). Backward-compatible.
-6. **Фронтенд** (статика): секция «Память» (аннунциаторы `#compressionToggle` /
+6. **Фронтенд** (статика): секция «Память» (аннунциаторы «Сжатие истории» /
    `#mirrorToggle`, `aria-pressed`), зеркальный режим — два параллельных
    `/api/chat/stream` в twin-сессии, `.mirror-grid` side-by-side, бейдж
    «Сводка применена», «н/д» при null usage; настройки в `ai-assistant.settings.v1`
@@ -269,6 +269,52 @@ summary более старшей истории (один merge на все н�
   проводке `handleAgent`).
 - **Оценка качества за пользователем** — LLM-as-judge в сравнение не встроен;
   twin-метрики не персистируются (заготовка P1 ниже).
+
+## Стратегии управления контекстом (выполнено, ветка lesson-10)
+
+Обобщение тумблера «Сжатие истории» в единый переключатель из пяти позиций —
+**Выкл / Окно / Сводка / Факты / Ветки**: выбор, как формируется контекст
+запроса, вынесен в явное поле; зеркальный режим обобщён до «стратегия на
+колонку». «Сводка» — rolling summary прошлой итерации (consume-and-store,
+байт-в-байт); Окно и Факты — non-destructive view; Ветки — авто-форк близнец-ветки
+каждые `branchCheckpointEvery` (default 5) user-сообщений, кап 8 снимков.
+
+**Дельты change `add-context-strategies`:** `context-strategy-switcher`,
+`sliding-window`, `facts-memory`, `branching`, `comparison-mode`.
+
+**Файлы:** новый `model/ContextStrategy.kt` (enum + `fromId`/`resolve`),
+`model/Models.kt` (`ChatRequest.contextStrategy`/`branchId`,
+`ChatResponse.contextStrategy`/`branchId`/`facts`, `Fact`,
+`ActivateBranchRequest`, `BranchInfo`, `BranchesResponse`), `model/StreamEvents.kt`
+(событие `checkpoint`), `session/SessionStore.kt` + `session/FileSessionStore.kt`
+(`Branch`, `Session.branches`/`activeBranchId`/`branchSeq`/`facts`, операции
+fork/activate/setFacts, back-compat старых JSON), новый `session/ContextPlanner.kt`
+(view по разрешённой стратегии; `sliceWindow` извлечён в свободную функцию), новый
+`client/FactPrompts.kt` + `client/FactExtractor.kt` (seam-factory по образцу
+`summarizerFactory`), `config/AppConfig.kt` + `model/FileConfig`
+(`contextStrategy`, `branchCheckpointEvery`), `routes/Routes.kt` (разрешение
+стратегии, экстракция фактов после ответа, авто-форк, эндпоинты
+`GET /api/session/{id}/branches` / `POST /api/session/{id}/branches/activate`,
+SSE `checkpoint`), статика (`index.html`, `script.js`, `style.css`:
+переключатель 5 позиций, read-only панель фактов, маркеры развилок, плоский
+селектор веток, зеркало «стратегия на колонку»), `scripts/mock-llm.py`
+(маркер «Извлечение фактов»), `config.example.json`.
+
+**Риски / осознанные решения:**
+
+- **Деструктивна только «Сводка»** — Окно и Факты читают историю и ничего не
+  удаляют; следствие: переключение **со** «Сводки» на Окно/Выкл/Факты теряет
+  историю за окном (уже удалена consume-and-store), накопленная сводка в view
+  других стратегий не подставляется — задокументировано как известная асимметрия.
+- **Авто-форк после завершения ответа** — форк срабатывает, когда ассистент
+  завершил ответ и в активную ветку добавлен N-й user-месседж с момента её
+  происхождения; унаследованный префикс близнеца в счётчик не входит (иначе
+  каскадный форк).
+- **Зеркало подавляет ветвление** — twin-сессии никогда не получают стратегию
+  branching: авто-форк в зеркале не срабатывает, маркеров `checkpoint` в
+  twin-стримах нет.
+- **Team и Prompt-to-Prompt** — стратегия no-op (stateless-путь), как компрессия
+  в прошлой итерации.
 
 ## Заготовки под P1 (встроены дизайном, не кодом)
 
