@@ -259,5 +259,3 @@ class FileSessionStore(
         val MAX_SESSIONS = InMemorySessionStore.MAX_SESSIONS
     }
 }
-
-private const val ROLE_USER = "user"

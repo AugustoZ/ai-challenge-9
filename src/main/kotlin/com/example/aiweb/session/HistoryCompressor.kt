@@ -58,7 +58,6 @@ class HistoryCompressor(
         /** Бюджет батча суммаризации в оценочных токенах (дизайн-решение: ~12k). */
         const val SUMMARY_BATCH_TOKEN_BUDGET = 12_000
 
-        private const val ROLE_USER = "user"
         private const val ROLE_TOOL = "tool"
 
         /**

@@ -13,7 +13,6 @@ object SessionHistory {
     /** Оценка объёма истории в токенах до вычета резерва под новый запрос. */
     const val MAX_HISTORY_TOKENS = 24_000
 
-    private const val ROLE_USER = "user"
     private const val ROLE_SYSTEM = "system"
 
     /**

@@ -346,4 +346,4 @@ internal fun trimSessionHistory(messages: MutableList<OpenAIMessage>) {
     }
 }
 
-private const val ROLE_USER = "user"
+internal const val ROLE_USER = "user"

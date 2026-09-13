@@ -680,7 +680,14 @@ private suspend fun finalizeResponse(
     }
 
     val elapsedMs = System.currentTimeMillis() - startedAt
-    val currentFacts = if (session != null) sessions.get(session.id)?.facts ?: emptyList() else emptyList()
+    // Перечитывание store нужно только для «Фактов»: только экстрактор выше мог
+    // обновить факты после снимка сессии (activateBranch предшествовал resolveChat)
+    val currentFacts =
+        if (session != null && hooks != null && hooks.strategy == ContextStrategy.FACTS) {
+            sessions.get(session.id)?.facts ?: emptyList()
+        } else {
+            session?.facts ?: emptyList()
+        }
     return if (body.judgeEnabled == true) {
         onStatus("Судья проверяет ответ…")
         response.copy(
