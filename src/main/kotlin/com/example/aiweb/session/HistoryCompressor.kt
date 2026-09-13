@@ -60,6 +60,32 @@ class HistoryCompressor(
 
         private const val ROLE_USER = "user"
         private const val ROLE_TOOL = "tool"
+
+        /**
+         * Последние [windowSize] сообщений [messages]. Turn-boundary guard: если срез
+         * начинается с role="tool" (его assistant(tool_calls) остался за границей),
+         * срез расширяется назад до ближайшего user-сообщения — пара не разрывается,
+         * и провайдер не увидит осиротевшего tool (паттерн [SessionHistory.trim]).
+         *
+         * Свободная функция (companion): используется и компрессором, и планировщиком
+         * контекста [ContextPlanner] для стратегий WINDOW/FACTS.
+         */
+        fun sliceWindow(messages: List<OpenAIMessage>, windowSize: Int): List<OpenAIMessage> {
+            if (messages.size <= windowSize) return messages.toList()
+
+            var start = messages.size - windowSize
+            if (messages[start].role == ROLE_TOOL) {
+                val userStart = messages.subList(0, start).indexOfLast { it.role == ROLE_USER }
+                if (userStart >= 0) {
+                    start = userStart
+                } else {
+                    // user до среза нет — история дефектная: отбрасываем подвешенный
+                    // начало по тому же гварду, что и в SessionHistory.trim
+                    while (start < messages.size && messages[start].role != ROLE_USER) start++
+                }
+            }
+            return messages.subList(start, messages.size).toList()
+        }
     }
 
     /** Сколько сообщений находится вне последних [windowSize]. */
@@ -72,22 +98,8 @@ class HistoryCompressor(
      * расширяется назад до ближайшего user-сообщения — пара не разрывается,
      * и провайдер не увидит осиротевшего tool (паттерн [SessionHistory.trim]).
      */
-    fun sliceWindow(messages: List<OpenAIMessage>): List<OpenAIMessage> {
-        if (messages.size <= windowSize) return messages.toList()
-
-        var start = messages.size - windowSize
-        if (messages[start].role == ROLE_TOOL) {
-            val userStart = messages.subList(0, start).indexOfLast { it.role == ROLE_USER }
-            if (userStart >= 0) {
-                start = userStart
-            } else {
-                // user до среза нет — история дефектная: отбрасываем подвешенный
-                // начало по тому же гварду, что и в SessionHistory.trim
-                while (start < messages.size && messages[start].role != ROLE_USER) start++
-            }
-        }
-        return messages.subList(start, messages.size).toList()
-    }
+    fun sliceWindow(messages: List<OpenAIMessage>): List<OpenAIMessage> =
+        sliceWindow(messages, windowSize)
 
     /**
      * View запроса к модели: опциональная сводка как system-сообщение + окно.

@@ -7,6 +7,8 @@ import com.example.aiweb.client.ExchangeLog
 import com.example.aiweb.client.JudgePrompts
 import com.example.aiweb.client.LLMCall
 import com.example.aiweb.client.LLMClient
+import com.example.aiweb.client.FactExtractor
+import com.example.aiweb.client.OpenAIFactExtractor
 import com.example.aiweb.client.OpenAIHistorySummarizer
 import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.client.TeamRole
@@ -15,6 +17,7 @@ import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
+import com.example.aiweb.model.ContextStrategy
 import com.example.aiweb.model.ExchangeLogResponse
 import com.example.aiweb.model.JudgeReport
 import com.example.aiweb.model.ModelsResponse
@@ -32,6 +35,7 @@ import com.example.aiweb.session.Session
 import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.session.SessionStore
 import com.example.aiweb.session.sessionStoreFor
+import com.example.aiweb.session.view
 import com.example.aiweb.tools.NativeToolTransport
 import com.example.aiweb.tools.PromptToolTransport
 import com.example.aiweb.tools.ToolRegistry
@@ -78,6 +82,9 @@ fun Route.aiRoutes(
     clientFactory: (ProviderConfig) -> LLMClient = { AIClient(it) },
     summarizerFactory: (LLMClient) -> HistorySummarizer = {
         OpenAIHistorySummarizer(it, config.compressionSummaryMaxTokens)
+    },
+    factExtractorFactory: (LLMClient) -> FactExtractor = {
+        OpenAIFactExtractor(it)
     }
 ) {
     val clients: Map<ProviderConfig, LLMClient> =
@@ -97,6 +104,14 @@ fun Route.aiRoutes(
                 summaryMaxTokens = config.compressionSummaryMaxTokens,
                 summarizer = summarizerFactory(clients.getValue(provider))
             )
+        }
+
+    // Экстракторы фактов на каждый провайдер (стратегия «Факты»): реальная
+    // реализация оборачивает LLM-клиента провайдера либо фейк в тестах;
+    // вызов при стратегии FACTS — интегрируется в обработчиках (задача 6).
+    val factExtractors: Map<ProviderConfig, FactExtractor> =
+        config.providers.associateWith { provider ->
+            factExtractorFactory(clients.getValue(provider))
         }
 
     // Активные запросы стриминга для POST /api/cancel
@@ -138,6 +153,7 @@ fun Route.aiRoutes(
     // POST /api/chat — принимает сообщение и возвращает ответ AI
     post("/api/chat") {
         val body = call.receiveChatRequest() ?: return@post
+        if (!call.validContextStrategy(body)) return@post
         val startedAt = System.currentTimeMillis()
         val chat = resolveChat(config, clients, sessions, body)
 
@@ -171,6 +187,7 @@ fun Route.aiRoutes(
     // Отмена прогона — POST /api/cancel по body.requestId.
     post("/api/chat/stream") {
         val body = call.receiveChatRequest() ?: return@post
+        if (!call.validContextStrategy(body)) return@post
         val startedAt = System.currentTimeMillis()
         val chat = resolveChat(config, clients, sessions, body)
 
@@ -386,6 +403,21 @@ private suspend fun ApplicationCall.receiveChatRequest(): ChatRequest? {
 }
 
 /**
+ * Проверяет явную стратегию контекста запроса: неизвестный id — 400 с текстом
+ * «Неизвестная стратегия контекста: <id>» ДО создания сессии и вызовов LLM
+ * (общий вход /api/chat и /api/chat/stream). null или валидный id — без ответа.
+ */
+private suspend fun ApplicationCall.validContextStrategy(body: ChatRequest): Boolean {
+    if (body.contextStrategy == null) return true
+    if (ContextStrategy.fromId(body.contextStrategy) != null) return true
+    respond(
+        HttpStatusCode.BadRequest,
+        ChatResponse("Неизвестная стратегия контекста: ${body.contextStrategy}")
+    )
+    return false
+}
+
+/**
  * Контекст запроса чата после общего препроцессинга /api/chat и /api/chat/stream:
  * выбранный режим, провайдер, его клиент LLM и сессия диалога.
  */
@@ -473,12 +505,13 @@ private suspend fun finalizeResponse(
  * вставляется история диалога; идентификатор сессии возвращается в ChatResponse.sessionId.
  * System-сообщения в сессии не живут — они собираются в момент запроса.
  *
- * Сжатие истории (если включено на запросе/в конфиге):
+ * Сжатие истории — только при стратегии SUMMARY (legacy-компрессия):
  *  - merge выполняется СИНХРОННО до ответа модели: накопленное вне окна сжимается
  *    в сводку, слитые сообщения удаляются из хранилища, сессия перечитывается;
  *  - сбой суммаризатора чат не роняет: лог + прежний summary, summaryTokens=null;
- *  - вид запроса собирается planView (сводка как system + окно), затем СТАДИЯ-2 —
- *    SessionHistory.trim ПОСЛЕ инъекции сводки (последний этап, бюджет с учётом сводки).
+ *  - вид запроса собирает планировщик контекста (view по стратегии: SUMMARY —
+ *    planView, WINDOW — окно, FACTS — блок фактов + окно 3, OFF/BRANCHING — как
+ *    есть), затем СТАДИЯ-2 — SessionHistory.trim ПОСЛЕ view (последний этап).
  */
 private suspend fun handleSingle(
     aiClient: LLMClient,
@@ -491,13 +524,21 @@ private suspend fun handleSingle(
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
-    val compressionOn = body.compressionEnabled ?: config.compressionEnabled
+    // Стратегия контекста: явное поле запроса > legacy-флаг compressionEnabled
+    // (с его конфиг-фолбэком — прежняя семантика «compressionOn») > конфиг.
+    // Неизвестный id отсечён на входе маршрута (validContextStrategy — 400 до создания сессии).
+    val strategy = ContextStrategy.resolve(
+        body.contextStrategy,
+        body.compressionEnabled ?: config.compressionEnabled,
+        config.contextStrategy
+    ) ?: ContextStrategy.OFF
 
-    // 1) Синхронный merge до ответа. runCatching: исключение суммаризатора —
-    //    деградация (прежний summary остаётся), а не падение чата.
+    // 1) Синхронный merge до ответа — ТОЛЬКО при стратегии SUMMARY (legacy-компрессия).
+    //    runCatching: исключение суммаризатора — деградация (прежний summary остаётся),
+    //    а не падение чата. При остальных стратегиях merge не вызывается вовсе.
     var mergeResult: MergeResult? = null
     var viewSession: Session? = session
-    if (compressionOn && session != null) {
+    if (strategy == ContextStrategy.SUMMARY && session != null) {
         mergeResult = runCatching { compressor.merge(session.summary, session.messages) }
             .onFailure { e ->
                 println(
@@ -512,13 +553,16 @@ private suspend fun handleSingle(
         }
     }
 
-    // 2) Вид запроса: при компрессии — planView (сводка как system-сообщение + окно),
-    //    затем СТАДИЯ-2 SessionHistory.trim (последний этап). Без компрессии — как раньше.
-    val history = if (compressionOn && viewSession != null) {
-        SessionHistory.trim(compressor.planView(viewSession.summary, viewSession.messages), body.maxTokens ?: 0)
-    } else {
-        viewSession?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) } ?: emptyList()
-    }
+    // 2) Вид запроса: планировщик контекста по стратегии (view — чистая функция,
+    //    хранилище не урезает), затем СТАДИЯ-2 SessionHistory.trim (последний этап).
+    val history = viewSession
+        ?.let {
+            SessionHistory.trim(
+                view(strategy, it.summary, it.messages, it.facts, compressor.windowSize, compressor),
+                body.maxTokens ?: 0
+            )
+        }
+        ?: emptyList()
 
     val context = if (mode == ReasoningMode.DEFAULT) {
         buildList {
@@ -557,7 +601,9 @@ private suspend fun handleSingle(
         sessionId = session?.id,
         exchanges = ExchangeLog.since(startSeq),
         summaryTokens = mergeResult?.tokens,
-        summaryApplied = compressionOn && viewSession?.summary != null
+        summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
+        contextStrategy = strategy.id,
+        branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null
     )
 }
 
@@ -575,12 +621,15 @@ private suspend fun handleSingle(
  * пользовательское сообщение и финальный ответ — промежуточный трафик инструментов
  * (общий пост-when блок после ответа) в память не пишет.
  *
- * Сжатие истории (задача 8) — та же схема, что в одиночных режимах ([handleSingle]):
+ * Сжатие истории — только при стратегии SUMMARY — та же схема, что в одиночных
+ * режимах ([handleSingle]):
  *  - merge выполняется СИНХРОННО до запуска цикла; сбой суммаризатора — деградация
  *    (лог, прежний summary, summaryTokens=null), агентный прогон не падает;
- *  - seed цикла = planView (сводка как system-сообщение + окно) + новый вопрос,
- *    затем СТАДИЯ-2 SessionHistory.trim — последний этап; пары
- *    assistant(tool_calls) → role="tool" в seed не рвутся;
+ *  - seed цикла = view по стратегии из планировщика контекста (SUMMARY — планView
+ *    «сводка как system-сообщение + окно», WINDOW — окно, FACTS — блок фактов +
+ *    окно 3, OFF/BRANCHING — полная история) + новый вопрос, затем СТАДИЯ-2
+ *    SessionHistory.trim — последний этап; пары assistant(tool_calls) → role="tool"
+ *    в seed не рвутся;
  *  - AgentLoop без изменений: сводка для цикла — обычные сообщения seed (system-
  *    промт агент добавляет сам); у провайдера type=opencode сводка вплетается во
  *    флаттененный prompt как «Системная инструкция: …» — флаттенинг не чинится;
@@ -606,12 +655,17 @@ private suspend fun handleAgent(
         registry = registry
     )
 
-    // 1) Синхронный merge до запуска агентного цикла (как в handleSingle): сбой
-    //    суммаризатора — деградация, а не падение прогона.
-    val compressionOn = body.compressionEnabled ?: config.compressionEnabled
+    // 1) Синхронный merge до запуска агентного цикла — ТОЛЬКО при стратегии SUMMARY
+    //    (как в handleSingle; legacy-флаг с конфиг-фолбэком): сбой суммаризатора —
+    //    деградация, а не падение прогона.
+    val strategy = ContextStrategy.resolve(
+        body.contextStrategy,
+        body.compressionEnabled ?: config.compressionEnabled,
+        config.contextStrategy
+    ) ?: ContextStrategy.OFF
     var mergeResult: MergeResult? = null
     var viewSession: Session? = session
-    if (compressionOn && session != null) {
+    if (strategy == ContextStrategy.SUMMARY && session != null) {
         mergeResult = runCatching { compressor.merge(session.summary, session.messages) }
             .onFailure { e ->
                 println(
@@ -626,21 +680,17 @@ private suspend fun handleAgent(
         }
     }
 
-    // 2) Seed цикла: при компрессии — planView (сводка system + окно) + новый вопрос,
-    //    затем СТАДИЯ-2 SessionHistory.trim (последний этап, сводка не выпадает).
-    //    Без компрессии — прежний trim-стек.
-    val seed = if (compressionOn && viewSession != null) {
-        SessionHistory.trim(
-            compressor.planView(viewSession.summary, viewSession.messages) +
-                OpenAIMessage(role = "user", content = body.message),
-            body.maxTokens ?: 0
-        )
-    } else {
-        val history = viewSession
-            ?.let { SessionHistory.trim(it.messages, body.maxTokens ?: 0) }
-            ?: emptyList()
-        history + OpenAIMessage(role = "user", content = body.message)
-    }
+    // 2) Seed цикла: вид по стратегии из планировщика (view — чистая функция) +
+    //    новый вопрос, затем СТАДИЯ-2 SessionHistory.trim (последний этап).
+    val seed = viewSession
+        ?.let {
+            SessionHistory.trim(
+                view(strategy, it.summary, it.messages, it.facts, compressor.windowSize, compressor) +
+                    OpenAIMessage(role = "user", content = body.message),
+                body.maxTokens ?: 0
+            )
+        }
+        ?: listOf(OpenAIMessage(role = "user", content = body.message))
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(
@@ -666,7 +716,9 @@ private suspend fun handleAgent(
         events = events,
         exchanges = ExchangeLog.since(startSeq),
         summaryTokens = mergeResult?.tokens,
-        summaryApplied = compressionOn && viewSession?.summary != null
+        summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
+        contextStrategy = strategy.id,
+        branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null
     )
 }
 

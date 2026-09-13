@@ -7,6 +7,7 @@ import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
+import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIToolCall
 import com.example.aiweb.model.OpenAIToolCallFunction
@@ -20,9 +21,11 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -165,7 +168,8 @@ class CompressionRoutesTest {
             message: String,
             sessionId: String? = null,
             compression: Boolean? = null,
-            reasoningMode: String? = null
+            reasoningMode: String? = null,
+            contextStrategy: String? = null
         ): HttpResponse = kotlinx.coroutines.runBlocking {
             client.post("$base/api/chat") {
                 contentType(ContentType.Application.Json)
@@ -174,14 +178,23 @@ class CompressionRoutesTest {
                         message = message,
                         sessionId = sessionId,
                         compressionEnabled = compression,
-                        reasoningMode = reasoningMode
+                        reasoningMode = reasoningMode,
+                        contextStrategy = contextStrategy
                     )
                 )
             }
         }
 
+        /** GET /api/session/{id} — снимок сессии из хранилища (для non-destructive проверок). */
+        fun getSession(id: String): HttpResponse = kotlinx.coroutines.runBlocking {
+            client.get("$base/api/session/$id")
+        }
+
         /** Декодирует тело ответа в ChatResponse. */
         fun HttpResponse.json(): ChatResponse = kotlinx.coroutines.runBlocking { body() }
+
+        /** Декодирует тело ответа GET /api/session/{id} в Session. */
+        fun HttpResponse.session(): Session = kotlinx.coroutines.runBlocking { body() }
 
         fun seed(messages: List<OpenAIMessage>, summary: String? = null): Session {
             val s = sessions.create()
@@ -518,6 +531,159 @@ class CompressionRoutesTest {
             val after = sessions.get(s.id)!!
             assertEquals("старая сводка", after.summary, "сводка в хранилище не тронута")
             assertEquals(8, after.messages.size, "ничего не ужато и не удалено")
+        }
+    }
+
+    // --- 8. Стратегии контекста (задача 4): window / facts / legacy / приоритет / 400 ---
+
+    @Test
+    fun `стратегия window - в LLMCall ровно последние 5, хранилище не урезано`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            // 13 сообщений: 6 ходов + «висячий» вопрос — окно 5 начинается с user
+            // (ход 5 целиком + ход 6 + висячий), stage-2 trim ничего не срезает
+            val s = seed(
+                turn(1, 20) + turn(2, 20) + turn(3, 20) + turn(4, 20) +
+                    turn(5, 20) + turn(6, 20) + user("вопрос 7 без ответа")
+            )
+
+            val response = postChat("новый вопрос", s.id, contextStrategy = "window")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("window", parsed.contextStrategy, "echo стратегии в ответе")
+            assertNull(parsed.summaryTokens, "merge при WINDOW не выполняется")
+            assertFalse(parsed.summaryApplied, "сводка при WINDOW не подставляется")
+
+            // DEFAULT-режим без maxTokens: системного промта режима нет —
+            // LLMCall = окно (5) + новый вопрос
+            val ask = chat.calls.single().messages
+            assertEquals(6, ask.size)
+            assertEquals(
+                listOf("вопрос 5", "ответ 5", "вопрос 6", "ответ 6", "вопрос 7"),
+                ask.dropLast(1).map { it.content!!.take(8).trimEnd() },
+                "в запрос уходят ровно последние 5 сообщений"
+            )
+            assertEquals("новый вопрос", ask.last().content)
+            assertFalse(ask.any { it.content.orEmpty().startsWith("вопрос 1") }, "внеоконные ходы в запрос не попадают")
+            assertFalse(
+                ask.any { it.role == "tool" },
+                "история без инструментов — window не приносит лишнего"
+            )
+
+            // Non-destructive: GET /api/session возвращает ВСЕ ходы + новый
+            val after = getSession(s.id).session()
+            assertEquals(15, after.messages.size, "13 сообщений seed + новый ход, ничего не удалено")
+            assertTrue(after.messages.any { it.content!!.startsWith("вопрос 1") }, "первый ход остался в хранилище")
+        }
+    }
+
+    @Test
+    fun `стратегия facts - system-блок фактов плюс последние 3 сообщения`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            // 5 сообщений: окно 3 = [вопрос 2, ответ 2, висячий вопрос] — с user,
+            // stage-2 trim блок фактов и окно не режет
+            val s = seed(turn(1, 20) + turn(2, 20) + user("вопрос 3 без ответа"))
+            sessions.setFacts(s.id, listOf(Fact("цель", "проверить блок фактов"), Fact("язык", "kotlin")))
+
+            val response = postChat("новый вопрос", s.id, contextStrategy = "facts")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("facts", parsed.contextStrategy, "echo стратегии в ответе")
+
+            val ask = chat.calls.single().messages
+            assertEquals(1 + 3 + 1, ask.size, "блок фактов + окно 3 + новый вопрос")
+            val factsBlock = ask.first()
+            assertEquals("system", factsBlock.role)
+            assertTrue(
+                factsBlock.content!!.startsWith("Известные факты о диалоге:"),
+                "блок фактов начинается с заголовка: ${factsBlock.content}"
+            )
+            assertTrue(factsBlock.content!!.contains("- цель: проверить блок фактов"))
+            assertTrue(factsBlock.content!!.contains("- язык: kotlin"))
+
+            val tail = ask.drop(1).dropLast(1)
+            assertEquals(
+                listOf("вопрос 2", "ответ 2", "вопрос 3"),
+                tail.map { it.content!!.take(8).trimEnd() },
+                "после блока фактов — последние 3 сообщения"
+            )
+            assertEquals("новый вопрос", ask.last().content)
+        }
+    }
+
+    @Test
+    fun `стратегия facts - пустые факты - блока нет, только окно`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(turn(1, 20) + turn(2, 20) + user("вопрос 3 без ответа"))
+
+            val response = postChat("новый вопрос", s.id, contextStrategy = "facts")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val ask = chat.calls.single().messages
+            assertEquals(3 + 1, ask.size, "пустые факты — пустой вклад, окно 3 + новый вопрос")
+            assertFalse(ask.any { it.role == "system" })
+        }
+    }
+
+    @Test
+    fun `legacy - compressionEnabled true - merge вызван, планView применён, echo summary`() {
+        withApp(config(enabled = false, window = 2, mergeEvery = 2)) {
+            val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20))
+
+            val response = postChat("новый вопрос", s.id, compression = true)
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("summary", parsed.contextStrategy, "legacy-флаг разрешается в SUMMARY")
+            assertTrue(parsed.summaryApplied)
+            assertEquals(7, parsed.summaryTokens, "токены суммаризатора в ответе — старое поведение")
+            assertEquals(1, summarizer.calls.size, "merge выполнен как раньше")
+            assertTrue(
+                chat.calls.single().messages.any { it.role == "system" && it.content == "сводка" },
+                "планView применён: сводка system-сообщением"
+            )
+        }
+    }
+
+    @Test
+    fun `приоритет - window плюс compressionEnabled true - WINDOW выигрывает, merge не зван`() {
+        withApp(config(enabled = true, window = 5, mergeEvery = 1)) {
+            val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20))
+
+            val response = postChat("новый вопрос", s.id, compression = true, contextStrategy = "window")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("window", parsed.contextStrategy, "явная стратегия перекрывает legacy-флаг")
+            assertNull(parsed.summaryTokens)
+            assertEquals(0, summarizer.calls.size, "при WINDOW merge не вызывается вовсе")
+            assertFalse(parsed.summaryApplied)
+            assertFalse(
+                chat.calls.single().messages.any { it.role == "system" && it.content == "сводка" },
+                "сводка в контекст не подставляется"
+            )
+            assertFalse(chat.calls.single().messages.any { it.content.orEmpty().startsWith("вопрос 1") })
+
+            val after = sessions.get(s.id)!!
+            assertEquals(8, after.messages.size, "хранилище не урезано: 6 seed + новый ход")
+        }
+    }
+
+    @Test
+    fun `неизвестная стратегия - 400 с текстом Неизвестная стратегия, сервер жив`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val bad = postChat("вопрос", contextStrategy = "magick")
+            assertEquals(HttpStatusCode.BadRequest, bad.status)
+            val body = kotlinx.coroutines.runBlocking { bad.bodyAsText() }
+            assertTrue(body.contains("Неизвестная стратегия контекста"), "текст ошибки: $body")
+            assertTrue(body.contains("magick"), "неизвестный id в тексте ошибки: $body")
+            assertEquals(0, chat.calls.size, "до LLM запрос не дошёл")
+            assertEquals(0, sessions.list().size, "сессия не создана")
+
+            val alive = postChat("вопрос после ошибки")
+            assertEquals(HttpStatusCode.OK, alive.status, "сервер жив после 400")
+            assertEquals("off", alive.json().contextStrategy, "echo дефолтной стратегии")
         }
     }
 }
