@@ -182,6 +182,13 @@ data class ChatResponse(
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val branchId: String? = null,
+    /** Актуальный список фактов сессии (стратегия facts); пусто — фактов нет или режим stateless. */
+    // @EncodeDefault(ALWAYS): пустой список должен присутствовать в JSON для клиентов
+    // стратегии facts (панель фактов обновляется из ответа), а encodeDefaults=false
+    // серверного Json иначе omitил бы значение по умолчанию.
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val facts: List<Fact> = emptyList(),
     /** Полное время обработки запроса на сервере (все вызовы LLM), мс. */
     val elapsedMs: Long? = null,
     /** Заключение судьи (режим «Судья»); null — проверка не выполнялась. */
@@ -199,6 +206,34 @@ data class ChatResponse(
 data class Fact(
     val key: String,
     val value: String
+)
+
+/** Тело POST /api/session/{id}/branches/activate — идентификатор ветки для переключения. */
+@Serializable
+data class ActivateBranchRequest(
+    val branchId: String
+)
+
+/** Одна запись плоского списка веток сессии (GET /api/session/{id}/branches). */
+@Serializable
+data class BranchInfo(
+    /** Идентификатор ветки; null — активна исходная история (до первого форка/активации). */
+    val branchId: String?,
+    val label: String,
+    /** Провенанс: сколько user-сообщений было в состоянии на момент создания записи. */
+    val forkUserCount: Int,
+    /** user-сообщения, добавленные после создания (для активной записи — выводимый счётчик). */
+    val userCountSinceFork: Int,
+    /** Всего сообщений в состоянии (user + assistant + tool). */
+    val messageCount: Int,
+    /** Активна ли запись — живое состояние сессии; ровно одна запись со значением true. */
+    val active: Boolean
+)
+
+/** Ответ GET /api/session/{id}/branches: активная запись первая, затем снимки веток. */
+@Serializable
+data class BranchesResponse(
+    val branches: List<BranchInfo>
 )
 
 /** Одна запись сырого обмена с LLM: запрос или ответ (режим ТО и самописец). */

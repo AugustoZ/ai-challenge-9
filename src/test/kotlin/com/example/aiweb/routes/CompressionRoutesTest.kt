@@ -1,10 +1,13 @@
 package com.example.aiweb.routes
 
 import com.example.aiweb.client.ChatResult
+import com.example.aiweb.client.FactExtractor
 import com.example.aiweb.client.LLMCall
 import com.example.aiweb.client.LLMClient
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
+import com.example.aiweb.model.ActivateBranchRequest
+import com.example.aiweb.model.BranchesResponse
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.Fact
@@ -36,6 +39,10 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -84,6 +91,22 @@ class CompressionRoutesTest {
         }
     }
 
+    /** Фейковый экстрактор фактов: счётчик вызовов, заготовленный результат, управляемый сбой. */
+    private class FakeFactExtractor(
+        private val result: List<Fact>? = listOf(Fact("цель", "построить ветку"))
+    ) : FactExtractor {
+        data class Call(val current: List<Fact>, val userMessage: String)
+
+        val calls = mutableListOf<Call>()
+        var failWith: RuntimeException? = null
+
+        override suspend fun extract(current: List<Fact>, userMessage: String): List<Fact>? {
+            calls.add(Call(current, userMessage))
+            failWith?.let { throw it }
+            return result
+        }
+    }
+
     private fun user(text: String) = OpenAIMessage(role = "user", content = text)
 
     private fun assistant(text: String) = OpenAIMessage(role = "assistant", content = text)
@@ -98,7 +121,8 @@ class CompressionRoutesTest {
         enabled: Boolean = false,
         window: Int = 5,
         mergeEvery: Int = 5,
-        maxTokens: Int = 400
+        maxTokens: Int = 400,
+        branchCheckpointEvery: Int = 5
     ) = AppConfig(
         port = 0,
         default = ProviderConfig(
@@ -112,7 +136,8 @@ class CompressionRoutesTest {
         compressionEnabled = enabled,
         compressionWindowSize = window,
         compressionMergeEvery = mergeEvery,
-        compressionSummaryMaxTokens = maxTokens
+        compressionSummaryMaxTokens = maxTokens,
+        branchCheckpointEvery = branchCheckpointEvery
     )
 
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
@@ -120,6 +145,7 @@ class CompressionRoutesTest {
     /** Поднимает Application на случайном порту с инъецированными фейками и передаёт [block] harness. */
     private fun withApp(
         config: AppConfig,
+        factExtractor: FakeFactExtractor = FakeFactExtractor(),
         block: Harness.() -> Unit
     ) {
         val store: SessionStore = InMemorySessionStore()
@@ -138,13 +164,14 @@ class CompressionRoutesTest {
                     config = config,
                     store = store,
                     clientFactory = { chat },
-                    summarizerFactory = { summarizer }
+                    summarizerFactory = { summarizer },
+                    factExtractorFactory = { factExtractor }
                 )
             }
         }
         server.start(wait = false)
         try {
-            Harness("http://127.0.0.1:$port", store, chat, summarizer)
+            Harness("http://127.0.0.1:$port", store, chat, summarizer, factExtractor)
                 .block()
         } finally {
             server.stop(100, 500)
@@ -155,7 +182,8 @@ class CompressionRoutesTest {
         val base: String,
         val sessions: SessionStore,
         val chat: FakeLLMClient,
-        val summarizer: FakeSummarizer
+        val summarizer: FakeSummarizer,
+        val extractor: FakeFactExtractor
     ) {
         val client = HttpClient(CIO) {
             install(ContentNegotiation) {
@@ -169,7 +197,8 @@ class CompressionRoutesTest {
             sessionId: String? = null,
             compression: Boolean? = null,
             reasoningMode: String? = null,
-            contextStrategy: String? = null
+            contextStrategy: String? = null,
+            branchId: String? = null
         ): HttpResponse = kotlinx.coroutines.runBlocking {
             client.post("$base/api/chat") {
                 contentType(ContentType.Application.Json)
@@ -179,9 +208,41 @@ class CompressionRoutesTest {
                         sessionId = sessionId,
                         compressionEnabled = compression,
                         reasoningMode = reasoningMode,
+                        contextStrategy = contextStrategy,
+                        branchId = branchId
+                    )
+                )
+            }
+        }
+
+        /** POST /api/chat/stream — сырое SSE-тело (кадры data: {...}) для разбора в тесте. */
+        fun postChatStream(
+            message: String,
+            sessionId: String? = null,
+            contextStrategy: String? = null
+        ): HttpResponse = kotlinx.coroutines.runBlocking {
+            client.post("$base/api/chat/stream") {
+                contentType(ContentType.Application.Json)
+                setBody(
+                    ChatRequest(
+                        message = message,
+                        sessionId = sessionId,
                         contextStrategy = contextStrategy
                     )
                 )
+            }
+        }
+
+        /** GET /api/session/{id}/branches — плоский список веток (активная первой). */
+        fun getBranches(id: String): HttpResponse = kotlinx.coroutines.runBlocking {
+            client.get("$base/api/session/$id/branches")
+        }
+
+        /** POST /api/session/{id}/branches/activate — переключение активной ветки. */
+        fun activateBranch(id: String, branchId: String): HttpResponse = kotlinx.coroutines.runBlocking {
+            client.post("$base/api/session/$id/branches/activate") {
+                contentType(ContentType.Application.Json)
+                setBody(ActivateBranchRequest(branchId))
             }
         }
 
@@ -193,8 +254,22 @@ class CompressionRoutesTest {
         /** Декодирует тело ответа в ChatResponse. */
         fun HttpResponse.json(): ChatResponse = kotlinx.coroutines.runBlocking { body() }
 
-        /** Декодирует тело ответа GET /api/session/{id} в Session. */
+        /** Декодирует тело GET /api/session/{id} в Session. */
         fun HttpResponse.session(): Session = kotlinx.coroutines.runBlocking { body() }
+
+        /** Декодирует тело GET /api/session/{id}/branches. */
+        fun HttpResponse.branchesView(): BranchesResponse = kotlinx.coroutines.runBlocking { body() }
+
+        /** Разбирает SSE-тело в список JSON-кадров (по одному data: на кадр). */
+        fun HttpResponse.sseFrames(): List<JsonObject> = kotlinx.coroutines.runBlocking {
+            bodyAsText().split("\n\n").mapNotNull { chunk ->
+                chunk.lineSequence()
+                    .firstOrNull { it.startsWith("data: ") }
+                    ?.removePrefix("data: ")
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { Json.parseToJsonElement(it).jsonObject }
+            }
+        }
 
         fun seed(messages: List<OpenAIMessage>, summary: String? = null): Session {
             val s = sessions.create()
@@ -684,6 +759,228 @@ class CompressionRoutesTest {
             val alive = postChat("вопрос после ошибки")
             assertEquals(HttpStatusCode.OK, alive.status, "сервер жив после 400")
             assertEquals("off", alive.json().contextStrategy, "echo дефолтной стратегии")
+        }
+    }
+
+    // --- 9. Интеграция (задача 6): факты после ответа ---
+
+    @Test
+    fun `стратегия facts - после ответа экстракция записана в хранилище и echo в ответе`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(turn(1, 20) + user("вопрос 2 без ответа"))
+            sessions.setFacts(s.id, listOf(Fact("старый", "факт")))
+
+            val response = postChat("меня зовут Аугусто", s.id, contextStrategy = "facts")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(1, extractor.calls.size, "экстрактор зван ровно один раз, после ответа ассистента")
+            assertEquals(
+                listOf(Fact("старый", "факт")),
+                extractor.calls[0].current,
+                "экстрактору переданы текущие факты сессии"
+            )
+            assertEquals("меня зовут Аугусто", extractor.calls[0].userMessage)
+
+            val expected = listOf(Fact("цель", "построить ветку"))
+            assertEquals(expected, parsed.facts, "ответ несёт обновлённый список фактов")
+            assertEquals(expected, sessions.get(s.id)!!.facts, "обновлённые факты записаны в хранилище")
+        }
+    }
+
+    @Test
+    fun `экстрактор фактов падает - ответ 200, прежние факты сохранены`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(listOf(user("вопрос 1")))
+            val previous = listOf(Fact("прежний", "факт"))
+            sessions.setFacts(s.id, previous)
+            extractor.failWith = RuntimeException("сбой экстрактора")
+
+            val response = postChat("новый вопрос", s.id, contextStrategy = "facts")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("ответ сервера", parsed.reply, "чат продолжает отвечать при сбое экстрактора")
+            assertEquals(previous, parsed.facts, "в ответе прежние факты")
+            assertEquals(previous, sessions.get(s.id)!!.facts, "хранилище не тронуто — прежние факты")
+        }
+    }
+
+    @Test
+    fun `стратегия не facts - экстрактор не зван, факты только echo`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(listOf(user("вопрос 1")))
+            val previous = listOf(Fact("старый", "факт"))
+            sessions.setFacts(s.id, previous)
+
+            val response = postChat("новый вопрос", s.id, contextStrategy = "window")
+            val parsed = response.json()
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(0, extractor.calls.size, "экстракция выполняется только при стратегии facts")
+            assertEquals(previous, parsed.facts, "текущие факты сессии приходят echo без обновления")
+        }
+    }
+
+    // --- 10. Интеграция (задача 6): авто-форк, эндпоинты веток, SSE checkpoint ---
+
+    @Test
+    fun `branching - пять сообщений дают развилку, ещё пять дают вторую, близнецы не форкают себя`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            var sid: String? = null
+            repeat(5) { index ->
+                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
+                assertEquals(HttpStatusCode.OK, response.status)
+                if (sid == null) sid = response.json().sessionId
+            }
+            val id = sid!!
+
+            val afterFive = getBranches(id)
+            assertEquals(HttpStatusCode.OK, afterFive.status)
+            val five = afterFive.branchesView()
+            assertEquals(2, five.branches.size, "после 5-го сообщения создана близнец-ветка")
+            assertTrue(five.branches[0].active, "живое состояние — первой записью, active=true")
+            assertEquals(5, five.branches[0].userCountSinceFork, "у живого состояния 5 user-сообщений от начала")
+            val twin = five.branches[1]
+            assertEquals("b1", twin.branchId)
+            assertEquals("Ветка 1", twin.label)
+            assertEquals(0, twin.userCountSinceFork, "у близнеца 0 user-сообщений после создания")
+            assertFalse(twin.active)
+
+            repeat(5) { index ->
+                val response = postChat("вопрос ${index + 6}", id, contextStrategy = "branching")
+                assertEquals(HttpStatusCode.OK, response.status)
+            }
+
+            val afterTen = getBranches(id).branchesView()
+            assertEquals(3, afterTen.branches.size, "10-е сообщение создаёт вторую развилку")
+            assertTrue(afterTen.branches[0].active, "живое состояние по-прежнему первой")
+            assertTrue(
+                afterTen.branches.drop(1).all { it.userCountSinceFork == 0 },
+                "близнецы никогда не форкают себя: счётчики снимков остаются нулевыми"
+            )
+            assertTrue(afterTen.branches.any { it.branchId == "b1" && it.label == "Ветка 1" })
+        }
+    }
+
+    @Test
+    fun `activate - переключение возвращает снимок ветки как активную сессию`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            var sid: String? = null
+            repeat(5) { index ->
+                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
+                if (sid == null) sid = response.json().sessionId
+            }
+            val id = sid!!
+
+            val activated = activateBranch(id, "b1")
+            assertEquals(HttpStatusCode.OK, activated.status)
+            val sessionAfter = activated.session()
+            val b1Snapshot = sessions.get(id)!!.branches.first { it.branchId == "b1" }
+            assertEquals("b1", sessionAfter.activeBranchId)
+            assertEquals(
+                b1Snapshot.messages.map { it.content },
+                sessionAfter.messages.map { it.content },
+                "активной стала копия снимка ветки b1"
+            )
+
+            val viaGet = getSession(id).session()
+            assertEquals(
+                sessionAfter.messages.map { it.content },
+                viaGet.messages.map { it.content },
+                "GET /api/session возвращает те же сообщения, что и ответ activate"
+            )
+        }
+    }
+
+    @Test
+    fun `activate - неизвестная ветка и неизвестная сессия - 404`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            assertEquals(HttpStatusCode.NotFound, activateBranch("нет-такой-сессии", "b1").status)
+
+            val s = seed(listOf(user("вопрос 1")))
+            assertEquals(HttpStatusCode.NotFound, activateBranch(s.id, "нет-такой-ветки").status)
+        }
+    }
+
+    @Test
+    fun `branchId в запросе - переключает ветку до обработки, неизвестная ветка - 404`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            var sid: String? = null
+            repeat(5) { index ->
+                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
+                if (sid == null) sid = response.json().sessionId
+            }
+            val id = sid!!
+
+            val switched = postChat("вопрос в ветке", id, contextStrategy = "branching", branchId = "b1")
+            assertEquals(HttpStatusCode.OK, switched.status)
+            assertEquals("b1", switched.json().branchId, "echo активной ветки после переключения")
+            assertEquals("b1", sessions.get(id)!!.activeBranchId, "сессия переключена на b1")
+
+            val before = sessions.get(id)!!.messages.size
+            val unknown = postChat("вопрос", id, contextStrategy = "branching", branchId = "нет")
+            assertEquals(HttpStatusCode.NotFound, unknown.status, "неизвестная ветка — 404")
+            assertEquals(before, sessions.get(id)!!.messages.size, "404 — обработка не началась, история не пишется")
+        }
+    }
+
+    @Test
+    fun `branching стрим - пятый вопрос - кадр checkpoint до final, поток не оборван`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            var sid: String? = null
+            repeat(4) { index ->
+                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
+                if (sid == null) sid = response.json().sessionId
+            }
+            val id = sid!!
+
+            val stream = postChatStream("вопрос 5", id, contextStrategy = "branching")
+            assertEquals(HttpStatusCode.OK, stream.status)
+            val frames = stream.sseFrames()
+            val types = frames.map { it["type"]?.jsonPrimitive?.content }
+            val checkpointIndex = types.indexOf("checkpoint")
+            val finalIndex = types.indexOf("final")
+            assertTrue(checkpointIndex >= 0, "кадр checkpoint присутствует в потоке: $types")
+            assertTrue(finalIndex > checkpointIndex, "final приходит ПОСЛЕ checkpoint — поток не оборван: $types")
+
+            val checkpoint = frames[checkpointIndex]
+            assertEquals("b1", checkpoint["branchId"]?.jsonPrimitive?.content)
+            assertEquals("Ветка 1", checkpoint["label"]?.jsonPrimitive?.content)
+            assertEquals(5, checkpoint["forkUserCount"]?.jsonPrimitive?.int, "провенанс близнеца — 5 user-сообщений")
+        }
+    }
+
+    @Test
+    fun `кап веток - восемь близнецов созданы, девятый форк пропущен без ошибки`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100, branchCheckpointEvery = 1)) {
+            var sid: String? = null
+            var last: HttpResponse? = null
+            repeat(9) { index ->
+                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
+                assertEquals(HttpStatusCode.OK, response.status, "форк сверх капа не ломает ответ")
+                if (sid == null) sid = response.json().sessionId
+                last = response
+            }
+            val id = sid!!
+            assertEquals(HttpStatusCode.OK, last!!.status)
+            assertEquals(8, sessions.get(id)!!.branches.size, "создано ровно 8 близнецов — кап MAX_BRANCHES")
+            assertEquals(9, getBranches(id).branchesView().branches.size, "8 снимков плюс живое состояние")
+        }
+    }
+
+    @Test
+    fun `зеркало подавляет ветвление - шесть сообщений при off - веток нет`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            var sid: String? = null
+            repeat(6) { index ->
+                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "off")
+                assertEquals(HttpStatusCode.OK, response.status)
+                if (sid == null) sid = response.json().sessionId
+            }
+            val session = sessions.get(sid!!)!!
+            assertTrue(session.branches.isEmpty(), "стратегия off никогда не форкает: ${session.branches}")
+            assertNull(session.activeBranchId)
         }
     }
 }

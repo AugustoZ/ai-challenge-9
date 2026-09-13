@@ -14,7 +14,10 @@ import com.example.aiweb.client.ReasoningPrompts
 import com.example.aiweb.client.TeamRole
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
+import com.example.aiweb.model.ActivateBranchRequest
 import com.example.aiweb.model.AgentEvent
+import com.example.aiweb.model.BranchInfo
+import com.example.aiweb.model.BranchesResponse
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.ContextStrategy
@@ -121,6 +124,19 @@ fun Route.aiRoutes(
     // (отключённые в конфиге инструменты не видны модели)
     val registry = ToolRegistry.forConfig(config.tools)
 
+    // Хуки контекстных стратегий после ответа (экстракция фактов / авто-форк):
+    // стратегия разрешается по тому же приоритету, что в обработчиках; экстрактор —
+    // фабричный шов провайдера, параметры авто-форка — из конфига
+    fun contextHooks(provider: ProviderConfig, body: ChatRequest): ContextHooks = ContextHooks(
+        strategy = ContextStrategy.resolve(
+            body.contextStrategy,
+            body.compressionEnabled ?: config.compressionEnabled,
+            config.contextStrategy
+        ) ?: ContextStrategy.OFF,
+        factExtractor = factExtractors.getValue(provider),
+        branchCheckpointEvery = config.branchCheckpointEvery
+    )
+
     // GET /api/log — сырой протокол обменов с моделью (самописец)
     get("/api/log") {
         call.respond(ExchangeLogResponse(entries = ExchangeLog.all()))
@@ -154,6 +170,7 @@ fun Route.aiRoutes(
     post("/api/chat") {
         val body = call.receiveChatRequest() ?: return@post
         if (!call.validContextStrategy(body)) return@post
+        if (!call.activateRequestedBranch(sessions, body, config)) return@post
         val startedAt = System.currentTimeMillis()
         val chat = resolveChat(config, clients, sessions, body)
 
@@ -171,7 +188,12 @@ fun Route.aiRoutes(
                 )
             }
 
-            call.respond(finalizeResponse(chat.aiClient, body, response, chat.session, sessions, startedAt))
+            call.respond(
+                finalizeResponse(
+                    chat.aiClient, body, response, chat.session, sessions, startedAt,
+                    hooks = contextHooks(chat.provider, body)
+                )
+            )
         } catch (e: Exception) {
             println("Ошибка при обращении к API: ${e.message}")
             call.respond(
@@ -188,6 +210,7 @@ fun Route.aiRoutes(
     post("/api/chat/stream") {
         val body = call.receiveChatRequest() ?: return@post
         if (!call.validContextStrategy(body)) return@post
+        if (!call.activateRequestedBranch(sessions, body, config)) return@post
         val startedAt = System.currentTimeMillis()
         val chat = resolveChat(config, clients, sessions, body)
 
@@ -221,7 +244,9 @@ fun Route.aiRoutes(
                         )
                     }
                     val finalized = finalizeResponse(
-                        chat.aiClient, body, response, chat.session, sessions, startedAt
+                        chat.aiClient, body, response, chat.session, sessions, startedAt,
+                        hooks = contextHooks(chat.provider, body),
+                        onCheckpoint = { frames.trySend(it) }
                     ) { status ->
                         frames.trySend(StreamEvent.Status(status))
                     }
@@ -309,6 +334,46 @@ fun Route.aiRoutes(
         }
     }
 
+    // GET /api/session/{id}/branches — плоский список веток (задача 6): первой
+    // запись живого активного состояния (active=true), затем снимки веток в порядке
+    // создания. Неизвестная сессия — 404
+    get("/api/session/{id}/branches") {
+        val session = sessions.get(call.parameters["id"] ?: "")
+        if (session == null) {
+            call.respond(HttpStatusCode.NotFound)
+        } else {
+            call.respond(branchesView(session))
+        }
+    }
+
+    // POST /api/session/{id}/branches/activate — переключить активную ветку
+    // (своп без потерь); ответ — полная сессия, как у GET /api/session/{id}.
+    // Неизвестная сессия или ветка — 404
+    post("/api/session/{id}/branches/activate") {
+        val sessionId = call.parameters["id"] ?: ""
+        if (sessions.get(sessionId) == null) {
+            call.respond(HttpStatusCode.NotFound)
+            return@post
+        }
+        val request = try {
+            call.receive<ActivateBranchRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        val branchId = request?.branchId?.trim().orEmpty()
+        if (branchId.isEmpty()) {
+            call.respond(HttpStatusCode.BadRequest, ChatResponse("Укажите branchId ветки."))
+            return@post
+        }
+        val activated = sessions.activateBranch(sessionId, branchId)
+        if (activated == null) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Ветка не найдена: $branchId"))
+            return@post
+        }
+        call.respond(activated)
+    }
+
     // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно)
     delete("/api/session/{id}") {
         sessions.delete(call.parameters["id"] ?: "")
@@ -368,6 +433,41 @@ private const val SESSION_TITLE_LIMIT = 80
 private val FILE_NAME_PATTERN = Regex("[A-Za-z0-9._-]+")
 
 /**
+ * Плоский список веток сессии для GET /api/session/{id}/branches (задача 6):
+ * первой — запись живого активного состояния (active=true; для исходной истории
+ * branchId=null и label «Основная»), затем снимки прочих веток в порядке создания.
+ * Счётчик активной записи выводится по контракту T3: user-сообщения активного
+ * состояния минус провенанс её записи (для исходной истории — минус ноль);
+ * у неактивных — сохранённый userCountSinceFork.
+ */
+private fun branchesView(session: Session): BranchesResponse {
+    val activeRecord = session.activeBranchId
+        ?.let { activeId -> session.branches.firstOrNull { it.branchId == activeId } }
+    val activeUsers = session.messages.count { it.role == "user" }
+    val live = BranchInfo(
+        branchId = session.activeBranchId,
+        label = activeRecord?.label ?: "Основная",
+        forkUserCount = activeRecord?.forkUserCount ?: 0,
+        userCountSinceFork = activeUsers - (activeRecord?.forkUserCount ?: 0),
+        messageCount = session.messages.size,
+        active = true
+    )
+    val snapshots = session.branches
+        .filter { it.branchId != session.activeBranchId }
+        .map { branch ->
+            BranchInfo(
+                branchId = branch.branchId,
+                label = branch.label,
+                forkUserCount = branch.forkUserCount,
+                userCountSinceFork = branch.userCountSinceFork,
+                messageCount = branch.messages.size,
+                active = false
+            )
+        }
+    return BranchesResponse(branches = listOf(live) + snapshots)
+}
+
+/**
  * Заголовок сессии для списка: первое user-сообщение с непустым текстом, без
  * пробелов по краям и обрезанное до [SESSION_TITLE_LIMIT]; если user-сообщений
  * нет — пустая строка.
@@ -418,6 +518,36 @@ private suspend fun ApplicationCall.validContextStrategy(body: ChatRequest): Boo
 }
 
 /**
+ * Явное переключение ветки запросом (ChatRequest.branchId, стратегия branching,
+ * требование 5 дельты branching): выполняется ДО resolveChat, чтобы обработчики
+ * получили уже активированный снимок сессии. Неизвестная ветка — 404 (ответ уже
+ * отправлен, вызывающий завершает маршрут). Без действий: branchId не указан,
+ * stateless-режимы, стратегия не branching, сессии ещё нет (создастся новой).
+ */
+private suspend fun ApplicationCall.activateRequestedBranch(
+    sessions: SessionStore,
+    body: ChatRequest,
+    config: AppConfig
+): Boolean {
+    if (body.branchId == null) return true
+    if (ReasoningMode.fromId(body.reasoningMode) !in HISTORY_MODES) return true
+    val strategy = ContextStrategy.resolve(
+        body.contextStrategy,
+        body.compressionEnabled ?: config.compressionEnabled,
+        config.contextStrategy
+    ) ?: ContextStrategy.OFF
+    if (strategy != ContextStrategy.BRANCHING) return true
+
+    val session = sessions.get(body.sessionId) ?: return true
+    val activated = sessions.activateBranch(session.id, body.branchId)
+    if (activated == null) {
+        respond(HttpStatusCode.NotFound, ChatResponse("Ветка не найдена: ${body.branchId}"))
+        return false
+    }
+    return true
+}
+
+/**
  * Контекст запроса чата после общего препроцессинга /api/chat и /api/chat/stream:
  * выбранный режим, провайдер, его клиент LLM и сессия диалога.
  */
@@ -426,6 +556,17 @@ private class ChatContext(
     val provider: ProviderConfig,
     val aiClient: LLMClient,
     val session: Session?
+)
+
+/**
+ * Хуки контекстных стратегий после ответа (общий пост-блок finalizeResponse):
+ * разрешённая стратегия, экстрактор фактов провайдера (стратегия facts) и период
+ * авто-форка (стратегия branching). Сессии без хуков — stateless-режимы.
+ */
+private class ContextHooks(
+    val strategy: ContextStrategy,
+    val factExtractor: FactExtractor?,
+    val branchCheckpointEvery: Int
 )
 
 /**
@@ -458,8 +599,18 @@ private fun resolveChat(
  * Общая пост-обработка ответа режима (используется /api/chat и /api/chat/stream):
  * история сессии пополняется только после успешного ответа модели — одним
  * пользовательским сообщением и финальным ответом (промежуточный трафик
- * инструментов в память не пишет); затем приборный замер полного времени
- * обработки и опциональная контрольная проверка судьи.
+ * инструментов в память не пишет); затем хуки контекстных стратегий, приборный
+ * замер полного времени обработки и опциональная контрольная проверка судьи.
+ *
+ * [hooks] — контекстные стратегии после ответа (задача 6): при стратегии facts —
+ * экстракция фактов по новому сообщению (сбой — деградация: прежние факты, ответ
+ * не падает), при branching — авто-форк близнеца по счётчику user-сообщений
+ * активной ветки (кап — форк пропущен без ошибки). Путь «Сводки» здесь не задет:
+ * merge/applyCompressionResult выполняются в обработчиках до этого блока.
+ *
+ * [onCheckpoint] — шов стриминга: кадр Checkpoint об успешном форке уходит в поток
+ * ДО final (поток не завершает); в блокирующем /api/chat остаётся пустым —
+ * ветка сообщается только echo-полем ChatResponse.branchId.
  *
  * [onStatus] — шов стриминга: уведомление «Судья проверяет ответ…» уходит в поток
  * кадром Status до начала проверки; в блокирующем /api/chat остаётся пустым.
@@ -471,6 +622,8 @@ private suspend fun finalizeResponse(
     session: Session?,
     sessions: SessionStore,
     startedAt: Long,
+    hooks: ContextHooks? = null,
+    onCheckpoint: suspend (StreamEvent.Checkpoint) -> Unit = {},
     onStatus: suspend (String) -> Unit = {}
 ): ChatResponse {
     if (session != null) {
@@ -483,15 +636,60 @@ private suspend fun finalizeResponse(
         )
     }
 
+    // Хуки контекстных стратегий — после записи ответа в историю
+    if (session != null && hooks != null) {
+        // «Факты»: экстракция только при активной стратегии facts; сбой (исключение
+        // или null) — прежние факты сохраняются, чат не падает
+        if (hooks.strategy == ContextStrategy.FACTS && hooks.factExtractor != null) {
+            val extracted = runCatching { hooks.factExtractor.extract(session.facts, body.message) }
+                .onFailure { e ->
+                    println(
+                        "Факты сессии «${session.id}»: экстрактор не сработал (${e.message}); " +
+                            "сохраняю прежние факты"
+                    )
+                }
+                .getOrNull()
+            if (extracted != null) {
+                sessions.setFacts(session.id, extracted)
+            }
+        }
+
+        // «Ветки»: счётчик user-сообщений активной ветки с момента её происхождения
+        // (для исходной истории — от начала диалога); кратный checkpointEvery — форк
+        if (hooks.strategy == ContextStrategy.BRANCHING) {
+            val fresh = sessions.get(session.id) ?: session
+            val originFork = fresh.activeBranchId
+                ?.let { activeId -> fresh.branches.firstOrNull { it.branchId == activeId }?.forkUserCount }
+                ?: 0
+            val counter = fresh.messages.count { it.role == "user" } - originFork
+            if (counter > 0 && counter % hooks.branchCheckpointEvery == 0) {
+                val twin = sessions.forkTwin(session.id)
+                if (twin != null) {
+                    onCheckpoint(
+                        StreamEvent.Checkpoint(
+                            branchId = twin.branchId,
+                            label = twin.label,
+                            forkUserCount = twin.forkUserCount
+                        )
+                    )
+                } else {
+                    println("Ветки сессии «${session.id}»: достигнут кап — авто-форк пропущен")
+                }
+            }
+        }
+    }
+
     val elapsedMs = System.currentTimeMillis() - startedAt
+    val currentFacts = if (session != null) sessions.get(session.id)?.facts ?: emptyList() else emptyList()
     return if (body.judgeEnabled == true) {
         onStatus("Судья проверяет ответ…")
         response.copy(
             elapsedMs = elapsedMs,
-            judge = runJudge(aiClient, body, response, elapsedMs)
+            judge = runJudge(aiClient, body, response, elapsedMs),
+            facts = currentFacts
         )
     } else {
-        response.copy(elapsedMs = elapsedMs)
+        response.copy(elapsedMs = elapsedMs, facts = currentFacts)
     }
 }
 

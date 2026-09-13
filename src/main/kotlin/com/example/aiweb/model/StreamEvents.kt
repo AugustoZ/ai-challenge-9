@@ -17,6 +17,15 @@ sealed class StreamEvent {
     @SerialName("status")
     data class Status(val text: String) : StreamEvent()
 
+    /** Checkpoint: авто-форк создал близнец-ветку (стратегия branching); поток НЕ завершает. */
+    @Serializable
+    @SerialName("checkpoint")
+    data class Checkpoint(
+        val branchId: String,
+        val label: String,
+        val forkUserCount: Int
+    ) : StreamEvent()
+
     /** Полный ответ: тот же ChatResponse, что вернул бы /api/chat (events уже внутри). */
     @Serializable
     @SerialName("final")
