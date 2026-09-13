@@ -1,6 +1,7 @@
 # Изменение: компрессия истории диалога и режим сравнения
 
-> Статус: proposed. Capabilities: `history-compression`, `comparison-mode`.
+> Статус: implemented (архивирован 2026-09-13, capabilities переосмыслены и заменены
+> change `add-context-strategies`). Capabilities: `history-compression`, `comparison-mode`.
 > SDD-фиксация доработки; реализация идёт по `tasks.md` этого change.
 
 ## Зачем
