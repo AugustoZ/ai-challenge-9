@@ -261,6 +261,11 @@
         </aside>
 
         <main class="log-column">
+            <!-- Селектор веток: плоский ряд чипов над журналом. Живёт вне #chat:
+                 журнал перерисовывается innerHTML-ом и стёр бы вложенный блок.
+                 Скрыт, пока веток меньше двух. -->
+            <div id="branchBar" class="branch-bar" role="group" aria-label="Ветки диалога" hidden></div>
+
             <div id="chat" class="flight-log" aria-label="Бортовой журнал">
                 <div class="message bot">
                     <div class="entry">

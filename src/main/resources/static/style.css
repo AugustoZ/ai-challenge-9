@@ -1492,6 +1492,98 @@ body {
     color: var(--ink-faint);
 }
 
+/* ---------- Селектор веток ---------- */
+
+/* Полоса чипов над журналом: плоский перечень веток сессии, без дерева.
+    Рецепт тот же, что у строк сессий: клавиша в гнезде, янтарная лампа
+    у активной записи. Root-запись (branchId null) — активная, но
+    некликабельная: активировать исходную историю POST-ом нельзя. */
+.branch-bar {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 24px;
+    background: var(--panel-deep);
+    border-bottom: 1px solid var(--bezel);
+}
+
+.branch-bar[hidden] {
+    display: none;
+}
+
+.branch-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--ink-dim);
+    background: var(--lamp-key-face);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), background 0.1s var(--ease-snap),
+                border-color 0.1s var(--ease-snap), box-shadow 0.1s var(--ease-snap),
+                filter 0.1s var(--ease-snap), transform 0.05s var(--ease-snap);
+}
+
+.branch-chip:hover:not(:disabled) {
+    border-color: var(--bezel-lit);
+    filter: brightness(1.18);
+}
+
+.branch-chip:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.branch-chip:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.branch-chip:disabled {
+    cursor: default;
+    color: var(--ink-faint);
+}
+
+.branch-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+}
+
+/* Лампа активной ветки: та же формула, что у клавиш-табло */
+.branch-chip[aria-current="true"] {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+    background: var(--lamp-face);
+    border-color: rgba(var(--lamp-rgb), 0.6);
+    box-shadow: var(--lamp-glow);
+}
+
+/* Точка-индикатор только у активного чипа */
+.branch-chip-lamp {
+    font-size: 9px;
+    line-height: 1;
+    color: var(--amber);
+    text-shadow: 0 0 6px rgba(var(--lamp-rgb), 0.8);
+}
+
+/* Некликабельная активная запись (корень до первого форка) остаётся
+   полноценно горящей лампой — она активная строка ленты, не отказ */
+.branch-chip[aria-current="true"]:disabled {
+    color: var(--lamp-text);
+}
+
 /* ---------- Мобильная вёрстка: приборы — выдвижная панель ---------- */
 
 .sidebar-backdrop {
@@ -2665,6 +2757,10 @@ body.maint-on .raw-exchange {
 
     .flight-log {
         padding: 16px;
+    }
+
+    .branch-bar {
+        padding: 8px 16px;
     }
 
     /* Панель сессий на узких экранах скрыта: приборы уже уходят в выдвижную

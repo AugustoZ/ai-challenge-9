@@ -1061,6 +1061,8 @@ function setStrategy(rawStrategy, { save = true } = {}) {
     });
 
     updateFactsPanel();
+    // «Ветки»: чипы должны появиться сразу, не дожидаясь первого ответа
+    if (currentStrategy === 'branching') loadBranches(sessionId);
     if (save) saveSettings();
 }
 
@@ -1095,6 +1097,9 @@ function setMirror(on, { save = true } = {}) {
     mirrorToggle.setAttribute('aria-pressed', String(enabled));
     mirrorToggle.textContent = enabled ? 'Режим сравнения: ВКЛ' : 'Режим сравнения: ВЫКЛ';
     if (enabled) {
+        /* Зеркало ветки не показывает: twin-сессии живут по своим
+           колонкам-стратегиям, у них ветвление подавлено */
+        hideBranches();
         mirrorBlock.hidden = false;
         for (const side of MIRROR_SIDES) {
             if (!mirrorState[side.key].exchanges) {
@@ -1104,6 +1109,7 @@ function setMirror(on, { save = true } = {}) {
         renderMirrorTotals();
     } else {
         finishMirror();
+        loadBranches(sessionId);
     }
     if (save) saveSettings();
 }
@@ -1713,6 +1719,7 @@ newChatBtn.addEventListener('click', () => {
     sessionId = null;
     saveSettings();
     chat.innerHTML = WELCOME_MARKUP;
+    hideBranches();
     /* Топливомер обнуляется: новый диалог — новый расход */
     resetSessionFuel();
     setDirective('ready', 'Готов к передаче');
@@ -1762,6 +1769,7 @@ clearAllBtn.addEventListener('click', async () => {
         sessionId = null;
         saveSettings();
         chat.innerHTML = WELCOME_MARKUP;
+        hideBranches();
         resetSessionFuel();
         setDirective('ready', `Все сессии стёрты (${deleted})`);
         loadSessions();
@@ -1882,6 +1890,7 @@ async function switchToSession(id) {
         chat.innerHTML = WELCOME_MARKUP;
     }
     renderSessions();
+    loadBranches(id);
     input.focus();
 }
 
@@ -1952,6 +1961,150 @@ async function restoreSession() {
     /* Показывать нечего — приветствие остаётся, сессия продолжится
        следующими запросами (идентификатор сохранён) */
     renderHistory(messages);
+    loadBranches(sessionId);
+}
+
+/* ---------- Селектор веток ---------- */
+
+/* Ряд чипов над журналом: ветки активной сессии. Появляется, когда веток
+   минимум две (живое состояние + снимок), в зеркале скрыт всегда. */
+const branchBar = document.getElementById('branchBar');
+
+/* Активная ветка по последнему опросу: null — активна исходная история
+   (корень). requestData шлёт её в /api/chat, пока выбрана стратегия «Ветки». */
+let activeBranchId = null;
+
+/* Селектор убирается целиком: «Новый диалог», зеркало и обычные режимы
+   без веток не показывают чипы. activeBranchId обнуляется — протухший
+   идентификатор не должен уйти в следующий запрос. */
+function hideBranches() {
+    activeBranchId = null;
+    branchBar.hidden = true;
+    branchBar.replaceChildren();
+}
+
+/* Чипы по снимку GET /api/session/{id}/branches. Первая запись перечня —
+   живое активное состояние; для исходной истории у неё branchId=null:
+   такой чип отрисован как активная строка ленты, но не кликабелен —
+   активировать корень POST-ом нельзя. После активации ветки содержимое
+   корня сворачивается в обычную запись (непустой id) и становится
+   переключаемым. */
+function renderBranches(branches) {
+    const frag = document.createDocumentFragment();
+    let sawActive = false;
+
+    for (const branch of branches) {
+        if (!branch || typeof branch.label !== 'string' || !branch.label.trim()) continue;
+
+        const isActive = branch.active === true;
+        if (isActive) sawActive = true;
+
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'branch-chip';
+        chip.setAttribute('aria-current', String(isActive));
+        chip.disabled = branch.branchId == null;
+        if (branch.branchId != null) {
+            chip.addEventListener('click', () => activateBranch(branch.branchId));
+        }
+
+        if (isActive) {
+            const lamp = document.createElement('span');
+            lamp.className = 'branch-chip-lamp';
+            lamp.setAttribute('aria-hidden', 'true');
+            lamp.textContent = '●';
+            chip.appendChild(lamp);
+        }
+
+        const label = document.createElement('span');
+        label.className = 'branch-chip-label';
+        label.textContent = branch.label;
+        chip.appendChild(label);
+
+        frag.appendChild(chip);
+    }
+
+    /* Без активной записи перечень не разметить — чипы не показываем */
+    if (!frag.children.length || !sawActive) {
+        hideBranches();
+        return;
+    }
+    branchBar.hidden = false;
+    branchBar.replaceChildren(frag);
+}
+
+/* Опрос веток сессии. Веток меньше двух — селектор скрыт: показывать
+   нечего, обычные режимы живут без чипов. Зеркало ветки не показывает
+   вовсе. При недоступности сервера прежние чипы остаются как есть. */
+async function loadBranches(id) {
+    if (!id || mirrorToggle.getAttribute('aria-pressed') === 'true') {
+        hideBranches();
+        return;
+    }
+
+    let data = null;
+    try {
+        const res = await fetch(`/api/session/${encodeURIComponent(id)}/branches`);
+        if (!res.ok) {
+            hideBranches();
+            return;
+        }
+        data = await res.json();
+    } catch (err) {
+        return;
+    }
+
+    const branches = Array.isArray(data && data.branches) ? data.branches : [];
+    activeBranchId = null;
+    for (const branch of branches) {
+        if (branch && branch.active === true) {
+            activeBranchId = branch.branchId == null ? null : String(branch.branchId);
+            break;
+        }
+    }
+
+    if (branches.length < 2) {
+        hideBranches();
+        return;
+    }
+    renderBranches(branches);
+}
+
+/* Переключение на ветку: снимок цели становится журналом, sessionId не
+   меняется — ветки живут внутри одной сессии. Топливо сессии при
+   переключении НЕ сбрасывается: счёт общий за сессию (sessionTotalTokens),
+   ветки — это та же сессия, а не новый диалог. */
+async function activateBranch(id) {
+    if (!sessionId || id == null || id === activeBranchId) return;
+
+    try {
+        const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/branches/activate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ branchId: id }),
+        });
+
+        if (!res.ok) {
+            if (res.status === 404) {
+                addSystemMessage('Ветка не найдена');
+            } else {
+                setDirective('fault', `Ветка не переключена (${res.status})`);
+            }
+            loadBranches(sessionId);
+            return;
+        }
+
+        const data = await res.json().catch(() => null);
+        const messages = Array.isArray(data && data.messages) ? data.messages : [];
+        if (!renderHistory(messages)) {
+            // Пустой снимок — журнал к исходному виду
+            chat.innerHTML = WELCOME_MARKUP;
+        }
+        loadBranches(sessionId);
+        input.focus();
+    } catch (err) {
+        setDirective('fault', 'Не удалось переключить ветку: ' + err.message);
+    }
 }
 
 /* ---------- Зеркальный режим: пара twin-сессий ---------- */
@@ -2187,6 +2340,11 @@ async function sendTwinStream(side, requestData) {
                 case 'status':
                     setStreamStatus(`${MIRROR_STRATEGY_LABELS[sideStrategy(side)]}: ${typeof event.text === 'string' ? event.text : ''}`);
                     return false;
+                case 'checkpoint':
+                    /* В зеркале ветвление подавлено — кадр не должен прийти.
+                       Явный кейс для читаемости: молча игнорируем, маркер в
+                       колонки не рендерим, поток не завершаем */
+                    return false;
                 case 'final':
                     if (event.response && typeof event.response === 'object') {
                         applyTwinResponse(side, event.response);
@@ -2328,6 +2486,15 @@ function applyChatResponse(data) {
     }
     // Факты из ответа (стратегия «Факты») — в панель, если она на виду
     updateFactsPanel(data);
+    // Ветки: авто-форк мог произойти (кадр checkpoint) или смениться активная
+    // ветка. Отзыв по стратегии, не только по branchId: после первого форка
+    // корень остаётся активным и branchId в ответе держится null
+    if (data.branchId != null) {
+        activeBranchId = data.branchId;
+    }
+    if (data.branchId != null || currentStrategy === 'branching') {
+        loadBranches(sessionId);
+    }
     setDirective('ready', 'Передача завершена');
     /* Перечень сессий устарел — время и число записей изменились.
        Итог потока приходит сюда же, отдельный вызов не нужен. */
@@ -2415,6 +2582,15 @@ async function sendChatStream(requestData, requestId) {
                 if (event.event && typeof event.event === 'object') {
                     appendLiveAgentEvent(ensureLiveTrace(), event.event);
                 }
+                return false;
+            case 'checkpoint':
+                /* Развилка: служебная запись в журнал и перечитывание чипов.
+                   Активной строкой остаётся корень — активная ветка меняется
+                   только явной активацией. Кадр НЕ завершает поток: за ним
+                   придёт final (семантика status-кадра) */
+                addSystemMessage('─ Развилка: создана '
+                    + (typeof event.label === 'string' && event.label ? event.label : 'ветка') + ' ─');
+                loadBranches(sessionId);
                 return false;
             case 'final':
                 hideTyping();
@@ -2546,6 +2722,11 @@ form.addEventListener('submit', async (e) => {
                 judgeEnabled: judge,
                 contextStrategy,
             };
+            // «Ветки»: активная ветка уходит в запрос, чтобы модель продолжала
+            // её контекст. При null (активна исходная история) поле не шлём
+            if (contextStrategy === 'branching' && sessionId && activeBranchId) {
+                requestData.branchId = activeBranchId;
+            }
             // Живой поток хода агента; при его недоступности — блокирующий запрос
             await sendChatStream(requestData, makeRequestId());
         }
