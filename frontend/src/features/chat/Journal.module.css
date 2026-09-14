@@ -1,0 +1,25 @@
+/* ============================================================
+   Полоса бортового журнала — порт static/style.css L826–845
+   (.flight-log). Значения не менять: дизайн заморожен.
+   ============================================================ */
+
+.flightLog {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 22px 24px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.flightLog::-webkit-scrollbar {
+    width: 8px;
+}
+
+.flightLog::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}

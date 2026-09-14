@@ -1,0 +1,318 @@
+/* ============================================================
+   Записи бортового журнала — порт static/style.css L847–1088
+   (.message/.entry/.bubble, markdown-поддерево), L2404–2422
+   (.summary-badge) и L1151–1198 (индикатор обработки — лампы
+   и строка состояния потока, волна 5). Значения не менять:
+   дизайн заморожен.
+   ============================================================ */
+
+.message {
+    display: flex;
+    flex-direction: column;
+    animation: entry-in 0.16s var(--ease-snap);
+}
+
+.user {
+    align-items: flex-end;
+}
+
+.bot {
+    align-items: flex-start;
+}
+
+@keyframes entry-in {
+    from {
+        opacity: 0;
+        transform: translateY(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.entry {
+    max-width: min(75ch, 86%);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.user .entry {
+    max-width: min(60ch, 86%);
+}
+
+.entryHead {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.entryTag {
+    color: var(--ink-dim);
+    font-weight: 700;
+}
+
+.entrySep {
+    margin: 0 2px;
+}
+
+.fuelDigits {
+    color: var(--green);
+}
+
+.bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--bezel);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    font-size: 14.5px;
+}
+
+.user .bubble {
+    background: var(--well);
+    color: var(--ink);
+}
+
+.bot .bubble {
+    background: var(--panel);
+}
+
+/* Служебное уведомление журнала (отмена передачи): рамка отказа */
+.system {
+    background: var(--panel);
+    border-color: rgba(var(--lamp-alarm), 0.45);
+    color: var(--ink-dim);
+    font-size: 13.5px;
+}
+
+/* --- Markdown в ответах --- */
+
+.md {
+    white-space: normal;
+}
+
+.md p {
+    margin: 0 0 10px;
+}
+
+.md p:last-child {
+    margin-bottom: 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+    margin: 16px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--bezel);
+    line-height: 1.3;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.md h1 {
+    font-size: 17px;
+}
+
+.md h2 {
+    font-size: 15.5px;
+}
+
+.md h3,
+.md h4 {
+    font-size: 14px;
+}
+
+.md ul,
+.md ol {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.md li {
+    margin: 4px 0;
+}
+
+.md strong {
+    font-weight: 700;
+}
+
+.md em {
+    font-style: italic;
+}
+
+.md a {
+    color: var(--amber);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.md a:hover {
+    text-decoration-style: double;
+}
+
+.md blockquote {
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-left: 1px solid var(--bezel-lit);
+    color: var(--ink-dim);
+    background: var(--well);
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.md code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--well);
+    color: var(--ink);
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+
+.md pre {
+    margin: 10px 0;
+    padding: 12px;
+    border-radius: var(--radius);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.md pre::-webkit-scrollbar {
+    height: 8px;
+}
+
+.md pre::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.md pre code {
+    background: transparent;
+    color: var(--ink);
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.md table {
+    display: block;
+    max-width: 100%;
+    margin: 10px 0;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.md table::-webkit-scrollbar {
+    height: 8px;
+}
+
+.md table::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.md th,
+.md td {
+    border: 1px solid var(--bezel);
+    padding: 6px 10px;
+    text-align: left;
+}
+
+.md th {
+    background: var(--well);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 12px;
+    color: var(--ink-dim);
+}
+
+/* ---------- Индикатор обработки: лампы (style.css L1153–1198) ---------- */
+
+.typing {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.typing span {
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--amber);
+    animation: typing-lamp 1.1s infinite;
+}
+
+.typing span:nth-child(2) {
+    animation-delay: 0.18s;
+}
+
+.typing span:nth-child(3) {
+    animation-delay: 0.36s;
+}
+
+/* Тот же цикл, что @keyframes lamp (style.css L1179–1186); имя своё —
+   CSS-модули хэшируют keyframes внутри модуля */
+@keyframes typing-lamp {
+    0%, 60%, 100% {
+        opacity: 0.2;
+    }
+    30% {
+        opacity: 1;
+    }
+}
+
+/* Строка состояния потока под лампами: видна, только когда есть текст
+   (в ваниле .typing-status:empty { display: none } — здесь узел не рендерится) */
+.typingStatus {
+    margin-top: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+}
+
+/* ---------- Бейдж «Сводка применена» (style.css L2408–2422) ---------- */
+
+/* Янтарная пластина: механика сжатия участвовала в обмене —
+   та же формула лампы, что у клавиш-табло */
+.summaryBadge {
+    display: inline-flex;
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--lamp-text);
+    background: var(--amber-soft);
+    border: 1px solid rgba(var(--lamp-warm), 0.45);
+    border-radius: var(--radius);
+    padding: 2px 7px;
+    text-shadow: var(--lamp-label-shadow);
+}

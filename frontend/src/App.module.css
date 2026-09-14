@@ -1,0 +1,189 @@
+/* ============================================================
+   Каркас страницы — порт static/style.css L69–100 (.container,
+   .top-strip, .brand, .strip-right, .fuel, .drawer-toggle),
+   L818–824 (.log-column), ≤900px L2710–2738 и ≤600px L2786–2828.
+   Волна 6: грид трёх колонок — панель сессий (216px) справа от
+   журнала; приборы ставятся автоплейсментом в колонку side
+   (grid-area в Drawer не переносится — см. комментарий
+   Drawer.module.css). Значения не менять: дизайн заморожен.
+   Цвета — только токены.
+   ============================================================ */
+
+.container {
+    display: grid;
+    grid-template:
+        "strip strip strip" auto
+        "side  main  sessions" minmax(0, 1fr)
+        / 320px minmax(0, 1fr) 216px;
+    height: 100vh;
+    height: 100dvh;
+}
+
+/* ---------- Верхняя полоса состояния (style.css L83–100) ---------- */
+
+.topStrip {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 52px;
+    padding: 0 18px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--bezel);
+}
+
+.brand {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.stripRight {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+/* Часы прячет мобильная вёрстка (≤900px) — класс на компонент Clock */
+.clock {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Топливо в полосе — клавиша: нажатие открывает топливомер. Сброс облика
+   кнопки, показания остаются зелёными; наведение — зелёная лампа, как у
+   направлений «→ запрос» в самописце (style.css L133–160) */
+.fuel {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+}
+
+.fuel:hover {
+    color: var(--lamp-green);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-cool), 0.95),
+        0 0 7px rgba(var(--lamp-cool), 0.7),
+        0 0 15px rgba(var(--lamp-cool), 0.35);
+}
+
+.fuel:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* Тумблер приборов: на настольном каркасе приборы видны всегда,
+   клавиша появляется только на узких экранах (style.css L162–188,
+   L2736–2738) */
+.drawerToggle {
+    display: none;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+.drawerToggle:hover {
+    color: var(--ink);
+    border-color: var(--bezel-lit);
+}
+
+.drawerToggle:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* ---------- Полоса журнала (style.css L818–824) ---------- */
+
+.logColumn {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    grid-column: 2;
+}
+
+/* Приборы — автоплейсмент в колонку side (первая свободная ячейка
+   второй строки; backdrop клавиш-оверлеев position: fixed и ячейку
+   не занимает) */
+
+/* ---------- Мобильная вёрстка (style.css L2710–2738) ---------- */
+
+@media (max-width: 900px) {
+    .container {
+        grid-template:
+            "strip" auto
+            "main" minmax(0, 1fr)
+            / 1fr;
+    }
+
+    .topStrip {
+        padding: 0 14px;
+        gap: 10px;
+    }
+
+    .brand {
+        font-size: 13px;
+    }
+
+    .clock {
+        display: none;
+    }
+
+    .drawerToggle {
+        display: inline-flex;
+    }
+
+    .logColumn {
+        grid-column: 1;
+    }
+}
+
+@media (max-width: 600px) {
+    .topStrip {
+        gap: 8px;
+        padding: 0 10px;
+    }
+
+    .brand {
+        font-size: 12px;
+        letter-spacing: 0.14em;
+    }
+
+    .stripRight {
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .fuel {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .drawerToggle {
+        padding: 6px 9px;
+        font-size: 11px;
+        gap: 5px;
+        flex-shrink: 0;
+    }
+}

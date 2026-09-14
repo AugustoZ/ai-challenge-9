@@ -1,0 +1,30 @@
+/* ============================================================
+   Директива состояния — порт src/main/resources/static/style.css
+   L1200–1246 (лампа рендерится компонентом Lamp). Значения не
+   менять: дизайн заморожен.
+   ============================================================ */
+
+.directive {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 30px;
+    padding: 4px 20px;
+    background: var(--panel-deep);
+    border-top: 1px solid var(--bezel);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+.directive[data-kind="fault"] .text {
+    color: var(--red);
+}
+
+.text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

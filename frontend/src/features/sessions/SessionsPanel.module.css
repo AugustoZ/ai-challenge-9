@@ -1,0 +1,150 @@
+/* ============================================================
+   Панель сессий — порт static/style.css L1361–1493 (.sessions-panel,
+   .sessions-list, .session-item, .session-title, .session-meta,
+   .sessions-empty) и ≤900px L2774–2778 (панель скрыта). Значения
+   не менять: дизайн заморожен. Цвета — только токены.
+   ============================================================ */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--panel);
+    border-left: 1px solid var(--bezel);
+}
+
+.caption {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 10px 12px 8px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+/* Прокрутка живёт внутри списка: колонка журнала и приборы не скроллятся */
+.list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.list::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+/* Строка сессии: клавиша в гнезде, как аннунциатор, но выровнена по левому краю */
+.item {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    width: 100%;
+    padding: 7px 9px;
+    text-align: left;
+    font-family: var(--sans);
+    background: linear-gradient(180deg, var(--panel) 0%, var(--well) 100%);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), background 0.1s var(--ease-snap),
+                border-color 0.1s var(--ease-snap), box-shadow 0.1s var(--ease-snap),
+                filter 0.1s var(--ease-snap), transform 0.05s var(--ease-snap);
+}
+
+.item:hover {
+    border-color: var(--bezel-lit);
+    filter: brightness(1.18);
+}
+
+.item:active {
+    transform: translateY(1px);
+}
+
+.item:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* Активная сессия: та же лампа, что у клавиш-табло (аннунциаторы в чеке) */
+.item[aria-current="true"] {
+    background: var(--lamp-face);
+    border-color: rgba(var(--lamp-rgb), 0.6);
+    box-shadow: var(--lamp-glow);
+}
+
+/* Заголовок сессии: до двух строк, затем многоточие */
+.title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--ink-dim);
+}
+
+.item:hover .title {
+    color: var(--ink);
+}
+
+.item[aria-current="true"] .title {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+}
+
+/* Мета-строка: время обновления и число записей */
+.meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.item[aria-current="true"] .meta {
+    color: var(--lamp-text);
+    opacity: 0.72;
+    text-shadow: none;
+}
+
+/* Пустой перечень: гравировка вместо записей */
+.empty {
+    padding: 16px 8px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--ink-faint);
+}
+
+/* Панель сессий на узких экранах скрыта: приборы уже уходят в выдвижную
+   панель, вторая выдвижная колонка перегородила бы журнал (L2774–2778) */
+@media (max-width: 900px) {
+    .panel {
+        display: none;
+    }
+}

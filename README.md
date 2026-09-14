@@ -5,8 +5,8 @@
 ## Что делает проект
 
 1. Запускает веб-сервер на **Ktor** (порт по умолчанию `8080`).
-2. Отдаёт статический веб-интерфейс (HTML/CSS/JS) в браузере.
-3. По кнопке «Отправить» фронтенд отправляет POST-запрос на наш сервер `POST /api/chat`.
+2. Отдаёт веб-интерфейс (React SPA) в браузере по адресу `/`.
+3. По кнопке «Передать» фронтенд отправляет POST-запрос на наш сервер `POST /api/chat`.
 4. Сервер обращается к внешнему AI API (Chat Completions), получает ответ и возвращает его браузеру.
 5. Ответ отображается в чате.
 
@@ -14,14 +14,15 @@
 
 ```
 src/main/kotlin/com/example/aiweb/
-├── Application.kt          # Точка входа, настройка Ktor-сервера
+├── Application.kt          # Точка входа, настройка Ktor-сервера и статики
 ├── config/AppConfig.kt     # Конфигурация (конфиг-файл / переменные окружения)
 ├── client/AIClient.kt      # HTTP-клиент для вызова внешнего AI API (+ список моделей)
 ├── client/JudgePrompts.kt  # Промт режима «Судья» и разбор JSON-заключения
 ├── routes/Routes.kt        # HTTP-маршруты (POST /api/chat, GET /api/models, GET /api/log)
 └── model/Models.kt         # DTO-классы (ChatRequest, OpenAI, JudgeReport, FileConfig)
 
-src/main/resources/static/  # Веб-интерфейс (index.html, style.css, script.js)
+frontend/                   # Веб-интерфейс: React 18 + Vite + TypeScript (см. раздел «Фронтенд»)
+src/main/resources/static/  # favicon.svg (иконка сайта; остальная статика — сборка Vite)
 
 Dockerfile                  # Многоступенчатая сборка контейнера
 docker-compose.yml          # Запуск через Docker Compose
@@ -89,7 +90,50 @@ AI_API_KEY="ваш-ключ" ./gradlew run
 
 Откройте в браузере: **http://localhost:8080**
 
-Введите сообщение и нажмите **«Отправить»** — ответ AI появится в чате.
+Введите запрос в строку передачи внизу и нажмите **«Передать»** — ответ AI появится в бортовом журнале.
+
+## Фронтенд
+
+Веб-интерфейс «Штурмана» — React 18 + Vite + TypeScript (strict), исходники
+в папке `frontend/`. Состояние — Zustand (настройки персистятся в
+localStorage), SSE-парсер свой (`frontend/src/api/sse.ts`), вёрстка —
+CSS-модули на токенах (`frontend/src/styles/tokens.css`). Markdown —
+marked, подсветка кода — highlight.js (npm-зависимости, не CDN).
+
+### Запуск в разработке
+
+```bash
+# Терминал 1: бэкенд
+./gradlew run -PskipFrontend
+
+# Терминал 2: Vite dev-сервер с горячей перезагрузкой (/api проксируется на Ktor)
+cd frontend && npm install && npm run dev
+```
+
+Dev-сервер откроется на `http://localhost:5173` — пересборка Gradle для
+правок фронта не нужна.
+
+### Прод-сборка
+
+```bash
+./gradlew run
+```
+
+Gradle-цепочка `npmCi → buildFrontend (npm run verify) → copyFrontend`
+собирает `frontend/dist` и копирует её в ресурсы JVM; Ktor отдаёт
+приложение с `/` (index.html — без кэша), хэшированные ассеты
+`/static/assets/*` — с `Cache-Control: public, max-age=31536000, immutable`.
+Флаг `-PskipFrontend` отключает npm-цепочку (быстрая итерация по бэкенду).
+
+### Проверка фронтенда
+
+```bash
+cd frontend && npm run verify    # tsc -b + eslint + vitest + vite build
+```
+
+`./gradlew build` прогоняет `npm run verify` автоматически (кроме
+`-PskipFrontend`). Тесты Vitest — только чистые функции (SSE-парсер,
+форматирование, сторы), без jsdom.
 
 ## Запуск через Docker
 

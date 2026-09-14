@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "verify": "tsc --noEmit && eslint . && vitest run --passWithNoTests && vite build",
+    "verify": "tsc -b && eslint . && vitest run && vite build",
     "preview": "vite preview"
   },
   "engines": {

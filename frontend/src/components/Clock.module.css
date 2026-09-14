@@ -1,0 +1,12 @@
+/* ============================================================
+   Часы полосы состояния — порт src/main/resources/static/style.css
+   L122–128. Значения не менять: дизайн заморожен.
+   ============================================================ */
+
+.clock {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    font-variant-numeric: tabular-nums;
+}

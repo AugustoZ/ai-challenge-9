@@ -1,0 +1,102 @@
+/* ============================================================
+   Селектор веток — порт static/style.css L1501–1593 (.branch-bar,
+   .branch-chip, .branch-chip-label, .branch-chip-lamp,
+   .branch-add) и ≤900px L2770–2772. Значения не менять: дизайн
+   заморожен. Цвета — только токены.
+   ============================================================ */
+
+.bar {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 24px;
+    background: var(--panel-deep);
+    border-bottom: 1px solid var(--bezel);
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--ink-dim);
+    background: var(--lamp-key-face);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), background 0.1s var(--ease-snap),
+                border-color 0.1s var(--ease-snap), box-shadow 0.1s var(--ease-snap),
+                filter 0.1s var(--ease-snap), transform 0.05s var(--ease-snap);
+}
+
+.chip:hover:not(:disabled) {
+    border-color: var(--bezel-lit);
+    filter: brightness(1.18);
+}
+
+.chip:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.chip:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.chip:disabled {
+    cursor: default;
+    color: var(--ink-faint);
+}
+
+.label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+}
+
+/* Лампа активной ветки: та же формула, что у клавиш-табло */
+.chip[aria-current="true"] {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+    background: var(--lamp-face);
+    border-color: rgba(var(--lamp-rgb), 0.6);
+    box-shadow: var(--lamp-glow);
+}
+
+/* Точка-индикатор только у активного чипа */
+.lamp {
+    font-size: 9px;
+    line-height: 1;
+    color: var(--amber);
+    text-shadow: 0 0 6px rgba(var(--lamp-rgb), 0.8);
+}
+
+/* Некликабельная активная запись (корень до первого форка) остаётся
+   полноценно горящей лампой — она активная строка ленты, не отказ */
+.chip[aria-current="true"]:disabled {
+    color: var(--lamp-text);
+}
+
+/* Клавиша ручной развилки («+ Развилка») — та же физическая клавиша,
+   что и чипы, но это орган управления: янтарная подпись из палитры
+   управления (амбер — только органы управления и активные состояния).
+   Ярче чипов, чтобы отличать действие «создать» от строк-веток. */
+.add .label {
+    color: var(--amber);
+}
+
+@media (max-width: 900px) {
+    .bar {
+        padding: 8px 16px;
+    }
+}

@@ -2,12 +2,14 @@ package com.example.aiweb
 
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.routes.aiRoutes
+import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.http.content.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
@@ -30,11 +32,39 @@ fun Application.module(config: AppConfig) {
         )
     }
 
+    // staticResources свой Cache-Control не добавляет — ставим до роутинга:
+    // хэшированные сборки Vite кэшируются «вечно», favicon/index.html — без кэша.
+    intercept(ApplicationCallPipeline.Plugins) {
+        val path = call.request.path()
+        if (path.startsWith("/static/")) {
+            call.response.header(
+                HttpHeaders.CacheControl,
+                if (path.startsWith("/static/assets/")) {
+                    "public, max-age=31536000, immutable"
+                } else {
+                    "no-cache"
+                }
+            )
+        }
+    }
+
     routing {
         staticResources("/static", "static")
         aiRoutes(config)
+        // dist Gradle-задачей copyFrontend копируется в classpath static/index.html
         get("/") {
-            call.respondRedirect("/static/index.html")
+            val index = Application::class.java.classLoader
+                .getResourceAsStream("static/index.html")
+                ?.use { it.readBytes() }
+            if (index == null) {
+                call.respond(
+                    HttpStatusCode.NotFound,
+                    "Фронтенд не собран: выполните ./gradlew build (или npm run build в frontend/)"
+                )
+            } else {
+                call.response.header(HttpHeaders.CacheControl, "no-cache")
+                call.respondBytes(index, ContentType.Text.Html)
+            }
         }
     }
 }

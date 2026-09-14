@@ -1,0 +1,152 @@
+/* ============================================================
+   Протокол агентного цикла — порт static/style.css L1834–1965
+   (.agent-trace, .agent-event, .dl-chip, живая трасса).
+   Значения не менять: дизайн заморожен.
+   ============================================================ */
+
+.trace {
+    margin-top: 10px;
+}
+
+.trace > summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--green);
+    background: transparent;
+    border: 1px solid rgba(var(--lamp-cool), 0.35);
+    border-radius: var(--radius);
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.trace > summary::-webkit-details-marker {
+    display: none;
+}
+
+.trace > summary::before {
+    content: '+';
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.trace[open] > summary::before {
+    content: '−';
+}
+
+.trace > summary:hover {
+    color: var(--lamp-green);
+    border-color: rgba(var(--lamp-cool), 0.6);
+}
+
+.trace > summary:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.body {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    display: grid;
+    gap: 6px;
+}
+
+.event {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    flex-shrink: 0;
+}
+
+.final {
+    color: var(--ink);
+}
+
+.args {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+}
+
+.flag {
+    font-family: var(--mono);
+    font-weight: 700;
+}
+
+.flag.ok {
+    color: var(--green);
+}
+
+.flag.faultFlag {
+    color: var(--red);
+}
+
+.fault {
+    color: var(--red);
+}
+
+/* Чип «скачать файл» в строке tool_call инструмента write_file: компактная
+   пластина в фаске, при наведении — янтарная лампа, как у прочих клавиш */
+.chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 1px 7px;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.chip:hover,
+.chip:focus-visible {
+    color: var(--lamp-text);
+    background: var(--amber-soft);
+    border-color: rgba(var(--lamp-warm), 0.6);
+    text-shadow: var(--lamp-label-shadow);
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+}
+
+/* Живая трасса во время потока: раскрыта, на строке заголовка — маячок работы */
+.live > summary::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(var(--lamp-cool), 0.7);
+    animation: lamp 1.1s infinite;
+}
+
+@keyframes lamp {
+    0%, 60%, 100% {
+        opacity: 0.2;
+    }
+    30% {
+        opacity: 1;
+    }
+}

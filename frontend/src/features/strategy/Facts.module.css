@@ -1,0 +1,61 @@
+/* Панель фактов — порт static/style.css L713–767 (.facts-panel,
+   .facts-caption, .facts-list). Значения не менять: дизайн
+   заморожен. Цвета — только токены. */
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.caption {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 132px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--ink-dim);
+    overflow-wrap: break-word;
+}
+
+.list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.list::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.key {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--green);
+}
+
+.empty {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+}

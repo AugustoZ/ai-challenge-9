@@ -39,4 +39,9 @@
     --mono: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans: "B612", -apple-system, "Segoe UI", Roboto, sans-serif;
     --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1);
+    /* Кабинетная схема подсветки кода (static/style.css L1090–1149):
+       в ваниле два цвета заданы сырым hex — вынесены в токены,
+       чтобы код в журнале тоже жил по дисциплине «только var(--token)» */
+    --hljs-string: #9ad98f;     /* строки, регэкспы, типы */
+    --hljs-attr: #e0c88f;       /* атрибуты, переменные */
 }

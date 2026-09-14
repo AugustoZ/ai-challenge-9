@@ -1,0 +1,13 @@
+# Git-обвязка и артефакты тестов — в образ не нужны
+.git
+.playwright-mcp
+.gradle
+build
+
+# Зависимости фронтенда не тащим в контекст: npm ci в образе не выполняется
+# (Node-стадии нет), dist копируется из контекста — НЕ исключать frontend/dist.
+frontend/node_modules
+
+# Служебное
+*.log
+.DS_Store

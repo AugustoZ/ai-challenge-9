@@ -2,17 +2,25 @@
 
 ## Платформа
 
-Kotlin-сервер на Ktor (JVM 17+, Gradle, запуск и сборка через `./gradlew`),
-отдающий статический веб-интерфейс: vanilla HTML/CSS/JS без фреймворков.
-Markdown (marked) и подсветка кода (highlight.js) грузятся с CDN. Тесты:
-kotlin.test, запуск `./gradlew test`, в тестах ноль сети (фейковый
-`LLMClient`).
+Kotlin-сервер на Ktor (JVM 17+, Gradle, запуск и сборка через `./gradlew`) +
+фронтенд **React 18 + Vite + TypeScript (strict)** в папке `frontend/`.
+Состояние — Zustand (настройки персистятся в localStorage), SSE-парсер —
+собственный, markdown — marked, подсветка — highlight.js (npm-зависимости).
+Тесты: kotlin.test (`./gradlew test`) и Vitest на чистых функциях без jsdom
+(`cd frontend && npm run verify` = tsc -b + eslint + vitest + vite build);
+в тестах ноль сети (фейковый `LLMClient`).
 
 ## Путь статики
 
-Весь фронтенд живёт в `src/main/resources/static/` (index.html, style.css,
-script.js). Правила: цвета только из токенов `:root` (см. DESIGN.md),
-конвенции фронтенда зафиксированы в `static/AGENTS.md`, язык интерфейса:
+Исходники фронтенда — в `frontend/src/` (api/, lib/, stores/, components/,
+features/, styles/; конвенции — `frontend/AGENTS.md`, цвета — только токены
+`tokens.css`). Прод-сборка: Gradle-цепочка `npmCi → buildFrontend (npm run
+verify) → copyFrontend` кладёт `frontend/dist` в classpath
+(`build/frontend-static/static`); Ktor отдаёт index.html с «/» (no-cache),
+хэшированные ассеты — `/static/assets/*` (immutable). В
+`src/main/resources/static` остаётся только favicon.svg. Разработка
+фронта — `npm run dev` (Vite проксирует `/api` на Ktor :8080) или
+`./gradlew run -PskipFrontend` для итерации по бэкенду. Язык интерфейса:
 русский.
 
 ## Конвенции коммитов

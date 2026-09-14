@@ -1,4 +1,10 @@
-# ---------- Стадия сборки ----------
+# ---------- Стадия сборки фронтенда ----------
+# dist фронтенда (React+Vite, чейндж simplify-frontend, волна 7) собирается
+# НА ХОСТЕ gradle-цепочкой (npmCi → buildFrontend → copyFrontend кладёт его в
+# build/frontend-static/static). В образе gradle:8.9-jdk22 нет npm, а прокси
+# Docker нестабилен (см. комментарий ниже) — поэтому Node-экосистему в образ
+# не тащим: дистриб копируется из контекста. Перед docker build выполните
+# ./gradlew build (или cd frontend && npm run build).
 FROM gradle:8.9-jdk22 AS build
 
 WORKDIR /app
@@ -21,8 +27,13 @@ RUN chmod +x gradlew
 # Копируем исходники
 COPY src src
 
-# Собираем дистрибутив приложения
-RUN ./gradlew installDist --no-daemon
+# Дистриб фронтенда — прямо в каталог ресурсов classpath (см. build.gradle.kts,
+# srcDir build/frontend-static/static). -PskipFrontend отключает npm-цепочку
+# Gradle: dist уже собран на хосте и лежит в контексте.
+COPY frontend/dist build/frontend-static/static
+
+# Собираем дистрибутив приложения (фронтенд пропускаем — уже внутри)
+RUN ./gradlew installDist --no-daemon -PskipFrontend
 
 # ---------- Стадия запуска ----------
 FROM eclipse-temurin:22-jre

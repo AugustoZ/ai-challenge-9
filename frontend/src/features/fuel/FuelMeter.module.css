@@ -1,0 +1,187 @@
+/* ============================================================
+   Топливомер — порт static/style.css L2222–2232 (.recorder-empty),
+   L2234–2402 (.fuel-*). Значения не менять: дизайн заморожен.
+   ============================================================ */
+
+/* Окно топливомера чуть уже самописца (style.css L2236–2240): двум
+   графикам хватает. Оверлей — общий компонент с захэшированным классом
+   модалки, поэтому окно сужается селектором роли диалога, в котором
+   отрисован топливомер. */
+:global([role="dialog"]):has(.fuelBody) {
+    width: min(760px, 100%);
+    height: min(78vh, 660px);
+}
+
+/* Сводка: четыре колодца показаний — запрос, ответ, сумма, цена */
+.summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.cell {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 10px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+}
+
+.cellName {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+/* Показания — зелёные, по дисциплине цвета */
+.cellValue {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Пластина графика: колодец с гравированной шапкой */
+.chart {
+    margin-top: 12px;
+    padding: 10px 12px 8px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.chartHead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.chartCaption {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+/* Легенда составного столбца: пара цветов направлений из самописца —
+   «→ запрос» зелёный, «← ответ» янтарный */
+.legend {
+    display: flex;
+    gap: 14px;
+}
+
+.legendItem {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-dim);
+}
+
+.swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+
+.swatchPrompt {
+    background: var(--green);
+}
+
+.swatchCompletion {
+    background: var(--amber);
+}
+
+/* Чертёж: SVG тянется viewBox'ом, подписи — моно-гравировка */
+.chartSvg {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 4px;
+}
+
+.grid {
+    stroke: var(--bezel);
+    stroke-width: 1;
+}
+
+.axisLine {
+    stroke: var(--bezel-lit);
+    stroke-width: 1;
+}
+
+.axisLabel {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Составной столбец: запрос (зелёный) снизу, ответ (янтарный) сверху */
+.barPrompt {
+    fill: var(--green);
+}
+
+.barCompletion {
+    fill: var(--amber);
+}
+
+.bar {
+}
+
+.bar rect {
+    transition: filter 0.12s var(--ease-snap);
+}
+
+.bar:hover rect {
+    filter: brightness(1.2);
+}
+
+/* Линия цены: показание — зелёное со свечением, как дуга шкалы */
+.line {
+    fill: none;
+    stroke: var(--green);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-cool), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-cool), 0.3));
+}
+
+.dot {
+    fill: var(--ground);
+    stroke: var(--green);
+    stroke-width: 1.5;
+}
+
+.dot:hover {
+    fill: var(--green);
+}
+
+.tariff {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+}
+
+/* Честное «пока пусто» — как у самописца (style.css L2222–2228) */
+.empty {
+    margin: 24px 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+}

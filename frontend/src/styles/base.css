@@ -21,6 +21,9 @@ body {
     background: var(--ground);
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
+    /* Каркас фиксированной высоты (100dvh), скроллят только журнал,
+       тело страницы и боковые панели — style.css L60–61 */
+    overflow: hidden;
 }
 
 ::selection {
@@ -53,6 +56,20 @@ body {
     background: var(--bezel-lit);
 }
 
+/* ---------- Движение: уважение к системной настройке ----------
+   Порт из static/style.css L2831–2839 — гасит анимации приборов
+   (лампы, оверлей) при prefers-reduced-motion. */
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
 /* ---------- Утилиты ---------- */
 
 /* В style.css такой утилиты нет — стандартный clip-паттерн */
@@ -66,4 +83,68 @@ body {
     clip: rect(0 0 0 0);
     white-space: nowrap;
     border: 0;
+}
+
+/* ---------- Подсветка кода: кабинетная схема ----------
+   Порт static/style.css L1090–1149 дословно; классы hljs глобальные —
+   их расставляет hljs.highlightElement внутри markdown-пузырей журнала.
+   Два сырых hex ванили переведены на токены --hljs-string/--hljs-attr. */
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal {
+    color: var(--amber);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+    color: var(--hljs-string);
+}
+
+.hljs-comment,
+.hljs-quote {
+    color: var(--ink-faint);
+    font-style: italic;
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+    color: var(--green);
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id {
+    color: var(--ink);
+    font-weight: 700;
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+    color: var(--hljs-attr);
+}
+
+.hljs-type,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-class .hljs-title {
+    color: var(--hljs-string);
+}
+
+.hljs-meta,
+.hljs-deletion {
+    color: var(--ink-faint);
+}
+
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: 700;
 }
