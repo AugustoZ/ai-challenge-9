@@ -2029,6 +2029,7 @@ function renderBranches(branches) {
         hideBranches();
         return;
     }
+    frag.appendChild(buildAddBranchButton());
     branchBar.hidden = false;
     branchBar.replaceChildren(frag);
 }
@@ -2068,6 +2069,60 @@ async function loadBranches(id) {
         return;
     }
     renderBranches(branches);
+}
+
+/* Клавиша ручной развилки в конце ряда чипов: пользовательский чекпоинт
+   активного состояния в новую ветку-близнец — поверх авто-форка, по клику.
+   Та же формула клавиши, что у чипов; видна, только когда бар виден
+   (стратегия «Ветки», зеркала нет). */
+function buildAddBranchButton() {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'branch-chip branch-add';
+    add.title = 'Создать развилку — снимок текущего диалога в новую ветку';
+
+    const label = document.createElement('span');
+    label.className = 'branch-chip-label';
+    label.textContent = '+ Развилка';
+    add.appendChild(label);
+    add.addEventListener('click', addBranch);
+    return add;
+}
+
+/* Ручная развилка: POST /api/session/{id}/branches создаёт близнец-ветку
+   со снимком активного состояния и НЕ переключает её — активной остаётся
+   текущая ветка, как и после авто-форка. Один клик — одна ветка; веток
+   можно завести несколько и жить в них параллельно. */
+async function addBranch() {
+    if (!sessionId) return;
+
+    let res = null;
+    try {
+        res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/branches`, {
+            method: 'POST',
+        });
+    } catch (err) {
+        setDirective('fault', 'Не удалось создать развилку: ' + err.message);
+        return;
+    }
+
+    if (res.status === 409) {
+        addSystemMessage('Достигнут лимит веток (8)');
+        return;
+    }
+    if (res.status === 404) {
+        addSystemMessage('Сессия не найдена');
+        return;
+    }
+    if (!res.ok) {
+        setDirective('fault', `Развилка не создана (${res.status})`);
+        return;
+    }
+
+    const data = await res.json().catch(() => null);
+    addSystemMessage('─ Чекпоинт: создана '
+        + (data && typeof data.label === 'string' && data.label ? data.label : 'ветка') + ' ─');
+    loadBranches(sessionId);
 }
 
 /* Переключение на ветку: снимок цели становится журналом, sessionId не

@@ -347,6 +347,35 @@ fun Route.aiRoutes(
         }
     }
 
+    // POST /api/session/{id}/branches — ручная развилка (чекпоинт по кнопке):
+    // снимок текущего активного состояния (messages, summary, facts) в новую
+    // ветку-близнец «Ветка <seq>»; активное состояние не меняется, авто-форк
+    // остаётся самостоятельным (каждые branchCheckpointEvery). Ответ — запись
+    // созданной ветки (форма BranchInfo, active=false). Неизвестная сессия —
+    // 404, достигнут кап веток — 409. Тела запроса нет
+    post("/api/session/{id}/branches") {
+        val sessionId = call.parameters["id"] ?: ""
+        if (sessions.get(sessionId) == null) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@post
+        }
+        val twin = sessions.forkTwin(sessionId)
+        if (twin == null) {
+            call.respond(HttpStatusCode.Conflict, ChatResponse("Достигнут лимит веток (8)"))
+            return@post
+        }
+        call.respond(
+            BranchInfo(
+                branchId = twin.branchId,
+                label = twin.label,
+                forkUserCount = twin.forkUserCount,
+                userCountSinceFork = twin.userCountSinceFork,
+                messageCount = twin.messages.size,
+                active = false
+            )
+        )
+    }
+
     // POST /api/session/{id}/branches/activate — переключить активную ветку
     // (своп без потерь); ответ — полная сессия, как у GET /api/session/{id}.
     // Неизвестная сессия или ветка — 404

@@ -281,6 +281,9 @@ summary более старшей истории (один merge на все н�
 согласовано пользователем post-completion; Факты — недеструктивный view);
 Ветки — авто-форк близнец-ветки
 каждые `branchCheckpointEvery` (default 5) user-сообщений, кап 8 снимков.
+Post-completion (согласовано пользователем): ручная развилка — чекпоинт по
+кнопке «+ Развилка» (эндпоинт `POST /api/session/{id}/branches`): снимок
+активного состояния в новую ветку без переключения, кап 8 → 409.
 
 **Дельты change `add-context-strategies`:** `context-strategy-switcher`,
 `sliding-window`, `facts-memory`, `branching`, `comparison-mode`.

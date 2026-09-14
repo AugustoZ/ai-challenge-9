@@ -7,6 +7,7 @@ import com.example.aiweb.client.LLMClient
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.ActivateBranchRequest
+import com.example.aiweb.model.BranchInfo
 import com.example.aiweb.model.BranchesResponse
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
@@ -238,6 +239,11 @@ class CompressionRoutesTest {
             client.get("$base/api/session/$id/branches")
         }
 
+        /** POST /api/session/{id}/branches — ручная развилка (чекпоинт активного состояния). */
+        fun forkBranch(id: String): HttpResponse = kotlinx.coroutines.runBlocking {
+            client.post("$base/api/session/$id/branches")
+        }
+
         /** POST /api/session/{id}/branches/activate — переключение активной ветки. */
         fun activateBranch(id: String, branchId: String): HttpResponse = kotlinx.coroutines.runBlocking {
             client.post("$base/api/session/$id/branches/activate") {
@@ -259,6 +265,9 @@ class CompressionRoutesTest {
 
         /** Декодирует тело GET /api/session/{id}/branches. */
         fun HttpResponse.branchesView(): BranchesResponse = kotlinx.coroutines.runBlocking { body() }
+
+        /** Декодирует тело POST /api/session/{id}/branches (запись созданной ветки). */
+        fun HttpResponse.branchInfo(): BranchInfo = kotlinx.coroutines.runBlocking { body() }
 
         /** Разбирает SSE-тело в список JSON-кадров (по одному data: на кадр). */
         fun HttpResponse.sseFrames(): List<JsonObject> = kotlinx.coroutines.runBlocking {
@@ -1040,6 +1049,76 @@ class CompressionRoutesTest {
             val session = sessions.get(sid!!)!!
             assertTrue(session.branches.isEmpty(), "стратегия off никогда не форкает: ${session.branches}")
             assertNull(session.activeBranchId)
+        }
+    }
+
+    // --- 11. Ручная развилка (post-completion): POST /api/session/{id}/branches ---
+
+    @Test
+    fun `ручная развилка - 200 с записью близнеца, активное состояние не тронуто, без хода в LLM`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(turn(1, 20) + turn(2, 20), summary = "сводка")
+            sessions.setFacts(s.id, listOf(Fact("цель", "ручная развилка")))
+
+            val response = forkBranch(s.id)
+            assertEquals(HttpStatusCode.OK, response.status)
+            val info = response.branchInfo()
+            assertEquals("b1", info.branchId)
+            assertEquals("Ветка 1", info.label, "форма label нужна фронту для маркера «Чекпоинт: создана …»")
+            assertEquals(2, info.forkUserCount, "провенанс — user-сообщения активного состояния на момент снимка")
+            assertEquals(0, info.userCountSinceFork)
+            assertEquals(4, info.messageCount)
+            assertFalse(info.active, "ручная развилка не переключает активную ветку")
+
+            // Перечень: живое состояние первым и активным, близнец вторым
+            val view = getBranches(s.id).branchesView()
+            assertEquals(2, view.branches.size, "живое состояние + один близнец")
+            assertTrue(view.branches[0].active)
+            assertNull(view.branches[0].branchId, "корень остаётся активным — переключения не было")
+            assertEquals("b1", view.branches[1].branchId)
+
+            // Снимок дублирует активное состояние целиком, само состояние не меняется
+            val after = sessions.get(s.id)!!
+            assertEquals("сводка", after.summary, "ручная развилка не трогает сводку активного состояния")
+            assertEquals(listOf(Fact("цель", "ручная развилка")), after.facts, "факты активного состояния не тронуты")
+            val twin = after.branches.single { it.branchId == "b1" }
+            assertEquals(after.messages.map { it.content }, twin.messages.map { it.content }, "снимок — копия активного состояния")
+            assertEquals("сводка", twin.summary)
+            assertEquals(after.facts, twin.facts)
+            assertNull(after.activeBranchId, "активной остаётся исходная история")
+            assertEquals(0, chat.calls.size, "ручная развилка — store-операция, LLM не вызывается")
+        }
+    }
+
+    @Test
+    fun `ручная развилка - неизвестная сессия - 404 с русским текстом`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val response = forkBranch("нет-такой-сессии")
+            assertEquals(HttpStatusCode.NotFound, response.status)
+            assertEquals("Сессия не найдена.", response.json().reply, "текст ошибки для ленты — в ChatResponse")
+        }
+    }
+
+    @Test
+    fun `ручная развилка - кап 8 веток - девятый форк 409 с сообщением лимита`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(turn(1, 20) + turn(2, 20))
+
+            repeat(2) { index ->
+                val response = forkBranch(s.id)
+                assertEquals(HttpStatusCode.OK, response.status)
+                assertEquals("b${index + 1}", response.branchInfo().branchId)
+            }
+            assertEquals(3, getBranches(s.id).branchesView().branches.size, "два ручных форка: живое состояние + 2 близнеца")
+
+            repeat(6) { forkBranch(s.id) }
+            assertEquals(8, sessions.get(s.id)!!.branches.size, "ровно 8 снимков — кап MAX_BRANCHES")
+
+            val ninth = forkBranch(s.id)
+            assertEquals(HttpStatusCode.Conflict, ninth.status, "форк за капом — 409")
+            assertEquals("Достигнут лимит веток (8)", ninth.json().reply, "сообщение лимита — для ленты")
+            assertEquals(8, sessions.get(s.id)!!.branches.size, "кап не превышен: лишней ветки нет")
+            assertNull(sessions.get(s.id)!!.activeBranchId, "кап не переключает активную ветку")
         }
     }
 }
