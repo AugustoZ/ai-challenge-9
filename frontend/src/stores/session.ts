@@ -38,6 +38,12 @@ export interface SessionStateData {
   applyUsage: (usage: UsageInput) => void;
   /** Полный сброс топливомера: новая сессия начинается с чистого табло. */
   resetSessionFuel: () => void;
+  /**
+   * Восстановить топливомер из показаний истории (usage на assistant-сообщениях):
+   * счётчик = сумма показаний. Заменяет и чужой счётчик, оставшийся от
+   * предыдущей сессии, — переключение всегда начинается с чистого табло.
+   */
+  setSessionFuel: (history: TokenUsage[]) => void;
   setSessionsCache: (sessions: SessionSummary[]) => void;
   /** Факты последнего ответа (updateFactsPanel — панель скрыта вне «Фактов»). */
   setFacts: (facts: Fact[]) => void;
@@ -89,6 +95,11 @@ export const useSessionStore = create<SessionStateData>()((set) => ({
       };
     }),
   resetSessionFuel: () => set({ totalTokens: 0, tokenHistory: [] }),
+  setSessionFuel: (history) =>
+    set({
+      tokenHistory: history,
+      totalTokens: history.reduce((sum, usage) => sum + usage.totalTokens, 0),
+    }),
   setSessionsCache: (sessionsCache) => set({ sessionsCache }),
   setFacts: (facts) => set({ facts }),
   appendEntry: (entry) => {

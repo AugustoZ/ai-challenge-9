@@ -14,6 +14,7 @@ import com.example.aiweb.model.OpenAIFunctionSpec
 import com.example.aiweb.model.OpenAIToolSpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -80,5 +81,21 @@ class OpenAIRequestSerializationTest {
         assertTrue(root.containsKey("tools"), "JSON должен содержать ключ tools: $text")
         assertTrue(root["tools"] is JsonNull, "tools при отсутствии списка должен быть null: $text")
         assertEquals(request, json.decodeFromString<OpenAIRequest>(text))
+    }
+
+    @Test
+    fun `показания хода usage не уезжают в API-запрос`() {
+        // usage=null (после среза в AIClient при сборке запроса) не кодируется вовсе:
+        // EncodeDefault NEVER, в отличие от tools без аннотации (явный null в JSON)
+        val request = OpenAIRequest(
+            model = "test-model",
+            messages = listOf(OpenAIMessage(role = "user", content = "привет"))
+        )
+
+        val text = json.encodeToString(request)
+        val messages = Json.parseToJsonElement(text).jsonObject["messages"]!!.jsonArray
+        val first = messages.first().jsonObject
+
+        assertFalse(first.containsKey("usage"), "ключ usage не должен попадать в запрос к API: $text")
     }
 }

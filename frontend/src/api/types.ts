@@ -212,6 +212,19 @@ export interface ModelsResponse {
 
 /* ---------- Сессии и ветки (Models.kt + SessionStore.kt) ---------- */
 
+/** Показания топлива одного хода (Kotlin: TurnUsage) на assistant-сообщении. */
+export interface TurnUsage {
+  /** Полное время обработки хода на сервере, мс. */
+  elapsedMs?: number | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  /** Подставлена ли сводка в контекст этого запроса. */
+  summaryApplied?: boolean;
+  /** Токены вызова суммаризатора при сжатии истории в этом ходе. */
+  summaryTokens?: number | null;
+}
+
 /** Сообщение в истории серверной сессии (Kotlin: OpenAIMessage). */
 export interface ChatMessage {
   role: string;
@@ -225,6 +238,8 @@ export interface ChatMessage {
   tool_call_id?: string | null;
   /** Трейс агента; при пустом списке ключ с провода не приходит. */
   events?: AgentEvent[];
+  /** Показания топлива хода; приходит только на assistant-сообщениях. */
+  usage?: TurnUsage | null;
 }
 
 /** Вызов инструмента внутри message.tool_calls. */

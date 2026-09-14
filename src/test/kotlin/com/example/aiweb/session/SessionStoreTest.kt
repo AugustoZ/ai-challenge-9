@@ -402,14 +402,18 @@ class SessionStoreTest {
     }
 
     @Test
-    fun `кап веток — активация при полном наборе возвращает null без мутации`() {
+    fun `кап веток — активация изменённого состояния при полном наборе возвращает null без мутации`() {
         val store = newStore()
         val session = store.create()
         store.append(session.id, user("вопрос"))
         repeat(InMemorySessionStore.MAX_BRANCHES) { store.forkTwin(session.id) }
+        // Кап не мешает переключить неизменённое состояние — сворачивать нечего
+        assertNotNull(store.activateBranch(session.id, "b1"))
+        // Изменённое состояние свернуть некуда — активация отклоняется без мутации
+        store.append(session.id, user("дополнение"))
         val before = assertNotNull(store.get(session.id))
 
-        assertNull(store.activateBranch(session.id, "b1"))
+        assertNull(store.activateBranch(session.id, "b2"))
 
         assertEquals(before, assertNotNull(store.get(session.id)))
     }
@@ -507,6 +511,97 @@ class SessionStoreTest {
         assertNull(store.activateBranch(session.id, "b999"))
         assertNull(store.activateBranch(session.id, ""))
 
+        assertEquals(before, assertNotNull(store.get(session.id)))
+    }
+
+    @Test
+    fun `activateBranch без изменений не создаёт дубликат-ветку`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.forkTwin(session.id)
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        // Состояние не менялось с форка — сворачивать нечего, ветка одна
+        assertEquals(1, activated.branches.size)
+        assertEquals("b1", activated.activeBranchId)
+        assertEquals(1, activated.branchSeq)
+        assertEquals(2, activated.messages.size)
+        assertEquals(
+            listOf("вопрос 1", "ответ 1"),
+            activated.messages.mapNotNull { it.content }
+        )
+        // Отпечаток захвата совпал с активным состоянием
+        assertEquals(2, activated.capturedMessages)
+        // Повторное переключение туда-обратно веток не добавляет
+        val back = assertNotNull(store.activateBranch(session.id, "b1"))
+        assertEquals(1, back.branches.size)
+    }
+
+    @Test
+    fun `activateBranch при изменениях сворачивает состояние, обратное переключение — нет`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.forkTwin(session.id)
+        store.append(session.id, user("вопрос 2"))
+
+        // Уход с изменённого состояния — свёртка без потерь
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+        assertEquals(2, activated.branches.size)
+        assertEquals("b1", activated.activeBranchId)
+        val folded = activated.branches.single { it.branchId == "b2" }
+        assertEquals(listOf("вопрос 1", "ответ 1", "вопрос 2"), folded.messages.mapNotNull { it.content })
+        assertEquals(2, folded.userCountSinceFork)
+
+        // Обратное переключение к сфолдированному — дубликата нет
+        val back = assertNotNull(store.activateBranch(session.id, "b2"))
+        assertEquals(2, back.branches.size)
+        assertEquals("b2", back.activeBranchId)
+        assertEquals(listOf("вопрос 1", "ответ 1", "вопрос 2"), back.messages.mapNotNull { it.content })
+
+        // И снова к близнецу — по-прежнему две ветки
+        val twin = assertNotNull(store.activateBranch(session.id, "b1"))
+        assertEquals(2, twin.branches.size)
+        assertEquals(2, twin.messages.size)
+    }
+
+    @Test
+    fun `расхождение только по фактам сворачивается при переключении`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.forkTwin(session.id)
+        store.setFacts(session.id, listOf(Fact("тема", "змейка")))
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        assertEquals(2, activated.branches.size)
+        val folded = activated.branches.single { it.branchId == "b2" }
+        assertEquals(listOf(Fact("тема", "змейка")), folded.facts)
+        assertEquals(emptyList(), activated.facts)
+    }
+
+    @Test
+    fun `кап веток блокирует только свёртку изменённого состояния`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        repeat(8) { store.forkTwin(session.id) }
+
+        // Неизменённое состояние при капе переключается — сворачивать нечего
+        val unchanged = assertNotNull(store.activateBranch(session.id, "b1"))
+        assertEquals(8, unchanged.branches.size)
+        assertEquals("b1", unchanged.activeBranchId)
+
+        // Изменённое состояние свернуть некуда — кап
+        store.append(session.id, user("вопрос 2"))
+        val before = assertNotNull(store.get(session.id))
+        assertNull(store.activateBranch(session.id, "b2"))
         assertEquals(before, assertNotNull(store.get(session.id)))
     }
 

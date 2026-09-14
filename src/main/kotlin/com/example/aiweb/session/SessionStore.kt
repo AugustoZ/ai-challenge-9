@@ -59,16 +59,18 @@ interface SessionStore {
 
     /**
      * Переключает активное состояние сессии на снимок ветки [branchId]: содержимое
-     * ветки (messages, summary, facts) становится активным, а прежнее активное
-     * состояние сохраняется как новая ветка «b<seq>»/«Ветка <seq>» — своп без потерь.
-     * Счётчики прежней активной переносятся в её новую запись
+     * ветки (messages, summary, facts) становится активным. Прежнее активное
+     * состояние сохраняется как новая ветка «b<seq>»/«Ветка <seq>» ТОЛЬКО если оно
+     * изменилось с момента последнего захвата в ветку (форк, свёртка или активация):
+     * неизменённое состояние уже хранится снимком ветки, и дубликат плодить нельзя.
+     * Счётчики сворачиваемого состояния переносятся в его новую запись
      * ([Branch.userCountSinceFork] = user-сообщения активной минус провенанс её
      * происхождения). [Session.activeBranchId] переключается на [branchId].
      *
      * Возвращает обновлённую сессию; null — сессия или ветка не существует
-     * (без мутации) либо достигнут кап [InMemorySessionStore.MAX_BRANCHES] веток
-     * (своп не выполняется: прежнее активное состояние некуда сохранить).
-     * Повторная активация уже активной ветки состояние не меняет.
+     * (без мутации), либо изменившееся состояние некуда свернуть — достигнут кап
+     * [InMemorySessionStore.MAX_BRANCHES] веток. Повторная активация уже активной
+     * ветки состояние не меняет.
      */
     fun activateBranch(sessionId: String, branchId: String): Session?
 
@@ -87,6 +89,17 @@ interface SessionStore {
     /** Стирает все сессии; возвращает число удалённых. */
     fun clear(): Int
 }
+
+/**
+ * Активное состояние изменилось с момента последнего захвата в ветку:
+ * число сообщений, summary или факты не совпадают с отпечатком [Session].
+ * Расхождение — единственный повод сворачивать состояние в новую ветку
+ * при переключении; неизменённое уже хранится снимком ветки.
+ */
+internal fun Session.activeDiverged(): Boolean =
+    messages.size != capturedMessages ||
+        summary != capturedSummary ||
+        facts != capturedFacts
 
 /**
  * Доменная модель сессии диалога. System-сообщения (промт агента, бюджет ответа)
@@ -108,7 +121,18 @@ data class Session(
     /** Выделенные факты диалога (стратегия «Факты») активного состояния. */
     val facts: List<Fact> = emptyList(),
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /**
+     * Отпечаток активного состояния на момент последнего захвата в ветку
+     * (форк, свёртка при переключении или активация): число сообщений, summary
+     * и факты. Переключение ветки сворачивает прежнее активное состояние в новую
+     * ветку только при расхождении с отпечатком — иначе снимок уже хранится
+     * в ветке, и дубликат не создаётся. У legacy-сессий нулевой — первое же
+     * переключение сворачивает состояние (прежнее «своп без потерь» сохранено).
+     */
+    val capturedMessages: Int = 0,
+    val capturedSummary: String? = null,
+    val capturedFacts: List<Fact> = emptyList()
 )
 
 /**
@@ -184,6 +208,16 @@ class InMemorySessionStore(
         @Volatile
         var facts: List<Fact> = emptyList()
 
+        /** Отпечаток захвата активного состояния (см. [Session.capturedMessages]). */
+        @Volatile
+        var capturedMessages: Int = 0
+
+        @Volatile
+        var capturedSummary: String? = null
+
+        @Volatile
+        var capturedFacts: List<Fact> = emptyList()
+
         @Volatile
         var updatedAt: Long = createdAt
     }
@@ -248,6 +282,10 @@ class InMemorySessionStore(
             )
             entry.branches = entry.branches + branch
             entry.branchSeq = seq
+            // Форк захватывает активное состояние снимком — отпечаток совпадает
+            entry.capturedMessages = entry.messages.size
+            entry.capturedSummary = entry.summary
+            entry.capturedFacts = entry.facts.toList()
             entry.updatedAt = now()
             branch
         }
@@ -259,7 +297,13 @@ class InMemorySessionStore(
             val branch = entry.branches.firstOrNull { it.branchId == branchId }
                 ?: return@synchronized null
             if (branchId == entry.activeBranchId) return@synchronized entry.snapshot()
-            if (entry.branches.size >= MAX_BRANCHES) return@synchronized null
+
+            // Свёртка прежнего состояния нужна только при расхождении с отпечатком:
+            // неизменённое уже хранится снимком ветки, дубликат плодить нельзя.
+            val diverged = entry.messages.size != entry.capturedMessages ||
+                entry.summary != entry.capturedSummary ||
+                entry.facts != entry.capturedFacts
+            if (diverged && entry.branches.size >= MAX_BRANCHES) return@synchronized null
 
             // Провенанс активного состояния: ветка, из которой оно было развёрнуто
             // (для исходной истории — пустая сессия, провенанс нулевой)
@@ -270,24 +314,29 @@ class InMemorySessionStore(
             val seq = entry.branchSeq + 1
 
             // Прежнее активное состояние сохраняется как новая ветка — своп без потерь
-            val folded = Branch(
-                branchId = "b$seq",
-                label = "Ветка $seq",
-                forkUserCount = activeOriginFork,
-                userCountSinceFork = activeUserCount - activeOriginFork,
-                messages = entry.messages.toList(),
-                summary = entry.summary,
-                facts = entry.facts.toList(),
-                createdAt = now()
-            )
-            // Активным становится снимок выбранной ветки
+            if (diverged) {
+                val folded = Branch(
+                    branchId = "b$seq",
+                    label = "Ветка $seq",
+                    forkUserCount = activeOriginFork,
+                    userCountSinceFork = activeUserCount - activeOriginFork,
+                    messages = entry.messages.toList(),
+                    summary = entry.summary,
+                    facts = entry.facts.toList(),
+                    createdAt = now()
+                )
+                entry.branches = entry.branches + folded
+                entry.branchSeq = seq
+            }
+            // Активным становится снимок выбранной ветки; он захвачен самой веткой
             entry.messages.clear()
             entry.messages.addAll(branch.messages)
             entry.summary = branch.summary
             entry.facts = branch.facts
-            entry.branches = entry.branches + folded
-            entry.branchSeq = seq
             entry.activeBranchId = branchId
+            entry.capturedMessages = branch.messages.size
+            entry.capturedSummary = branch.summary
+            entry.capturedFacts = branch.facts.toList()
             entry.updatedAt = now()
             entry.snapshot()
         }
@@ -337,7 +386,10 @@ class InMemorySessionStore(
             branchSeq = branchSeq,
             facts = facts,
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            capturedMessages = capturedMessages,
+            capturedSummary = capturedSummary,
+            capturedFacts = capturedFacts
         )
     }
 }

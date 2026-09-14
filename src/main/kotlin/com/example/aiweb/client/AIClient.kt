@@ -149,10 +149,10 @@ class AIClient(private val provider: ProviderConfig) : LLMClient {
         val finalStop = if (call.stop.isNullOrBlank()) STOP_SEQUENCES else listOf(call.stop.trim())
         val request = OpenAIRequest(
             model = model ?: provider.model.takeIf { it.isNotBlank() } ?: "gpt-3.5-turbo",
-            // events — трейс агента из истории сессии, это не поле протокола OpenAI:
-            // срезаем его на единственной границе сборки запроса, чтобы трейс
-            // никогда не уезжал в API (пустой не кодируется и так — EncodeDefault NEVER)
-            messages = call.messages.map { it.copy(events = emptyList()) },
+            // events (трейс агента) и usage (приборные показания хода) — служебные
+            // поля истории сессии, а не поля протокола OpenAI: срезаем их на
+            // единственной границе сборки запроса, чтобы они никогда не уезжали в API
+            messages = call.messages.map { it.copy(events = emptyList(), usage = null) },
             temperature = call.temperature ?: 0.7,
             topP = call.topP,
             maxTokens = call.maxTokens,

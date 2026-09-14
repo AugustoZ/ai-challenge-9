@@ -257,6 +257,25 @@ data class ExchangeLogResponse(
 
 // --- Модели для OpenAI-совместимого API (Chat Completions) ---
 
+/**
+ * Приборные показания одного хода (ответ агента): расход топлива и время обработки.
+ * Хранится на assistant-сообщении в истории сессии — фронтенд восстанавливает
+ * шапку ответа («Топливо: запрос X + ответ Y = Z») и топливомер сессии
+ * (счётчик и график) после переключения сессии или перезагрузки страницы.
+ */
+@Serializable
+data class TurnUsage(
+    /** Полное время обработки хода на сервере (все вызовы LLM), мс. */
+    val elapsedMs: Long? = null,
+    val promptTokens: Int? = null,
+    val completionTokens: Int? = null,
+    val totalTokens: Int? = null,
+    /** Подставлена ли сводка в контекст этого запроса. */
+    val summaryApplied: Boolean = false,
+    /** Токены вызова суммаризатора при сжатии истории в этом ходе. */
+    val summaryTokens: Int? = null
+)
+
 @Serializable
 data class OpenAIMessage(
     val role: String,
@@ -280,7 +299,18 @@ data class OpenAIMessage(
      */
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val events: List<AgentEvent> = emptyList()
+    val events: List<AgentEvent> = emptyList(),
+    /**
+     * Приборные показания хода ([TurnUsage]); живёт только на assistant-сообщениях
+     * в истории сессии — фронтенд восстанавливает по ним шапку ответа и топливомер
+     * сессии (GET /api/session/{id}).
+     *
+     * НЕ поле протокола OpenAI: срезается при сборке запроса (см. AIClient.executeOpenAI),
+     * а null не кодируется и так — EncodeDefault NEVER (см. [events]).
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val usage: TurnUsage? = null
 )
 
 @Serializable

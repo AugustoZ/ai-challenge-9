@@ -4,6 +4,7 @@ import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIToolCall
+import com.example.aiweb.model.TurnUsage
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicLong
@@ -460,5 +461,117 @@ class FileSessionStoreTest {
         val reread = assertNotNull(newStore(dir).get("old-3"))
         assertNull(reread.activeBranchId)
         assertEquals(listOf("b1"), reread.branches.map { it.branchId })
+    }
+
+    @Test
+    fun `activateBranch без изменений не создаёт дубликат-ветку и переживает пересоздание`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.forkTwin(session.id)
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        assertEquals(1, activated.branches.size)
+        assertEquals("b1", activated.activeBranchId)
+        assertEquals(2, activated.messages.size)
+        assertEquals(2, activated.capturedMessages)
+
+        // Отпечаток и активная ветка персистентны — после перечитывания веток по-прежнему одна
+        val reloaded = newStore(dir)
+        val reread = assertNotNull(reloaded.get(session.id))
+        assertEquals(1, reread.branches.size)
+        assertEquals("b1", reread.activeBranchId)
+        val again = assertNotNull(reloaded.activateBranch(session.id, "b1"))
+        assertEquals(1, again.branches.size)
+    }
+
+    @Test
+    fun `activateBranch при изменениях сворачивает состояние без потерь`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.forkTwin(session.id)
+        store.append(session.id, user("вопрос 2"))
+
+        // Уход с изменённого состояния — свёртка в новую ветку
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+        assertEquals(2, activated.branches.size)
+        val folded = activated.branches.single { it.branchId == "b2" }
+        assertEquals(
+            listOf("вопрос 1", "ответ 1", "вопрос 2"),
+            folded.messages.mapNotNull { it.content }
+        )
+
+        // Обратное переключение к сфолдированному — дубликата нет; всё переживает перечитывание
+        val reloaded = newStore(dir)
+        val back = assertNotNull(reloaded.activateBranch(session.id, "b2"))
+        assertEquals(2, back.branches.size)
+        assertEquals("b2", back.activeBranchId)
+        assertEquals(
+            listOf("вопрос 1", "ответ 1", "вопрос 2"),
+            back.messages.mapNotNull { it.content }
+        )
+    }
+
+    @Test
+    fun `показания топлива на assistant-сообщении переживают пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+        store.append(
+            session.id,
+            OpenAIMessage(
+                role = "assistant",
+                content = "ответ",
+                usage = TurnUsage(
+                    elapsedMs = 42L,
+                    promptTokens = 1,
+                    completionTokens = 2,
+                    totalTokens = 3,
+                    summaryApplied = true,
+                    summaryTokens = 7
+                )
+            )
+        )
+
+        // Показания читаются и без перечитывания, и из нового экземпляра (диск)
+        for (source in listOfNotNull(store.get(session.id), newStore(dir).get(session.id))) {
+            val restored = assertNotNull(
+                source.messages.last { it.role == "assistant" }.usage,
+                "usage должен пережить персист"
+            )
+            assertEquals(42L, restored.elapsedMs)
+            assertEquals(1, restored.promptTokens)
+            assertEquals(2, restored.completionTokens)
+            assertEquals(3, restored.totalTokens)
+            assertTrue(restored.summaryApplied)
+            assertEquals(7, restored.summaryTokens)
+        }
+    }
+
+    @Test
+    fun `кап веток блокирует только свёртку изменённого состояния`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        repeat(8) { store.forkTwin(session.id) }
+
+        // Неизменённое состояние при капе переключается — сворачивать нечего
+        val unchanged = assertNotNull(store.activateBranch(session.id, "b1"))
+        assertEquals(8, unchanged.branches.size)
+        assertEquals("b1", unchanged.activeBranchId)
+
+        // Изменённое состояние свернуть некуда — кап, сессия не меняется
+        store.append(session.id, user("вопрос 2"))
+        val before = assertNotNull(store.get(session.id))
+        assertNull(store.activateBranch(session.id, "b2"))
+        assertEquals(before, assertNotNull(store.get(session.id)))
     }
 }

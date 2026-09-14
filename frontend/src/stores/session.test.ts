@@ -65,6 +65,22 @@ describe('session store', () => {
     expect(state.tokenHistory).toEqual([]);
   });
 
+  it('setSessionFuel выставляет историю показаний и сумму счётчика', () => {
+    const history = [
+      { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      { promptTokens: 4, completionTokens: 5, totalTokens: 9 },
+    ];
+    useSessionStore.getState().applyUsage({ totalTokens: 100 });
+    useSessionStore.getState().setSessionFuel(history);
+    const state = useSessionStore.getState();
+    expect(state.tokenHistory).toEqual(history);
+    expect(state.totalTokens).toBe(12);
+
+    useSessionStore.getState().setSessionFuel([]);
+    expect(useSessionStore.getState().totalTokens).toBe(0);
+    expect(useSessionStore.getState().tokenHistory).toEqual([]);
+  });
+
   it('setSessionsCache кэширует список сессий', () => {
     const sessions = [{ id: 's1', title: 'Диалог', updatedAt: 1, messageCount: 2 }];
     useSessionStore.getState().setSessionsCache(sessions);

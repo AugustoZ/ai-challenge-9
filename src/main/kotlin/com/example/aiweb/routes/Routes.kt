@@ -28,6 +28,7 @@ import com.example.aiweb.model.SessionSummary
 import com.example.aiweb.model.SessionsCleared
 import com.example.aiweb.model.SessionsResponse
 import com.example.aiweb.model.StreamEvent
+import com.example.aiweb.model.TurnUsage
 import com.example.aiweb.session.HistoryCompressor
 import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.MergeResult
@@ -612,11 +613,28 @@ private suspend fun finalizeResponse(
 ): ChatResponse {
     if (session != null) {
         sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
-        // Трейс агента хранится на assistant-сообщении — фронтенд показывает его
-        // при восстановлении журнала (GET /api/session/{id})
+        // Трейс агента и показания топлива хранятся на assistant-сообщении —
+        // фронтенд восстанавливает по ним шапку ответа и топливомер сессии
+        // (GET /api/session/{id}). Время хода фиксируется до пост-обработки:
+        // сжатие/факты ниже добавляют своё в elapsedMs ответа
+        val turnElapsedMs = System.currentTimeMillis() - startedAt
         sessions.append(
             session.id,
-            OpenAIMessage(role = "assistant", content = response.reply, events = response.events)
+            OpenAIMessage(
+                role = "assistant",
+                content = response.reply,
+                events = response.events,
+                usage = response.totalTokens?.let { total ->
+                    TurnUsage(
+                        elapsedMs = turnElapsedMs,
+                        promptTokens = response.promptTokens,
+                        completionTokens = response.completionTokens,
+                        totalTokens = total,
+                        summaryApplied = response.summaryApplied,
+                        summaryTokens = response.summaryTokens
+                    )
+                }
+            )
         )
     }
 

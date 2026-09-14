@@ -31,15 +31,44 @@ describe('isRestorableMessage — фильтр истории (script.js L1909�
 });
 
 describe('historyToEntries — маппинг истории (script.js L1922–1934)', () => {
-  it('запрос — сырой текст, ответ — без приборных показаний', () => {
+  it('запрос — сырой текст, ответ — с показаниями из msg.usage', () => {
+    const usage = {
+      elapsedMs: 42,
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+      summaryApplied: true,
+      summaryTokens: 7,
+    };
     const entries = historyToEntries([
       msg({}),
-      msg({ role: 'assistant', content: 'ответ' }),
+      msg({ role: 'assistant', content: 'ответ', usage }),
     ], TIME);
     expect(entries).toEqual([
       { kind: 'user', text: 'вопрос', meta: { time: TIME } },
-      { kind: 'bot', text: 'ответ', meta: { time: TIME }, events: undefined },
+      { kind: 'bot', text: 'ответ', meta: { time: TIME, tokenData: usage }, events: undefined },
     ]);
+  });
+
+  it('ответ без usage — записи без приборных показаний', () => {
+    const entries = historyToEntries([
+      msg({ role: 'assistant', content: 'ответ' }),
+    ], TIME);
+    expect(entries[0]?.meta?.tokenData).toBeUndefined();
+  });
+
+  it('неполные показания дозаполняются нейтральными значениями', () => {
+    const [entry] = historyToEntries([
+      msg({ role: 'assistant', content: 'ответ', usage: { totalTokens: 5 } }),
+    ], TIME);
+    expect(entry?.meta?.tokenData).toEqual({
+      elapsedMs: null,
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: 5,
+      summaryApplied: false,
+      summaryTokens: null,
+    });
   });
 
   it('служебный трафик и пустые записи пропускаются молча', () => {
@@ -72,5 +101,33 @@ describe('applyHistory — перезаполнение журнала (script.j
     useSessionStore.getState().appendEntry({ kind: 'user', text: 'живой', meta: { time: TIME } });
     expect(applyHistory([msg({ content: '' })], TIME)).toBe(false);
     expect(useSessionStore.getState().entries).toHaveLength(1);
+  });
+
+  it('топливомер восстанавливается из показаний истории и сбрасывает чужой счётчик', () => {
+    const store = useSessionStore.getState();
+    // Чужие показания от предыдущей сессии
+    store.applyUsage({ promptTokens: 100, completionTokens: 100, totalTokens: 999 });
+    store.applyUsage({ totalTokens: 1 });
+
+    const filled = applyHistory([
+      msg({}),
+      msg({ role: 'assistant', content: 'а', usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } }),
+      msg({ role: 'assistant', content: 'б', usage: { totalTokens: 4 } }),
+    ], TIME);
+    expect(filled).toBe(true);
+    expect(useSessionStore.getState().totalTokens).toBe(7);
+    expect(useSessionStore.getState().tokenHistory).toEqual([
+      { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      { promptTokens: 0, completionTokens: 0, totalTokens: 4 },
+    ]);
+  });
+
+  it('пустая история обнуляет топливомер (переключение на пустую сессию)', () => {
+    const store = useSessionStore.getState();
+    store.applyUsage({ totalTokens: 555 });
+
+    expect(applyHistory([msg({ content: '' })], TIME)).toBe(false);
+    expect(useSessionStore.getState().totalTokens).toBe(0);
+    expect(useSessionStore.getState().tokenHistory).toEqual([]);
   });
 });

@@ -118,6 +118,10 @@ class FileSessionStore(
         val updated = current.copy(
             branches = current.branches + branch,
             branchSeq = seq,
+            // Форк захватывает активное состояние снимком — отпечаток совпадает
+            capturedMessages = current.messages.size,
+            capturedSummary = current.summary,
+            capturedFacts = current.facts,
             updatedAt = now()
         )
         sessions[sessionId] = updated
@@ -130,7 +134,11 @@ class FileSessionStore(
         val current = sessions[sessionId] ?: return null
         val branch = current.branches.firstOrNull { it.branchId == branchId } ?: return null
         if (branchId == current.activeBranchId) return current
-        if (current.branches.size >= InMemorySessionStore.MAX_BRANCHES) return null
+
+        // Свёртка прежнего состояния нужна только при расхождении с отпечатком:
+        // неизменённое уже хранится снимком ветки, дубликат плодить нельзя.
+        val diverged = current.activeDiverged()
+        if (diverged && current.branches.size >= InMemorySessionStore.MAX_BRANCHES) return null
 
         // Провенанс активного состояния: ветка, из которой оно было развёрнуто
         // (для исходной истории — пустая сессия, провенанс нулевой)
@@ -145,18 +153,26 @@ class FileSessionStore(
             messages = branch.messages,
             summary = branch.summary,
             facts = branch.facts,
-            branches = current.branches + Branch(
-                branchId = "b$seq",
-                label = "Ветка $seq",
-                forkUserCount = activeOriginFork,
-                userCountSinceFork = activeUserCount - activeOriginFork,
-                messages = current.messages,
-                summary = current.summary,
-                facts = current.facts,
-                createdAt = now()
-            ),
-            branchSeq = seq,
+            branches = if (diverged) {
+                current.branches + Branch(
+                    branchId = "b$seq",
+                    label = "Ветка $seq",
+                    forkUserCount = activeOriginFork,
+                    userCountSinceFork = activeUserCount - activeOriginFork,
+                    messages = current.messages,
+                    summary = current.summary,
+                    facts = current.facts,
+                    createdAt = now()
+                )
+            } else {
+                current.branches
+            },
+            branchSeq = if (diverged) seq else current.branchSeq,
             activeBranchId = branchId,
+            // Новый активный — снимок ветки; он захвачен самой веткой
+            capturedMessages = branch.messages.size,
+            capturedSummary = branch.summary,
+            capturedFacts = branch.facts,
             updatedAt = now()
         )
         sessions[sessionId] = updated
