@@ -5,7 +5,7 @@
 **Branch:** lesson-3
 
 ## OVERVIEW
-«Штурман» — веб-стенд рассуждений для AI-чата: Kotlin/Ktor бэкенд (прокси к OpenAI-совместимому API DeepSeek, модель `deepseek-v4-flash`) + vanilla JS/CSS фронтенд в стилистике ночного кокпита «Приборная доска». Без фреймворков на фронте, без сборщика статики.
+«Штурман» — веб-стенд рассуждений для AI-чата: Kotlin/Ktor бэкенд (прокси к OpenAI-совместимому API DeepSeek, модель `deepseek-v4-flash`) + vanilla JS/CSS фронтенд в стилистике ночного кокпита «Приборная доска» (старое приложение живёт в `src/main/resources/static` до flip-коммита). Новый фронтенд — в `frontend/`: React + Vite + TypeScript, сборка Vite, без Tailwind и компонентных библиотек.
 
 ## STRUCTURE
 ```
@@ -45,7 +45,6 @@ ai-challenge-9/
 |---|---|---|---|
 | Application | object | kotlin/Application.kt | точка входа, `PORT` env → порт |
 | Routes | — | kotlin/routes/Routes.kt (290 стр.) | /api/chat (прокси+лимиты), /api/log (журнал) |
-| ReasoningMode | enum | kotlin/model/ReasoningMode.kt | 4 режима: Прямой ответ, Пошаговое решение, Команда, Анализ |
 | AIClient | class | kotlin/client/AIClient.kt | POST к DeepSeek, учёт max_tokens, GET {base}/models |
 | JudgePrompts | object | kotlin/client/JudgePrompts.kt | промт судьи, извлечение и разбор JSON-отчёта |
 | ExchangeLog | class | kotlin/client/ExchangeLog.kt | журнал обменов для UI |
@@ -62,7 +61,7 @@ ai-challenge-9/
 - Не коммитить `config.json` — там API-ключи (уже в .gitignore).
 - Не трогать правки статики без пересборки ресурсов — см. NOTES.
 - Не расширять палитру мимо DESIGN.md: янтарь #ffb347 — управление, зелёный #5fd68f — показания, красный #ff6b5e — отказы/опасность. Новые цвета — только через CSS-токены.
-- Не заводить фреймворки/бандлеры на фронте — vanilla сознательно.
+- Новый фронтенд-стек зафиксирован: React + Vite + TypeScript в `frontend/`, слои api/lib/stores/components/features; новые зависимости фронтенда — только по веской причине.
 
 ## UNIQUE STYLES
 «Приборная доска»: ночной кокпит, шрифты B612/B612 Mono, ламповые клавиши-табло (свечение сквозь надпись и из-под краёв), круглые шкалы с зонами допуска, журнал-«самописец» с цветными строками (зелёный — запросы, янтарь — ответы). Полная спецификация с историей приращений — DESIGN.md.
@@ -78,6 +77,6 @@ docker compose up                  # контейнерный запуск
 
 ## NOTES
 - Ktor отдаёт статику из `build/resources/main`, а не из `src/main/resources`. После правки static/* запусти `./gradlew processResources` (или перезапусти `run`), иначе изменения невидимы.
-- Тестов нет (src/test отсутствует)
+- Тесты: kotlin.test (JUnit Platform), ~260 @Test в 24 файлах; фронт — Vitest только на чистых функциях.
 - `/api/modes` НЕ существует — режимы не отдаются бэком по HTTP; фронт знает их сам (script.js), промпты — в ReasoningPrompts.kt.
 - Настройки фронта хранятся в localStorage ключ `ai-assistant.settings.v1`.

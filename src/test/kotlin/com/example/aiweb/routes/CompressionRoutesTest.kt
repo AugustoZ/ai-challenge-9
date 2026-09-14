@@ -52,15 +52,14 @@ import kotlin.test.assertTrue
 import java.net.ServerSocket
 
 /**
- * Routes-уровневая проверка интеграции компрессии истории в одиночные режимы
- * (задача 6): поднятие реального Application (embeddedServer Netty на случайном
+ * Routes-уровневая проверка интеграции компрессии истории в агентную обработку
+ * запроса (задача 6): поднятие реального Application (embeddedServer Netty на случайном
  * порту), FakeLLMClient как транспорт и FakeSummarizer как суммаризатор — ноль сети.
  *
  * Покрывает: merge по достижении порога (summary в хранилище, слитые удалены),
  * деградацию при сбое суммаризатора (200, прежний summary, summaryTokens=null),
  * выключение компрессии (явное поле запроса > конфиг), stage-2 trim (сводка +
- * окно сохраняются в бюджете MAX_HISTORY_TOKENS) и guard: Team/P2P-режимы
- * остаются stateless и не трогают summary.
+ * окно сохраняются в бюджете MAX_HISTORY_TOKENS).
  */
 class CompressionRoutesTest {
 
@@ -195,7 +194,6 @@ class CompressionRoutesTest {
             message: String,
             sessionId: String? = null,
             compression: Boolean? = null,
-            reasoningMode: String? = null,
             contextStrategy: String? = null,
             branchId: String? = null
         ): HttpResponse = kotlinx.coroutines.runBlocking {
@@ -206,7 +204,6 @@ class CompressionRoutesTest {
                         message = message,
                         sessionId = sessionId,
                         compressionEnabled = compression,
-                        reasoningMode = reasoningMode,
                         contextStrategy = contextStrategy,
                         branchId = branchId
                     )
@@ -423,38 +420,6 @@ class CompressionRoutesTest {
         }
     }
 
-    // --- 6. Guard: Team/P2P stateless ---
-
-    @Test
-    fun `режим Команда игнорирует compressionEnabled - stateless, сводка не пишется`() {
-        withApp(config(enabled = true, window = 2, mergeEvery = 1)) {
-            val response = postChat("вопрос для команды", compression = true, reasoningMode = "team")
-            val parsed = response.json()
-
-            assertEquals(HttpStatusCode.OK, response.status)
-            assertFalse(parsed.summaryApplied, "team-путь не знает о компрессии")
-            assertNull(parsed.summaryTokens)
-            assertNull(parsed.sessionId, "stateless — сессия не создаётся")
-            assertEquals(0, summarizer.calls.size)
-            assertEquals(0, sessions.list().size, "сессий не создано, summary нигде не записан")
-        }
-    }
-
-    @Test
-    fun `режим Prompt-to-Prompt игнорирует compressionEnabled - stateless`() {
-        withApp(config(enabled = true, window = 2, mergeEvery = 1)) {
-            val response = postChat("вопрос", compression = true, reasoningMode = "prompt_to_prompt")
-            val parsed = response.json()
-
-            assertEquals(HttpStatusCode.OK, response.status)
-            assertFalse(parsed.summaryApplied)
-            assertNull(parsed.summaryTokens)
-            assertNull(parsed.sessionId)
-            assertEquals(0, summarizer.calls.size)
-            assertEquals(0, sessions.list().size)
-        }
-    }
-
     // Гарантия отсутствия сети: сам тест держит только локальный сервер на случайном порту.
     @Test
     fun `поднятие Application с фейками - приватный порт, без внешних вызовов`() {
@@ -463,7 +428,7 @@ class CompressionRoutesTest {
         }
     }
 
-    // --- 7. Агентный режим (задача 8): та же схема, что в одиночных, но seed цикла ---
+    // --- 7. Агентная обработка (задача 8): merge до цикла, seed со сводкой ---
 
     /** Ход с инструментом: user → assistant(tool_calls) → role="tool" (паттерн AgentLoopTest). */
     private fun toolTurn(question: String, callId: String): List<OpenAIMessage> = listOf(
@@ -487,7 +452,7 @@ class CompressionRoutesTest {
         withApp(config(enabled = true, window = 2, mergeEvery = 2)) {
             // 6 сообщений, окно 2 → вне окна 4 ≥ mergeEvery 2 → merge до запуска цикла
             val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20))
-            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val response = postChat("новый вопрос", s.id)
             val parsed = response.json()
 
             assertEquals(HttpStatusCode.OK, response.status)
@@ -527,7 +492,7 @@ class CompressionRoutesTest {
     fun `агент - сводка уже есть и порога нет - summaryApplied true, summaryTokens null, суммаризатор не зван`() {
         withApp(config(enabled = true, window = 2, mergeEvery = 100)) {
             val s = seed(turn(1, 20) + turn(2, 20), summary = "старая сводка")
-            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val response = postChat("новый вопрос", s.id)
             val parsed = response.json()
 
             assertEquals(HttpStatusCode.OK, response.status)
@@ -547,7 +512,7 @@ class CompressionRoutesTest {
             // 9 сообщений; окно 3 начинается ровно с role="tool" (индекс 6) —
             // sliceWindow обязан расшириться назад до user("вопрос 3")
             val s = seed(turn(1, 20) + turn(2, 20) + toolTurn("вопрос 3", "call-1") + turn(4, 20))
-            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val response = postChat("новый вопрос", s.id)
 
             assertEquals(HttpStatusCode.OK, response.status)
 
@@ -577,7 +542,7 @@ class CompressionRoutesTest {
             val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20), summary = "старая сводка")
             summarizer.failWith = RuntimeException("сбой суммаризатора")
 
-            val response = postChat("новый вопрос", s.id, reasoningMode = "agent")
+            val response = postChat("новый вопрос", s.id)
             val parsed = response.json()
 
             assertEquals(HttpStatusCode.OK, response.status)
@@ -597,7 +562,7 @@ class CompressionRoutesTest {
     fun `агент - компрессия явно выключена в запросе - seed как раньше, сводка нигде`() {
         withApp(config(enabled = true, window = 2, mergeEvery = 2)) {
             val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20), summary = "старая сводка")
-            val response = postChat("новый вопрос", s.id, compression = false, reasoningMode = "agent")
+            val response = postChat("новый вопрос", s.id, compression = false)
             val parsed = response.json()
 
             assertEquals(HttpStatusCode.OK, response.status)
@@ -636,16 +601,17 @@ class CompressionRoutesTest {
             assertNull(parsed.summaryTokens, "merge при WINDOW не выполняется")
             assertFalse(parsed.summaryApplied, "сводка при WINDOW не подставляется")
 
-            // DEFAULT-режим без maxTokens: системного промта режима нет —
-            // LLMCall = окно (5) + новый вопрос; запрос собирается ДО подрезки
+            // Агентная обработка: первый system — промт агента, последний —
+            // описание инструментов промт-протокола (supportsTools = false);
+            // между ними окно (5) + новый вопрос; запрос собирается ДО подрезки
             val ask = chat.calls.single().messages
-            assertEquals(6, ask.size)
+            assertEquals(1 + 5 + 1 + 1, ask.size)
             assertEquals(
                 listOf("вопрос 5", "ответ 5", "вопрос 6", "ответ 6", "вопрос 7"),
-                ask.dropLast(1).map { it.content!!.take(8).trimEnd() },
+                ask.drop(1).dropLast(2).map { it.content!!.take(8).trimEnd() },
                 "в запрос уходят ровно последние 5 сообщений"
             )
-            assertEquals("новый вопрос", ask.last().content)
+            assertEquals("новый вопрос", ask[ask.size - 2].content)
             assertFalse(ask.any { it.content.orEmpty().startsWith("вопрос 1") }, "внеоконные ходы в запрос не попадают")
             assertFalse(
                 ask.any { it.role == "tool" },
@@ -733,8 +699,8 @@ class CompressionRoutesTest {
             assertEquals("facts", parsed.contextStrategy, "echo стратегии в ответе")
 
             val ask = chat.calls.single().messages
-            assertEquals(1 + 3 + 1, ask.size, "блок фактов + окно 3 + новый вопрос")
-            val factsBlock = ask.first()
+            assertEquals(1 + 1 + 3 + 1 + 1, ask.size, "промт агента + блок фактов + окно 3 + новый вопрос + описание инструментов")
+            val factsBlock = ask[1]
             assertEquals("system", factsBlock.role)
             assertTrue(
                 factsBlock.content!!.startsWith("Известные факты о диалоге:"),
@@ -743,13 +709,13 @@ class CompressionRoutesTest {
             assertTrue(factsBlock.content!!.contains("- цель: проверить блок фактов"))
             assertTrue(factsBlock.content!!.contains("- язык: kotlin"))
 
-            val tail = ask.drop(1).dropLast(1)
+            val tail = ask.drop(2).dropLast(2)
             assertEquals(
                 listOf("вопрос 2", "ответ 2", "вопрос 3"),
                 tail.map { it.content!!.take(8).trimEnd() },
                 "после блока фактов — последние 3 сообщения"
             )
-            assertEquals("новый вопрос", ask.last().content)
+            assertEquals("новый вопрос", ask[ask.size - 2].content)
         }
     }
 
@@ -762,8 +728,11 @@ class CompressionRoutesTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             val ask = chat.calls.single().messages
-            assertEquals(3 + 1, ask.size, "пустые факты — пустой вклад, окно 3 + новый вопрос")
-            assertFalse(ask.any { it.role == "system" })
+            assertEquals(1 + 3 + 1 + 1, ask.size, "пустые факты — пустой вклад: промт агента, окно 3, новый вопрос, описание инструментов")
+            assertTrue(
+                ask.none { it.role == "system" && it.content!!.startsWith("Известные факты") },
+                "пустые факты — блока фактов в запросе нет"
+            )
         }
     }
 

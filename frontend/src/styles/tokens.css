@@ -1,0 +1,42 @@
+/* ============================================================
+   Токены «Приборной доски» — единственный блок :root.
+   Перенос дословно из src/main/resources/static/style.css:
+   значения и комментарии не менять.
+   ============================================================ */
+
+:root {
+    --ground: #16181c;          /* фон журнала */
+    --panel: #1e2127;           /* приборные пластины */
+    --panel-deep: #14161a;      /* тёмные полосы консоли */
+    --well: #101216;            /* утопленные колодцы цифр и ввода */
+    --bezel: #2c3038;           /* фаски и 1px-рамки */
+    --bezel-lit: #3d434d;       /* фаска под курсором */
+    --ink: #f3ecdc;             /* тёплый белый подсветки */
+    --ink-dim: #b8ad97;         /* приглушённый тёплый */
+    --ink-faint: #948b75;       /* подписи, выгравированные на панели */
+    --amber: #ffb347;           /* органы управления и активное состояние */
+    --amber-ink: #16130a;       /* текст на янтарной пластине */
+    --amber-soft: rgba(255, 179, 71, 0.16);
+    --green: #5fd68f;           /* табло-цифры и показания */
+    --red: #ff6b5e;             /* отказы */
+    --lamp-text: #ffdca6;       /* надпись клавиши, подсвеченная лампой из-под неё */
+    --lamp-warm: 255, 179, 71;  /* тот же янтарь в RGB — свечения разной плотности */
+    --lamp-green: #b9f2cd;      /* надпись под зелёной лампой (запросы в самописце) */
+    --lamp-cool: 95, 214, 143;  /* зелёный показаний (#5fd68f) в RGB — свечения */
+    --lamp-alarm: 255, 107, 94; /* красный отказов (#ff6b5e) в RGB — свечения */
+    --lamp-key-face: linear-gradient(180deg, var(--panel) 0%, var(--well) 100%);
+    --lamp-rgb: 255, 179, 71;   /* цвет активной лампы; клавиша с иной лампой переопределяет */
+    --lamp-face: radial-gradient(130% 100% at 50% 115%,
+            rgba(var(--lamp-rgb), 0.40) 0%, rgba(var(--lamp-rgb), 0.16) 55%, rgba(var(--lamp-rgb), 0.06) 100%),
+        var(--lamp-key-face);
+    --lamp-label-shadow: 0 0 1px rgba(var(--lamp-rgb), 0.95),
+        0 0 8px rgba(var(--lamp-rgb), 0.8), 0 0 18px rgba(var(--lamp-rgb), 0.45);
+    --lamp-glow: inset 0 0 11px rgba(var(--lamp-rgb), 0.30),
+        inset 0 1px 0 rgba(var(--lamp-rgb), 0.28), 0 0 13px rgba(var(--lamp-rgb), 0.22),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    --lamp-red: #ffb3aa;        /* надпись под красной лампой (клавиша сброса) */
+    --radius: 4px;
+    --mono: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "B612", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1);
+}

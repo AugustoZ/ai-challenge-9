@@ -12,7 +12,7 @@ sealed class StreamEvent {
     @SerialName("agent")
     data class Agent(val event: AgentEvent) : StreamEvent()
 
-    /** Текстовый статус этапа для не-агентных режимов («Судья проверяет ответ…»). */
+    /** Текстовый статус этапа обработки («Судья проверяет ответ…»). */
     @Serializable
     @SerialName("status")
     data class Status(val text: String) : StreamEvent()

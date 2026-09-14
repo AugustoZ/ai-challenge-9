@@ -127,11 +127,9 @@ data class FileProvider(
 @Serializable
 data class ChatRequest(
     val message: String,
-    /** Способ рассуждения: default | direct | step_by_step | prompt_to_prompt | team (null — default). */
-    val reasoningMode: String? = null,
     /** Провайдер LLM (id из /api/models); null или неизвестный — провайдер по умолчанию. */
     val provider: String? = null,
-    /** Идентификатор серверной сессии диалога; null — сервер создаст новую сессию для одиночных режимов. */
+    /** Идентификатор серверной сессии диалога; null — сервер создаст новую сессию. */
     val sessionId: String? = null,
     /** Выбранная в интерфейсе модель LLM (null или пусто — модель из конфигурации провайдера). */
     val model: String? = null,
@@ -180,7 +178,7 @@ data class ChatResponse(
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val branchId: String? = null,
-    /** Актуальный список фактов сессии (стратегия facts); пусто — фактов нет или режим stateless. */
+    /** Актуальный список фактов сессии (стратегия facts); пусто — фактов нет. */
     // @EncodeDefault(ALWAYS): пустой список должен присутствовать в JSON для клиентов
     // стратегии facts (панель фактов обновляется из ответа), а encodeDefaults=false
     // серверного Json иначе omitил бы значение по умолчанию.
@@ -191,11 +189,11 @@ data class ChatResponse(
     val elapsedMs: Long? = null,
     /** Заключение судьи (режим «Судья»); null — проверка не выполнялась. */
     val judge: JudgeReport? = null,
-    /** Идентификатор серверной сессии диалога; null — режим stateless (TEAM, Prompt-to-Prompt), история не ведётся. */
+    /** Идентификатор серверной сессии диалога; создаётся на каждый запрос. */
     val sessionId: String? = null,
     /** Сырые обмены с LLM, совершённые при обработке этого сообщения (для режима ТО). */
     val exchanges: List<ExchangeInfo> = emptyList(),
-    /** События хода работы агента (режим «Агент»); у остальных режимов пусто. */
+    /** События хода работы агента. */
     val events: List<AgentEvent> = emptyList()
 )
 

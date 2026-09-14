@@ -5,3 +5,7 @@ build/
 .idea/
 .DS_Store
 config.json
+.impeccable
+# Фронтенд (React/Vite)
+frontend/dist/
+frontend/node_modules/

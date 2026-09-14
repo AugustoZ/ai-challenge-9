@@ -10,8 +10,6 @@ import com.example.aiweb.client.LLMClient
 import com.example.aiweb.client.FactExtractor
 import com.example.aiweb.client.OpenAIFactExtractor
 import com.example.aiweb.client.OpenAIHistorySummarizer
-import com.example.aiweb.client.ReasoningPrompts
-import com.example.aiweb.client.TeamRole
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.ActivateBranchRequest
@@ -26,7 +24,6 @@ import com.example.aiweb.model.JudgeReport
 import com.example.aiweb.model.ModelsResponse
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.ProviderModels
-import com.example.aiweb.model.ReasoningMode
 import com.example.aiweb.model.SessionSummary
 import com.example.aiweb.model.SessionsCleared
 import com.example.aiweb.model.SessionsResponse
@@ -49,10 +46,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -62,14 +56,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-
-/** Режимы, ведущие серверную историю диалога; «Команда» и Prompt-to-Prompt остаются stateless. */
-private val HISTORY_MODES = setOf(
-    ReasoningMode.DEFAULT,
-    ReasoningMode.DIRECT,
-    ReasoningMode.STEP_BY_STEP,
-    ReasoningMode.AGENT
-)
 
 /**
  * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
@@ -93,7 +79,7 @@ fun Route.aiRoutes(
     val clients: Map<ProviderConfig, LLMClient> =
         config.providers.associateWith { clientFactory(it) }
 
-    // Серверная память диалога для одиночных режимов: без каталога данных (AI_DATA_DIR)
+    // Серверная память диалога: без каталога данных (AI_DATA_DIR)
     // — память процесса, с каталогом — файловое хранилище (маршруты не меняются)
     val sessions: SessionStore = store
 
@@ -175,18 +161,10 @@ fun Route.aiRoutes(
         val chat = resolveChat(config, clients, sessions, body)
 
         try {
-            val response = when (chat.mode) {
-                ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
-                ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
-                ReasoningMode.AGENT -> handleAgent(
-                    chat.aiClient, body, chat.provider, chat.session,
-                    sessions, config, compressors.getValue(chat.provider), registry
-                )
-                else -> handleSingle(
-                    chat.aiClient, body, chat.mode, chat.session,
-                    sessions, config, compressors.getValue(chat.provider)
-                )
-            }
+            val response = handleAgent(
+                chat.aiClient, body, chat.provider, chat.session,
+                sessions, config, compressors.getValue(chat.provider), registry
+            )
 
             call.respond(
                 finalizeResponse(
@@ -204,9 +182,8 @@ fun Route.aiRoutes(
     }
 
     // POST /api/chat/stream — тот же ChatRequest, что у /api/chat, но ответ отдаётся
-    // кадрами SSE (text/event-stream): живые события агента (или статус этапа для
-    // остальных режимов), затем ровно один кадр final с полным ChatResponse.
-    // Отмена прогона — POST /api/cancel по body.requestId.
+    // кадрами SSE (text/event-stream): живые события агента, затем ровно один кадр
+    // final с полным ChatResponse. Отмена прогона — POST /api/cancel по body.requestId.
     post("/api/chat/stream") {
         val body = call.receiveChatRequest() ?: return@post
         if (!call.validContextStrategy(body)) return@post
@@ -226,22 +203,11 @@ fun Route.aiRoutes(
             // писатель ниже параллельно вычитывает их в HTTP-поток (живой стрим)
             val processor = launch {
                 try {
-                    if (chat.mode != ReasoningMode.AGENT) {
-                        frames.trySend(StreamEvent.Status("Обрабатываю запрос…"))
-                    }
-                    val response = when (chat.mode) {
-                        ReasoningMode.TEAM -> handleTeam(chat.aiClient, body)
-                        ReasoningMode.PROMPT_TO_PROMPT -> handlePromptToPrompt(chat.aiClient, body)
-                        ReasoningMode.AGENT -> handleAgent(
-                            chat.aiClient, body, chat.provider, chat.session,
-                            sessions, config, compressors.getValue(chat.provider), registry
-                        ) { event ->
-                            frames.trySend(StreamEvent.Agent(event))
-                        }
-                        else -> handleSingle(
-                            chat.aiClient, body, chat.mode, chat.session,
-                            sessions, config, compressors.getValue(chat.provider)
-                        )
+                    val response = handleAgent(
+                        chat.aiClient, body, chat.provider, chat.session,
+                        sessions, config, compressors.getValue(chat.provider), registry
+                    ) { event ->
+                        frames.trySend(StreamEvent.Agent(event))
                     }
                     val finalized = finalizeResponse(
                         chat.aiClient, body, response, chat.session, sessions, startedAt,
@@ -547,10 +513,10 @@ private suspend fun ApplicationCall.validContextStrategy(body: ChatRequest): Boo
 
 /**
  * Явное переключение ветки запросом (ChatRequest.branchId, стратегия branching,
- * требование 5 дельты branching): выполняется ДО resolveChat, чтобы обработчики
- * получили уже активированный снимок сессии. Неизвестная ветка — 404 (ответ уже
+ * требование 5 дельты branching): выполняется ДО resolveChat, чтобы обработчик
+ * получил уже активированный снимок сессии. Неизвестная ветка — 404 (ответ уже
  * отправлен, вызывающий завершает маршрут). Без действий: branchId не указан,
- * stateless-режимы, стратегия не branching, сессии ещё нет (создастся новой).
+ * стратегия не branching, сессии ещё нет (создастся новой).
  */
 private suspend fun ApplicationCall.activateRequestedBranch(
     sessions: SessionStore,
@@ -558,7 +524,6 @@ private suspend fun ApplicationCall.activateRequestedBranch(
     config: AppConfig
 ): Boolean {
     if (body.branchId == null) return true
-    if (ReasoningMode.fromId(body.reasoningMode) !in HISTORY_MODES) return true
     val strategy = ContextStrategy.resolve(
         body.contextStrategy,
         body.compressionEnabled ?: config.compressionEnabled,
@@ -577,10 +542,9 @@ private suspend fun ApplicationCall.activateRequestedBranch(
 
 /**
  * Контекст запроса чата после общего препроцессинга /api/chat и /api/chat/stream:
- * выбранный режим, провайдер, его клиент LLM и сессия диалога.
+ * провайдер, его клиент LLM и сессия диалога.
  */
 private class ChatContext(
-    val mode: ReasoningMode,
     val provider: ProviderConfig,
     val aiClient: LLMClient,
     val session: Session?
@@ -590,7 +554,6 @@ private class ChatContext(
  * Хуки контекстных стратегий после ответа (общий пост-блок finalizeResponse):
  * разрешённая стратегия, экстрактор фактов провайдера (стратегия facts) и
  * размер окна хранилища (стратегия window).
- * Сессии без хуков — stateless-режимы.
  */
 private class ContextHooks(
     val strategy: ContextStrategy,
@@ -599,10 +562,9 @@ private class ContextHooks(
 )
 
 /**
- * Общий препроцессинг /api/chat и /api/chat/stream: выбор режима, провайдера,
- * клиента LLM и сессии диалога. Память диалога — только у режимов с историей:
- * без sessionId создаётся новая сессия, неизвестный/выселенный id тоже начинает
- * диалог заново; «Команда» и Prompt-to-Prompt остаются stateless.
+ * Общий препроцессинг /api/chat и /api/chat/stream: выбор провайдера, клиента LLM
+ * и сессии диалога. Память диалога есть у каждого запроса: без sessionId создаётся
+ * новая сессия, неизвестный/выселенный id тоже начинает диалог заново.
  */
 private fun resolveChat(
     config: AppConfig,
@@ -610,17 +572,11 @@ private fun resolveChat(
     sessions: SessionStore,
     body: ChatRequest
 ): ChatContext {
-    val mode = ReasoningMode.fromId(body.reasoningMode)
     val provider = config.provider(body.provider)
     return ChatContext(
-        mode = mode,
         provider = provider,
         aiClient = clients.getValue(provider),
-        session = if (mode in HISTORY_MODES) {
-            sessions.get(body.sessionId) ?: sessions.create()
-        } else {
-            null
-        }
+        session = sessions.get(body.sessionId) ?: sessions.create()
     )
 }
 
@@ -657,7 +613,7 @@ private suspend fun finalizeResponse(
     if (session != null) {
         sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
         // Трейс агента хранится на assistant-сообщении — фронтенд показывает его
-        // при восстановлении журнала (GET /api/session/{id}); у остальных режимов пусто
+        // при восстановлении журнала (GET /api/session/{id})
         sessions.append(
             session.id,
             OpenAIMessage(role = "assistant", content = response.reply, events = response.events)
@@ -713,119 +669,7 @@ private suspend fun finalizeResponse(
 }
 
 /**
- * Режимы с одним обращением к модели: по умолчанию, прямой ответ и пошаговое решение.
- * DEFAULT передаёт вопрос как есть — без системного промта режима (только при заданном
- * лимите токенов указывается бюджет ответа). Лимит maxTokens передаётся в API и
- * дополнительно указывается модели в системной инструкции, чтобы ответ не обрывался.
- *
- * Если передана серверная сессия [session], между system-промтом и новым вопросом
- * вставляется история диалога; идентификатор сессии возвращается в ChatResponse.sessionId.
- * System-сообщения в сессии не живут — они собираются в момент запроса.
- *
- * Сжатие истории — только при стратегии SUMMARY (legacy-компрессия):
- *  - merge выполняется СИНХРОННО до ответа модели: накопленное вне окна сжимается
- *    в сводку, слитые сообщения удаляются из хранилища, сессия перечитывается;
- *  - сбой суммаризатора чат не роняет: лог + прежний summary, summaryTokens=null;
- *  - вид запроса собирает планировщик контекста (view по стратегии: SUMMARY —
- *    planView, WINDOW — окно, FACTS — блок фактов + окно 3, OFF/BRANCHING — как
- *    есть), затем СТАДИЯ-2 — SessionHistory.trim ПОСЛЕ view (последний этап).
- */
-private suspend fun handleSingle(
-    aiClient: LLMClient,
-    body: ChatRequest,
-    mode: ReasoningMode,
-    session: Session?,
-    sessions: SessionStore,
-    config: AppConfig,
-    compressor: HistoryCompressor
-): ChatResponse {
-    val startSeq = ExchangeLog.mark()
-
-    // Стратегия контекста: явное поле запроса > legacy-флаг compressionEnabled
-    // (с его конфиг-фолбэком — прежняя семантика «compressionOn») > конфиг.
-    // Неизвестный id отсечён на входе маршрута (validContextStrategy — 400 до создания сессии).
-    val strategy = ContextStrategy.resolve(
-        body.contextStrategy,
-        body.compressionEnabled ?: config.compressionEnabled,
-        config.contextStrategy
-    ) ?: ContextStrategy.OFF
-
-    // 1) Синхронный merge до ответа — ТОЛЬКО при стратегии SUMMARY (legacy-компрессия).
-    //    runCatching: исключение суммаризатора — деградация (прежний summary остаётся),
-    //    а не падение чата. При остальных стратегиях merge не вызывается вовсе.
-    var mergeResult: MergeResult? = null
-    var viewSession: Session? = session
-    if (strategy == ContextStrategy.SUMMARY && session != null) {
-        mergeResult = runCatching { compressor.merge(session.summary, session.messages) }
-            .onFailure { e ->
-                println(
-                    "Компрессия истории сессии «${session.id}»: суммаризатор не сработал (${e.message}); " +
-                        "продолжаю без обновления сводки"
-                )
-            }
-            .getOrNull()
-        if (mergeResult != null) {
-            viewSession = sessions.applyCompressionResult(session.id, mergeResult.newSummary, mergeResult.removeCount)
-                ?: session
-        }
-    }
-
-    // 2) Вид запроса: планировщик контекста по стратегии (view — чистая функция,
-    //    хранилище не урезает), затем СТАДИЯ-2 SessionHistory.trim (последний этап).
-    val history = viewSession
-        ?.let {
-            SessionHistory.trim(
-                view(strategy, it.summary, it.messages, it.facts, compressor.windowSize, compressor),
-                body.maxTokens ?: 0
-            )
-        }
-        ?: emptyList()
-
-    val context = if (mode == ReasoningMode.DEFAULT) {
-        buildList {
-            ReasoningPrompts.budgetNote(body.maxTokens)?.let {
-                add(OpenAIMessage(role = "system", content = it))
-            }
-            addAll(history)
-            add(OpenAIMessage(role = "user", content = body.message))
-        }
-    } else {
-        buildList {
-            add(
-                OpenAIMessage(
-                    role = "system",
-                    content = ReasoningPrompts.withBudget(ReasoningPrompts.systemFor(mode), body.maxTokens)
-                )
-            )
-            addAll(history)
-            add(OpenAIMessage(role = "user", content = body.message))
-        }
-    }
-
-    val result = aiClient.ask(
-        LLMCall(
-            messages = context,
-            model = body.model,
-            maxTokens = body.maxTokens,
-            temperature = body.temperature,
-            topP = body.topP,
-            stop = body.stop,
-            thinkingEnabled = body.thinkingEnabled
-        )
-    )
-
-    return result.toResponse().copy(
-        sessionId = session?.id,
-        exchanges = ExchangeLog.since(startSeq),
-        summaryTokens = mergeResult?.tokens,
-        summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
-        contextStrategy = strategy.id,
-        branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null
-    )
-}
-
-/**
- * Режим «Агент»: AgentLoop итерирует модель с инструментами до финального ответа.
+ * Агентная обработка запроса: AgentLoop итерирует модель с инструментами до финального ответа.
  * Транспорт выбирается по возможностям провайдера: нативный function calling
  * (supportsTools = true) либо промт-протокол. Реестр инструментов [registry]
  * строится один раз в aiRoutes из раздела "tools" конфига. История сессии и цель
@@ -836,10 +680,9 @@ private suspend fun handleSingle(
  * шов стриминга (P1: живые кадры Agent в /api/chat/stream), вызывается для каждого
  * события в дополнение к коплению списка. В историю сессии попадают только
  * пользовательское сообщение и финальный ответ — промежуточный трафик инструментов
- * (общий пост-when блок после ответа) в память не пишет.
+ * (общий пост-блок finalizeResponse после ответа) в память не пишет.
  *
- * Сжатие истории — только при стратегии SUMMARY — та же схема, что в одиночных
- * режимах ([handleSingle]):
+ * Сжатие истории — только при стратегии SUMMARY (legacy-флаг с конфиг-фолбэком):
  *  - merge выполняется СИНХРОННО до запуска цикла; сбой суммаризатора — деградация
  *    (лог, прежний summary, summaryTokens=null), агентный прогон не падает;
  *  - seed цикла = view по стратегии из планировщика контекста (SUMMARY — планView
@@ -873,7 +716,7 @@ private suspend fun handleAgent(
     )
 
     // 1) Синхронный merge до запуска агентного цикла — ТОЛЬКО при стратегии SUMMARY
-    //    (как в handleSingle; legacy-флаг с конфиг-фолбэком): сбой суммаризатора —
+    //    (legacy-флаг с конфиг-фолбэком): сбой суммаризатора —
     //    деградация, а не падение прогона.
     val strategy = ContextStrategy.resolve(
         body.contextStrategy,
@@ -940,203 +783,7 @@ private suspend fun handleAgent(
 }
 
 /**
- * Режим «Команда»: Архитектор, Инженер и Исследователь решают задачу параллельно
- * (у каждого свой system-промт и набор навыков), затем отдельным вызовом строится
- * саммари сравнения их ответов.
- *
- * Лимит maxTokens трактуется как бюджет всего видимого ответа, поэтому делится
- * поровну на 4 вызова (3 роли + саммари); иначе суммарный объём превысил бы
- * установленный лимит в 4 раза. Токены всех вызовов суммируются.
- */
-private suspend fun handleTeam(aiClient: LLMClient, body: ChatRequest): ChatResponse =
-    coroutineScope {
-        val startSeq = ExchangeLog.mark()
-        val perCallBudget = body.maxTokens?.let { (it / 4).coerceAtLeast(1) }
-
-        val attempts: List<Pair<TeamRole, Result<ChatResult>>> =
-            ReasoningPrompts.TEAM_ROLES.map { teamRole ->
-                async {
-                    teamRole to runCatching {
-                        aiClient.ask(
-                            LLMCall(
-                                messages = listOf(
-                                    OpenAIMessage(
-                                        role = "system",
-                                        content = ReasoningPrompts.withBudget(teamRole.prompt, perCallBudget)
-                                    ),
-                                    OpenAIMessage(role = "user", content = body.message)
-                                ),
-                                model = body.model,
-                                maxTokens = perCallBudget,
-                                temperature = body.temperature,
-                                topP = body.topP,
-                                stop = body.stop,
-                                thinkingEnabled = body.thinkingEnabled
-                            )
-                        )
-                    }
-                }
-            }.awaitAll()
-
-        // Если не удалось ни одно из трёх обращений — отдаём ошибку как в одиночных режимах
-        val failures = attempts.mapNotNull { it.second.exceptionOrNull() }
-        if (failures.size == attempts.size) throw failures.first()
-
-        val answersBlock = attempts.joinToString("\n\n") { (teamRole, outcome) ->
-            val solution = outcome.fold(
-                onSuccess = { it.reply },
-                onFailure = { "Решение недоступно: участник вернул ошибку (${it.message})." }
-            )
-            "### Решение: ${teamRole.title}\n\n$solution"
-        }
-
-        val synthesis = runCatching {
-            aiClient.ask(
-                LLMCall(
-                    messages = listOf(
-                        OpenAIMessage(
-                            role = "system",
-                            content = ReasoningPrompts.withBudget(ReasoningPrompts.TEAM_SYNTHESIS_SYSTEM, perCallBudget)
-                        ),
-                        OpenAIMessage(
-                            role = "user",
-                            content = ReasoningPrompts.teamSynthesisUser(body.message, answersBlock)
-                        )
-                    ),
-                    model = body.model,
-                    maxTokens = perCallBudget,
-                    temperature = body.temperature,
-                    topP = body.topP,
-                    stop = body.stop,
-                    thinkingEnabled = body.thinkingEnabled
-                )
-            )
-        }
-
-        val reply = buildString {
-            attempts.forEach { (teamRole, outcome) ->
-                val solution = outcome.fold(
-                    onSuccess = { it.reply },
-                    onFailure = { "Решение недоступно: участник вернул ошибку (${it.message})." }
-                )
-                append("## ${teamRole.title}\n\n")
-                append(solution)
-                append("\n\n")
-            }
-            append("---\n\n## Саммари сравнения\n\n")
-            append(
-                synthesis.fold(
-                    onSuccess = { it.reply },
-                    onFailure = { "Саммари построить не удалось: ${it.message}." }
-                )
-            )
-        }
-
-        val results = attempts.map { it.second.getOrNull() } + synthesis.getOrNull()
-        ChatResponse(
-            reply = reply,
-            promptTokens = sumTokens(results.map { it?.promptTokens }),
-            completionTokens = sumTokens(results.map { it?.completionTokens }),
-            totalTokens = sumTokens(results.map { it?.totalTokens }),
-            exchanges = ExchangeLog.since(startSeq)
-        )
-    }
-
-/**
- * Режим Prompt-to-Prompt, два этапа:
- * 1) модель-инженер промтов формирует готовый промт для решения задачи;
- * 2) этот промт передаётся в LLM как обычный запрос, и её решение показывается
- *    пользователю вместе с самим промтом.
- * Лимит maxTokens делится пополам между этапами.
- */
-private suspend fun handlePromptToPrompt(aiClient: LLMClient, body: ChatRequest): ChatResponse {
-    val startSeq = ExchangeLog.mark()
-    val stageBudget = body.maxTokens?.let { (it / 2).coerceAtLeast(1) }
-
-    val stage1 = aiClient.ask(
-        LLMCall(
-            messages = listOf(
-                OpenAIMessage(
-                    role = "system",
-                    content = ReasoningPrompts.withBudget(
-                        ReasoningPrompts.systemFor(ReasoningMode.PROMPT_TO_PROMPT),
-                        stageBudget
-                    )
-                ),
-                OpenAIMessage(role = "user", content = body.message)
-            ),
-            model = body.model,
-            maxTokens = stageBudget,
-            temperature = body.temperature,
-            topP = body.topP,
-            stop = body.stop,
-            thinkingEnabled = body.thinkingEnabled
-        )
-    )
-
-    val generatedPrompt = extractPrompt(stage1.reply)
-
-    // Промт самодостаточен (роль, контекст, формат уже внутри него), поэтому из
-    // системных сообщений на втором этапе уходит только указание лимита токенов
-    val stage2Messages = ReasoningPrompts.budgetNote(stageBudget)
-        ?.let { listOf(OpenAIMessage(role = "system", content = it)) }
-        ?: emptyList()
-
-    val stage2 = runCatching {
-        aiClient.ask(
-            LLMCall(
-                messages = stage2Messages + OpenAIMessage(role = "user", content = generatedPrompt),
-                model = body.model,
-                maxTokens = stageBudget,
-                temperature = body.temperature,
-                topP = body.topP,
-                stop = body.stop,
-                thinkingEnabled = body.thinkingEnabled
-            )
-        )
-    }
-
-    val reply = buildString {
-        append("## Сгенерированный промт\n\n```text\n")
-        append(generatedPrompt)
-        append("\n```\n\n---\n\n## Ответ модели\n\n")
-        append(
-            stage2.fold(
-                onSuccess = { it.reply },
-                onFailure = { "Решение по промту получить не удалось: ${it.message}." }
-            )
-        )
-    }
-
-    val results = listOf(stage1, stage2.getOrNull())
-    return ChatResponse(
-        reply = reply,
-        promptTokens = sumTokens(results.map { it?.promptTokens }),
-        completionTokens = sumTokens(results.map { it?.completionTokens }),
-        totalTokens = sumTokens(results.map { it?.totalTokens }),
-        exchanges = ExchangeLog.since(startSeq)
-    )
-}
-
-/**
- * Достаёт промт из блока кода (```text ... ```), который требует формировать
- * режим Prompt-to-Prompt; если блока нет — использует ответ как есть.
- */
-private fun extractPrompt(reply: String): String =
-    Regex("```[^\\n]*\\n?([\\s\\S]*?)```")
-        .find(reply)
-        ?.groupValues
-        ?.get(1)
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() }
-        ?: reply.trim()
-
-/** Суммирует значения токенов; null, если API не вернул ни одного значения. */
-private fun sumTokens(values: List<Int?>): Int? =
-    values.filterNotNull().takeIf { it.isNotEmpty() }?.sum()
-
-/**
- * Режим «Судья»: готовый ответ перепроверяется отдельным вызовом LLM.
+ * Контрольная проверка готового ответа отдельным вызовом LLM («Судья»).
  * Судья получает вопрос, ответ и приборные замеры (время, токены) и оценивает
  * факты, качество, скорость и ресурсоёмкость. Срыв проверки не роняет основной
  * ответ — вместо заключения возвращается отчёт с указанием причины.

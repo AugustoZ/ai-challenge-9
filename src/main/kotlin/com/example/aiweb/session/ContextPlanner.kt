@@ -14,7 +14,7 @@ private const val FACTS_HEADER = "Известные факты о диалог�
  * Чистый планировщик контекста запроса (задача 4): собирает вид истории для
  * модели по стратегии [ContextStrategy]. История сессии никогда не урезается —
  * view только формирует срез запроса; капы поверх view применяет вызывающий
- * ([SessionHistory.trim] — стадия-2 в handleSingle/handleAgent).
+ * ([SessionHistory.trim] — стадия-2 в handleAgent).
  *
  * Стратегии:
  *  - OFF, BRANCHING → [messages] как есть (полное активное состояние);
