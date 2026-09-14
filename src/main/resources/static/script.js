@@ -2084,9 +2084,9 @@ async function loadBranches(id) {
 }
 
 /* Клавиша ручной развилки в конце ряда чипов: пользовательский чекпоинт
-   активного состояния в новую ветку-близнец — поверх авто-форка, по клику.
-   Та же формула клавиши, что у чипов; видна, только когда бар виден
-   (стратегия «Ветки», зеркала нет). */
+   активного состояния в новую ветку-близнец, по клику. Та же формула
+   клавиши, что у чипов; видна, только когда бар виден (стратегия
+   «Ветки», зеркала нет). */
 function buildAddBranchButton() {
     const add = document.createElement('button');
     add.type = 'button';
@@ -2103,8 +2103,8 @@ function buildAddBranchButton() {
 
 /* Ручная развилка: POST /api/session/{id}/branches создаёт близнец-ветку
    со снимком активного состояния и НЕ переключает её — активной остаётся
-   текущая ветка, как и после авто-форка. Один клик — одна ветка; веток
-   можно завести несколько и жить в них параллельно. */
+   текущая ветка. Один клик — одна ветка; веток можно завести несколько
+   и жить в них параллельно. */
 async function addBranch() {
     if (!sessionId) return;
 
@@ -2407,11 +2407,6 @@ async function sendTwinStream(side, requestData) {
                 case 'status':
                     setStreamStatus(`${MIRROR_STRATEGY_LABELS[sideStrategy(side)]}: ${typeof event.text === 'string' ? event.text : ''}`);
                     return false;
-                case 'checkpoint':
-                    /* В зеркале ветвление подавлено — кадр не должен прийти.
-                       Явный кейс для читаемости: молча игнорируем, маркер в
-                       колонки не рендерим, поток не завершаем */
-                    return false;
                 case 'final':
                     if (event.response && typeof event.response === 'object') {
                         applyTwinResponse(side, event.response);
@@ -2553,9 +2548,8 @@ function applyChatResponse(data) {
     }
     // Факты из ответа (стратегия «Факты») — в панель, если она на виду
     updateFactsPanel(data);
-    // Ветки: авто-форк мог произойти (кадр checkpoint) или смениться активная
-    // ветка. Отзыв по стратегии, не только по branchId: после первого форка
-    // корень остаётся активным и branchId в ответе держится null
+    // Ветки: могла смениться активная ветка. Отзыв по стратегии, а не только
+    // по branchId — под «Ветками» счётчики чипов пересчитываются каждым ходом
     if (data.branchId != null) {
         activeBranchId = data.branchId;
     }
@@ -2649,15 +2643,6 @@ async function sendChatStream(requestData, requestId) {
                 if (event.event && typeof event.event === 'object') {
                     appendLiveAgentEvent(ensureLiveTrace(), event.event);
                 }
-                return false;
-            case 'checkpoint':
-                /* Развилка: служебная запись в журнал и перечитывание чипов.
-                   Активной строкой остаётся корень — активная ветка меняется
-                   только явной активацией. Кадр НЕ завершает поток: за ним
-                   придёт final (семантика status-кадра) */
-                addSystemMessage('─ Развилка: создана '
-                    + (typeof event.label === 'string' && event.label ? event.label : 'ветка') + ' ─');
-                loadBranches(sessionId);
                 return false;
             case 'final':
                 hideTyping();

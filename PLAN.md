@@ -272,18 +272,17 @@ summary более старшей истории (один merge на все н�
 
 ## Стратегии управления контекстом (выполнено, ветка lesson-10)
 
-Обобщение тумблера «Сжатие истории» в единый переключатель из пяти позиций —
+Обобщение тумблера «Сжатия истории» в единый переключатель из пяти позиций —
 **Выкл / Окно / Сводка / Факты / Ветки**: выбор, как формируется контекст
 запроса, вынесен в явное поле; зеркальный режим обобщён до «стратегия на
 колонку». «Сводка» — rolling summary прошлой итерации (consume-and-store,
 байт-в-байт); Окно и Факты — view (Окно после каждого успешного обмена
 деструктивно подрезает хранилище до windowSize — изменение семантики,
 согласовано пользователем post-completion; Факты — недеструктивный view);
-Ветки — авто-форк близнец-ветки
-каждые `branchCheckpointEvery` (default 5) user-сообщений, кап 8 снимков.
-Post-completion (согласовано пользователем): ручная развилка — чекпоинт по
-кнопке «+ Развилка» (эндпоинт `POST /api/session/{id}/branches`): снимок
-активного состояния в новую ветку без переключения, кап 8 → 409.
+Ветки — ручные развилки по кнопке «+ Развилка» (эндпоинт
+`POST /api/session/{id}/branches`): чекпоинт активного состояния в новую
+ветку без переключения, кап 8 снимков; авто-форк по счётчику сообщений
+удалён post-completion по запросу пользователя.
 
 **Дельты change `add-context-strategies`:** `context-strategy-switcher`,
 `sliding-window`, `facts-memory`, `branching`, `comparison-mode`.
@@ -291,17 +290,17 @@ Post-completion (согласовано пользователем): ручна�
 **Файлы:** новый `model/ContextStrategy.kt` (enum + `fromId`/`resolve`),
 `model/Models.kt` (`ChatRequest.contextStrategy`/`branchId`,
 `ChatResponse.contextStrategy`/`branchId`/`facts`, `Fact`,
-`ActivateBranchRequest`, `BranchInfo`, `BranchesResponse`), `model/StreamEvents.kt`
-(событие `checkpoint`), `session/SessionStore.kt` + `session/FileSessionStore.kt`
+`ActivateBranchRequest`, `BranchInfo`, `BranchesResponse`), `model/StreamEvents.kt`,
+`session/SessionStore.kt` + `session/FileSessionStore.kt`
 (`Branch`, `Session.branches`/`activeBranchId`/`branchSeq`/`facts`, операции
 fork/activate/setFacts, back-compat старых JSON), новый `session/ContextPlanner.kt`
 (view по разрешённой стратегии; `sliceWindow` извлечён в свободную функцию), новый
 `client/FactPrompts.kt` + `client/FactExtractor.kt` (seam-factory по образцу
 `summarizerFactory`), `config/AppConfig.kt` + `model/FileConfig`
-(`contextStrategy`, `branchCheckpointEvery`), `routes/Routes.kt` (разрешение
-стратегии, экстракция фактов после ответа, авто-форк, эндпоинты
-`GET /api/session/{id}/branches` / `POST /api/session/{id}/branches/activate`,
-SSE `checkpoint`), статика (`index.html`, `script.js`, `style.css`:
+(`contextStrategy`), `routes/Routes.kt` (разрешение
+стратегии, экстракция фактов после ответа, ручная развилка, эндпоинты
+`GET /api/session/{id}/branches` / `POST /api/session/{id}/branches/activate`),
+статика (`index.html`, `script.js`, `style.css`:
 переключатель 5 позиций, read-only панель фактов, маркеры развилок, плоский
 селектор веток, зеркало «стратегия на колонку»), `scripts/mock-llm.py`
 (маркер «Извлечение фактов»), `config.example.json`.
@@ -316,13 +315,11 @@ SSE `checkpoint`), статика (`index.html`, `script.js`, `style.css`:
   Выкл/Факты теряет историю за окном (уже удалена consume-and-store или
   подрезкой окна), накопленная сводка в view
   других стратегий не подставляется — задокументировано как известная асимметрия.
-- **Авто-форк после завершения ответа** — форк срабатывает, когда ассистент
-  завершил ответ и в активную ветку добавлен N-й user-месседж с момента её
-  происхождения; унаследованный префикс близнеца в счётчик не входит (иначе
-  каскадный форк).
+- **Ветки — только вручную** — близнец-ветку создаёт исключительно кнопка
+  «+ Развилка» (пост-эндпоинт снимка активного состояния); авто-форк
+  по счётчику user-сообщений удалён по запросу пользователя.
 - **Зеркало подавляет ветвление** — twin-сессии никогда не получают стратегию
-  branching: авто-форк в зеркале не срабатывает, маркеров `checkpoint` в
-  twin-стримах нет.
+  branching: ветвление в зеркале недоступно, панель веток скрыта.
 - **Team и Prompt-to-Prompt** — стратегия no-op (stateless-путь), как компрессия
   в прошлой итерации.
 

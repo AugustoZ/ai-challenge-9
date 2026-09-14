@@ -122,8 +122,7 @@ class CompressionRoutesTest {
         enabled: Boolean = false,
         window: Int = 5,
         mergeEvery: Int = 5,
-        maxTokens: Int = 400,
-        branchCheckpointEvery: Int = 5
+        maxTokens: Int = 400
     ) = AppConfig(
         port = 0,
         default = ProviderConfig(
@@ -137,8 +136,7 @@ class CompressionRoutesTest {
         compressionEnabled = enabled,
         compressionWindowSize = window,
         compressionMergeEvery = mergeEvery,
-        compressionSummaryMaxTokens = maxTokens,
-        branchCheckpointEvery = branchCheckpointEvery
+        compressionSummaryMaxTokens = maxTokens
     )
 
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
@@ -893,41 +891,30 @@ class CompressionRoutesTest {
     // --- 10. Интеграция (задача 6): авто-форк, эндпоинты веток, SSE checkpoint ---
 
     @Test
-    fun `branching - пять сообщений дают развилку, ещё пять дают вторую, близнецы не форкают себя`() {
+    fun `branching - семь сообщений подряд - веток нет, только живой корень`() {
         withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
             var sid: String? = null
-            repeat(5) { index ->
+            repeat(6) { index ->
                 val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
                 assertEquals(HttpStatusCode.OK, response.status)
                 if (sid == null) sid = response.json().sessionId
             }
             val id = sid!!
 
-            val afterFive = getBranches(id)
-            assertEquals(HttpStatusCode.OK, afterFive.status)
-            val five = afterFive.branchesView()
-            assertEquals(2, five.branches.size, "после 5-го сообщения создана близнец-ветка")
-            assertTrue(five.branches[0].active, "живое состояние — первой записью, active=true")
-            assertEquals(5, five.branches[0].userCountSinceFork, "у живого состояния 5 user-сообщений от начала")
-            val twin = five.branches[1]
-            assertEquals("b1", twin.branchId)
-            assertEquals("Ветка 1", twin.label)
-            assertEquals(0, twin.userCountSinceFork, "у близнеца 0 user-сообщений после создания")
-            assertFalse(twin.active)
+            // Седьмой ход — стримом: кадра checkpoint в потоке больше не существует
+            val stream = postChatStream("вопрос 7", id, contextStrategy = "branching")
+            assertEquals(HttpStatusCode.OK, stream.status)
+            val types = stream.sseFrames().map { it["type"]?.jsonPrimitive?.content }
+            assertTrue("checkpoint" !in types, "кадра checkpoint нет в потоке: $types")
+            assertTrue("final" in types, "поток завершается кадром final: $types")
 
-            repeat(5) { index ->
-                val response = postChat("вопрос ${index + 6}", id, contextStrategy = "branching")
-                assertEquals(HttpStatusCode.OK, response.status)
-            }
-
-            val afterTen = getBranches(id).branchesView()
-            assertEquals(3, afterTen.branches.size, "10-е сообщение создаёт вторую развилку")
-            assertTrue(afterTen.branches[0].active, "живое состояние по-прежнему первой")
-            assertTrue(
-                afterTen.branches.drop(1).all { it.userCountSinceFork == 0 },
-                "близнецы никогда не форкают себя: счётчики снимков остаются нулевыми"
-            )
-            assertTrue(afterTen.branches.any { it.branchId == "b1" && it.label == "Ветка 1" })
+            // Регрессия авто-форка: обменов сколько угодно — ветки создаёт только ручная развилка
+            val view = getBranches(id).branchesView()
+            assertEquals(1, view.branches.size, "в перечне только живое состояние — близнецов нет")
+            assertTrue(view.branches[0].active)
+            assertNull(view.branches[0].branchId, "активна исходная история")
+            assertEquals(7, view.branches[0].userCountSinceFork)
+            assertTrue(sessions.get(id)!!.branches.isEmpty(), "в хранилище нет ни одного снимка-ветки")
         }
     }
 
@@ -935,11 +922,13 @@ class CompressionRoutesTest {
     fun `activate - переключение возвращает снимок ветки как активную сессию`() {
         withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
             var sid: String? = null
-            repeat(5) { index ->
+            repeat(2) { index ->
                 val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
                 if (sid == null) sid = response.json().sessionId
             }
             val id = sid!!
+            val forked = forkBranch(id)
+            assertEquals(HttpStatusCode.OK, forked.status, "ветку b1 создаёт ручная развилка")
 
             val activated = activateBranch(id, "b1")
             assertEquals(HttpStatusCode.OK, activated.status)
@@ -975,11 +964,13 @@ class CompressionRoutesTest {
     fun `branchId в запросе - переключает ветку до обработки, неизвестная ветка - 404`() {
         withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
             var sid: String? = null
-            repeat(5) { index ->
+            repeat(2) { index ->
                 val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
                 if (sid == null) sid = response.json().sessionId
             }
             val id = sid!!
+            val forked = forkBranch(id)
+            assertEquals(HttpStatusCode.OK, forked.status, "ветку b1 создаёт ручная развилка")
 
             val switched = postChat("вопрос в ветке", id, contextStrategy = "branching", branchId = "b1")
             assertEquals(HttpStatusCode.OK, switched.status)
@@ -990,50 +981,6 @@ class CompressionRoutesTest {
             val unknown = postChat("вопрос", id, contextStrategy = "branching", branchId = "нет")
             assertEquals(HttpStatusCode.NotFound, unknown.status, "неизвестная ветка — 404")
             assertEquals(before, sessions.get(id)!!.messages.size, "404 — обработка не началась, история не пишется")
-        }
-    }
-
-    @Test
-    fun `branching стрим - пятый вопрос - кадр checkpoint до final, поток не оборван`() {
-        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
-            var sid: String? = null
-            repeat(4) { index ->
-                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
-                if (sid == null) sid = response.json().sessionId
-            }
-            val id = sid!!
-
-            val stream = postChatStream("вопрос 5", id, contextStrategy = "branching")
-            assertEquals(HttpStatusCode.OK, stream.status)
-            val frames = stream.sseFrames()
-            val types = frames.map { it["type"]?.jsonPrimitive?.content }
-            val checkpointIndex = types.indexOf("checkpoint")
-            val finalIndex = types.indexOf("final")
-            assertTrue(checkpointIndex >= 0, "кадр checkpoint присутствует в потоке: $types")
-            assertTrue(finalIndex > checkpointIndex, "final приходит ПОСЛЕ checkpoint — поток не оборван: $types")
-
-            val checkpoint = frames[checkpointIndex]
-            assertEquals("b1", checkpoint["branchId"]?.jsonPrimitive?.content)
-            assertEquals("Ветка 1", checkpoint["label"]?.jsonPrimitive?.content)
-            assertEquals(5, checkpoint["forkUserCount"]?.jsonPrimitive?.int, "провенанс близнеца — 5 user-сообщений")
-        }
-    }
-
-    @Test
-    fun `кап веток - восемь близнецов созданы, девятый форк пропущен без ошибки`() {
-        withApp(config(enabled = false, window = 5, mergeEvery = 100, branchCheckpointEvery = 1)) {
-            var sid: String? = null
-            var last: HttpResponse? = null
-            repeat(9) { index ->
-                val response = postChat("вопрос ${index + 1}", sid, contextStrategy = "branching")
-                assertEquals(HttpStatusCode.OK, response.status, "форк сверх капа не ломает ответ")
-                if (sid == null) sid = response.json().sessionId
-                last = response
-            }
-            val id = sid!!
-            assertEquals(HttpStatusCode.OK, last!!.status)
-            assertEquals(8, sessions.get(id)!!.branches.size, "создано ровно 8 близнецов — кап MAX_BRANCHES")
-            assertEquals(9, getBranches(id).branchesView().branches.size, "8 снимков плюс живое состояние")
         }
     }
 

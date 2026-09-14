@@ -42,8 +42,6 @@ data class FileConfig(
     val compressionSummaryMaxTokens: Int? = null,
     /** Стратегия формирования контекста: off | window | summary | facts | branching (отсутствует — off). */
     val contextStrategy: String = "off",
-    /** Каждое сколько-е user-сообщение создавать чекпоинт ветки (≥ 1). */
-    val branchCheckpointEvery: Int = 5,
     /**
      * Раздел инструментов: вкл/выкл встроенных и подключение sandbox-инструментов
      * (исполнение кода и чтение файлов в изолированном контейнере).

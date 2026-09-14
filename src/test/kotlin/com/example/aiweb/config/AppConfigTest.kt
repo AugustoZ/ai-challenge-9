@@ -267,21 +267,21 @@ class AppConfigTest {
     // --- Стратегии контекста: конфиг ---
 
     @Test
-    fun `дефолты стратегии контекста — off и чекпоинты каждые 5 сообщений`() {
+    fun `дефолт стратегии контекста — off`() {
         val config = AppConfig.fromFile("несуществующий-конфиг.json")
 
         assertEquals(ContextStrategy.OFF, config.contextStrategy)
-        assertEquals(5, config.branchCheckpointEvery)
     }
 
     @Test
-    fun `старый JSON без ключей стратегии парсится с дефолтами`() {
+    fun `старый JSON без ключей стратегии (и с удалённым branchCheckpointEvery) парсится с дефолтами`() {
         val path = writeConfig(
             """
             {
               "port": 8080,
               "apiUrl": "https://old.example/v1",
-              "model": "old-model"
+              "model": "old-model",
+              "branchCheckpointEvery": 2
             }
             """.trimIndent()
         )
@@ -289,8 +289,8 @@ class AppConfigTest {
         val config = AppConfig.fromFile(path)
 
         assertEquals(ContextStrategy.OFF, config.contextStrategy, "отсутствие ключа — off")
-        assertEquals(5, config.branchCheckpointEvery, "отсутствие ключа — 5")
         assertEquals("old-model", config.default.model, "старые поля читаются как раньше")
+        assertEquals(8080, config.port, "удалённый ключ branchCheckpointEvery игнорируется — старые конфиги грузятся")
     }
 
     @Test
@@ -298,8 +298,7 @@ class AppConfigTest {
         val path = writeConfig(
             """
             {
-              "contextStrategy": "facts",
-              "branchCheckpointEvery": 3
+              "contextStrategy": "facts"
             }
             """.trimIndent()
         )
@@ -307,7 +306,6 @@ class AppConfigTest {
         val config = AppConfig.fromFile(path)
 
         assertEquals(ContextStrategy.FACTS, config.contextStrategy)
-        assertEquals(3, config.branchCheckpointEvery)
     }
 
     @Test
@@ -322,17 +320,6 @@ class AppConfigTest {
         assertTrue(
             "sliding" in error.message!!,
             "сообщение должно называть невалидное значение: ${error.message}"
-        )
-    }
-
-    @Test
-    fun `branchCheckpointEvery меньше 1 — падение валидации`() {
-        val path = writeConfig("""{"branchCheckpointEvery": 0}""")
-
-        val error = assertFailsWith<IllegalArgumentException> { AppConfig.fromFile(path) }
-        assertTrue(
-            "branchCheckpointEvery" in error.message!!,
-            "сообщение должно называть ключ: ${error.message}"
         )
     }
 

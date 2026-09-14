@@ -124,9 +124,9 @@ fun Route.aiRoutes(
     // (отключённые в конфиге инструменты не видны модели)
     val registry = ToolRegistry.forConfig(config.tools)
 
-    // Хуки контекстных стратегий после ответа (экстракция фактов / авто-форк):
-    // стратегия разрешается по тому же приоритету, что в обработчиках; экстрактор —
-    // фабричный шов провайдера, параметры авто-форка — из конфига
+    // Хуки контекстных стратегий после ответа (экстракция фактов / подрезка
+    // окна): стратегия разрешается по тому же приоритету, что в обработчиках;
+    // экстрактор — фабричный шов провайдера
     fun contextHooks(provider: ProviderConfig, body: ChatRequest): ContextHooks = ContextHooks(
         strategy = ContextStrategy.resolve(
             body.contextStrategy,
@@ -134,7 +134,6 @@ fun Route.aiRoutes(
             config.contextStrategy
         ) ?: ContextStrategy.OFF,
         factExtractor = factExtractors.getValue(provider),
-        branchCheckpointEvery = config.branchCheckpointEvery,
         windowSize = config.compressionWindowSize
     )
 
@@ -246,8 +245,7 @@ fun Route.aiRoutes(
                     }
                     val finalized = finalizeResponse(
                         chat.aiClient, body, response, chat.session, sessions, startedAt,
-                        hooks = contextHooks(chat.provider, body),
-                        onCheckpoint = { frames.trySend(it) }
+                        hooks = contextHooks(chat.provider, body)
                     ) { status ->
                         frames.trySend(StreamEvent.Status(status))
                     }
@@ -349,10 +347,10 @@ fun Route.aiRoutes(
 
     // POST /api/session/{id}/branches — ручная развилка (чекпоинт по кнопке):
     // снимок текущего активного состояния (messages, summary, facts) в новую
-    // ветку-близнец «Ветка <seq>»; активное состояние не меняется, авто-форк
-    // остаётся самостоятельным (каждые branchCheckpointEvery). Ответ — запись
-    // созданной ветки (форма BranchInfo, active=false). Неизвестная сессия —
-    // 404, достигнут кап веток — 409. Тела запроса нет
+    // ветку-близнец «Ветка <seq>»; активное состояние не меняется. Единственный
+    // способ создать ветку: автоматических форков по счётчику сообщений нет.
+    // Ответ — запись созданной ветки (форма BranchInfo, active=false).
+    // Неизвестная сессия — 404, достигнут кап веток — 409. Тела запроса нет
     post("/api/session/{id}/branches") {
         val sessionId = call.parameters["id"] ?: ""
         if (sessions.get(sessionId) == null) {
@@ -590,14 +588,13 @@ private class ChatContext(
 
 /**
  * Хуки контекстных стратегий после ответа (общий пост-блок finalizeResponse):
- * разрешённая стратегия, экстрактор фактов провайдера (стратегия facts), период
- * авто-форка (стратегия branching) и размер окна хранилища (стратегия window).
+ * разрешённая стратегия, экстрактор фактов провайдера (стратегия facts) и
+ * размер окна хранилища (стратегия window).
  * Сессии без хуков — stateless-режимы.
  */
 private class ContextHooks(
     val strategy: ContextStrategy,
     val factExtractor: FactExtractor?,
-    val branchCheckpointEvery: Int,
     val windowSize: Int
 )
 
@@ -636,16 +633,13 @@ private fun resolveChat(
  *
  * [hooks] — контекстные стратегии после ответа (задача 6): при стратегии facts —
  * экстракция фактов по новому сообщению (сбой — деградация: прежние факты, ответ
- * не падает), при branching — авто-форк близнеца по счётчику user-сообщений
- * активной ветки (кап — форк пропущен без ошибки), при window — деструктивная
- * подрезка хранилища до последних windowSize сообщений (store-операция
- * [SessionStore.applyWindow]; запрос ТЕКУЩЕГО обмена уже собран до этого блока,
- * подрезка влияет только на следующие ходы). Путь «Сводки» здесь не задет:
- * merge/applyCompressionResult выполняются в обработчиках до этого блока.
- *
- * [onCheckpoint] — шов стриминга: кадр Checkpoint об успешном форке уходит в поток
- * ДО final (поток не завершает); в блокирующем /api/chat остаётся пустым —
- * ветка сообщается только echo-полем ChatResponse.branchId.
+ * не падает), при window — деструктивная подрезка хранилища до последних
+ * windowSize сообщений (store-операция [SessionStore.applyWindow]; запрос
+ * ТЕКУЩЕГО обмена уже собран до этого блока, подрезка влияет только на
+ * следующие ходы). Ветки хуков не имеют: ветка создаётся только ручной
+ * развилкой (POST /api/session/{id}/branches), после ответа ничего не форкается.
+ * Путь «Сводки» здесь не задет: merge/applyCompressionResult выполняются
+ * в обработчиках до этого блока.
  *
  * [onStatus] — шов стриминга: уведомление «Судья проверяет ответ…» уходит в поток
  * кадром Status до начала проверки; в блокирующем /api/chat остаётся пустым.
@@ -658,7 +652,6 @@ private suspend fun finalizeResponse(
     sessions: SessionStore,
     startedAt: Long,
     hooks: ContextHooks? = null,
-    onCheckpoint: suspend (StreamEvent.Checkpoint) -> Unit = {},
     onStatus: suspend (String) -> Unit = {}
 ): ChatResponse {
     if (session != null) {
@@ -694,30 +687,6 @@ private suspend fun finalizeResponse(
                 .getOrNull()
             if (extracted != null) {
                 sessions.setFacts(session.id, extracted)
-            }
-        }
-
-        // «Ветки»: счётчик user-сообщений активной ветки с момента её происхождения
-        // (для исходной истории — от начала диалога); кратный checkpointEvery — форк
-        if (hooks.strategy == ContextStrategy.BRANCHING) {
-            val fresh = sessions.get(session.id) ?: session
-            val originFork = fresh.activeBranchId
-                ?.let { activeId -> fresh.branches.firstOrNull { it.branchId == activeId }?.forkUserCount }
-                ?: 0
-            val counter = fresh.messages.count { it.role == "user" } - originFork
-            if (counter > 0 && counter % hooks.branchCheckpointEvery == 0) {
-                val twin = sessions.forkTwin(session.id)
-                if (twin != null) {
-                    onCheckpoint(
-                        StreamEvent.Checkpoint(
-                            branchId = twin.branchId,
-                            label = twin.label,
-                            forkUserCount = twin.forkUserCount
-                        )
-                    )
-                } else {
-                    println("Ветки сессии «${session.id}»: достигнут кап — авто-форк пропущен")
-                }
             }
         }
     }

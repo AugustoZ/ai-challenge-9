@@ -85,8 +85,6 @@ data class AppConfig(
      * legacy-флага. Только конфиг-файл: переменных окружения нет.
      */
     val contextStrategy: ContextStrategy = ContextStrategy.OFF,
-    /** Каждое сколько-е user-сообщение создавать чекпоинт ветки (≥ 1). */
-    val branchCheckpointEvery: Int = 5,
     /**
      * Сырое значение ключа contextStrategy из конфиг-файла — только для
      * fail-fast в [validate]: невалидная строка падает стартом. null — ключ
@@ -213,8 +211,7 @@ data class AppConfig(
                 compressionMergeEvery = fc.compressionMergeEvery ?: compressionMergeEvery,
                 compressionSummaryMaxTokens = fc.compressionSummaryMaxTokens ?: compressionSummaryMaxTokens,
                 contextStrategy = ContextStrategy.fromId(fc.contextStrategy) ?: contextStrategy,
-                contextStrategyRaw = fc.contextStrategy,
-                branchCheckpointEvery = fc.branchCheckpointEvery ?: branchCheckpointEvery
+                contextStrategyRaw = fc.contextStrategy
             )
         }
 
@@ -239,10 +236,6 @@ data class AppConfig(
             require(contextStrategyRaw == null || ContextStrategy.fromId(contextStrategyRaw) != null) {
                 "contextStrategy: неизвестная стратегия '$contextStrategyRaw' " +
                     "(допустимо: ${ContextStrategy.values().joinToString(", ") { it.id }})"
-            }
-            require(branchCheckpointEvery >= 1) {
-                "branchCheckpointEvery должен быть не меньше 1 (получено: $branchCheckpointEvery) — " +
-                    "частота чекпоинтов ветки не может быть нулевой"
             }
             return this
         }
