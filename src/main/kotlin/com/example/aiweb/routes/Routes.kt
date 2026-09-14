@@ -134,7 +134,8 @@ fun Route.aiRoutes(
             config.contextStrategy
         ) ?: ContextStrategy.OFF,
         factExtractor = factExtractors.getValue(provider),
-        branchCheckpointEvery = config.branchCheckpointEvery
+        branchCheckpointEvery = config.branchCheckpointEvery,
+        windowSize = config.compressionWindowSize
     )
 
     // GET /api/log — сырой протокол обменов с моделью (самописец)
@@ -560,13 +561,15 @@ private class ChatContext(
 
 /**
  * Хуки контекстных стратегий после ответа (общий пост-блок finalizeResponse):
- * разрешённая стратегия, экстрактор фактов провайдера (стратегия facts) и период
- * авто-форка (стратегия branching). Сессии без хуков — stateless-режимы.
+ * разрешённая стратегия, экстрактор фактов провайдера (стратегия facts), период
+ * авто-форка (стратегия branching) и размер окна хранилища (стратегия window).
+ * Сессии без хуков — stateless-режимы.
  */
 private class ContextHooks(
     val strategy: ContextStrategy,
     val factExtractor: FactExtractor?,
-    val branchCheckpointEvery: Int
+    val branchCheckpointEvery: Int,
+    val windowSize: Int
 )
 
 /**
@@ -605,7 +608,10 @@ private fun resolveChat(
  * [hooks] — контекстные стратегии после ответа (задача 6): при стратегии facts —
  * экстракция фактов по новому сообщению (сбой — деградация: прежние факты, ответ
  * не падает), при branching — авто-форк близнеца по счётчику user-сообщений
- * активной ветки (кап — форк пропущен без ошибки). Путь «Сводки» здесь не задет:
+ * активной ветки (кап — форк пропущен без ошибки), при window — деструктивная
+ * подрезка хранилища до последних windowSize сообщений (store-операция
+ * [SessionStore.applyWindow]; запрос ТЕКУЩЕГО обмена уже собран до этого блока,
+ * подрезка влияет только на следующие ходы). Путь «Сводки» здесь не задет:
  * merge/applyCompressionResult выполняются в обработчиках до этого блока.
  *
  * [onCheckpoint] — шов стриминга: кадр Checkpoint об успешном форке уходит в поток
@@ -638,6 +644,14 @@ private suspend fun finalizeResponse(
 
     // Хуки контекстных стратегий — после записи ответа в историю
     if (session != null && hooks != null) {
+        // «Окно»: деструктивная подрезка хранилища — остаются только последние
+        // windowSize сообщений, за окном отброшено безвозвратно. Запрос текущего
+        // обмена собран до этого блока, свежий ход уцелел (подрезка после append);
+        // summary/факты/ветки и ExchangeLog не затрагиваются
+        if (hooks.strategy == ContextStrategy.WINDOW) {
+            sessions.applyWindow(session.id, hooks.windowSize)
+        }
+
         // «Факты»: экстракция только при активной стратегии facts; сбой (исключение
         // или null) — прежние факты сохраняются, чат не падает
         if (hooks.strategy == ContextStrategy.FACTS && hooks.factExtractor != null) {

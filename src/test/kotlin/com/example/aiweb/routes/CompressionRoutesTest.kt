@@ -246,7 +246,7 @@ class CompressionRoutesTest {
             }
         }
 
-        /** GET /api/session/{id} — снимок сессии из хранилища (для non-destructive проверок). */
+        /** GET /api/session/{id} — снимок сессии из хранилища (для проверок содержимого). */
         fun getSession(id: String): HttpResponse = kotlinx.coroutines.runBlocking {
             client.get("$base/api/session/$id")
         }
@@ -612,7 +612,7 @@ class CompressionRoutesTest {
     // --- 8. Стратегии контекста (задача 4): window / facts / legacy / приоритет / 400 ---
 
     @Test
-    fun `стратегия window - в LLMCall ровно последние 5, хранилище не урезано`() {
+    fun `стратегия window - в LLMCall ровно последние 5, хранилище подрезано до окна`() {
         withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
             // 13 сообщений: 6 ходов + «висячий» вопрос — окно 5 начинается с user
             // (ход 5 целиком + ход 6 + висячий), stage-2 trim ничего не срезает
@@ -630,7 +630,7 @@ class CompressionRoutesTest {
             assertFalse(parsed.summaryApplied, "сводка при WINDOW не подставляется")
 
             // DEFAULT-режим без maxTokens: системного промта режима нет —
-            // LLMCall = окно (5) + новый вопрос
+            // LLMCall = окно (5) + новый вопрос; запрос собирается ДО подрезки
             val ask = chat.calls.single().messages
             assertEquals(6, ask.size)
             assertEquals(
@@ -645,10 +645,69 @@ class CompressionRoutesTest {
                 "история без инструментов — window не приносит лишнего"
             )
 
-            // Non-destructive: GET /api/session возвращает ВСЕ ходы + новый
+            // Деструктивная подрезка: GET /api/session возвращает ровно окно
+            // (13 seed + свежий ход → 15, после подрезки 5)
             val after = getSession(s.id).session()
-            assertEquals(15, after.messages.size, "13 сообщений seed + новый ход, ничего не удалено")
-            assertTrue(after.messages.any { it.content!!.startsWith("вопрос 1") }, "первый ход остался в хранилище")
+            assertEquals(5, after.messages.size, "хранилище урезано до последних 5 сообщений")
+            assertEquals(
+                listOf("вопрос 6", "ответ 6", "вопрос 7"),
+                after.messages.dropLast(2).map { it.content!!.take(8).trimEnd() },
+                "окно хвоста seed уцелело"
+            )
+            assertEquals("новый вопрос", after.messages[3].content)
+            assertEquals("ответ сервера", after.messages[4].content, "свежий ход уцелел")
+            assertTrue(after.messages.none { it.content!!.startsWith("вопрос 1") }, "ход за окном отброшен безвозвратно")
+        }
+    }
+
+    @Test
+    fun `стратегия window - семь обменов подряд - в хранилище не больше окна, свежий ход уцелел`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            val s = seed(turn(1, 20) + turn(2, 20) + turn(3, 20))
+
+            repeat(7) { i ->
+                val response = postChat("вопрос обмена ${i + 1}", s.id, contextStrategy = "window")
+                assertEquals(HttpStatusCode.OK, response.status)
+                val after = getSession(s.id).session()
+                assertTrue(
+                    after.messages.size <= 5,
+                    "после обмена ${i + 1} в хранилище не больше 5 сообщений (сейчас ${after.messages.size})"
+                )
+            }
+
+            val final = getSession(s.id).session()
+            assertEquals(5, final.messages.size, "семь обменов при окне 5 — ровно 5 сообщений")
+            assertEquals("assistant", final.messages.last().role, "свежий ответ уцелел (подрезка после append)")
+            assertEquals(
+                listOf("вопрос обмена 6", "вопрос обмена 7"),
+                final.messages.mapNotNull { it.content }.filter { it.startsWith("вопрос обмена") }
+            )
+            assertTrue(
+                final.messages.none { it.content.orEmpty().startsWith("вопрос обмена 1") },
+                "ранние обмены отброшены безвозвратно"
+            )
+        }
+    }
+
+    @Test
+    fun `стратегии off, facts, summary, branching - хранилище не подрезается`() {
+        withApp(config(enabled = false, window = 5, mergeEvery = 100)) {
+            for (strategy in listOf("off", "facts", "summary", "branching")) {
+                val s = seed(
+                    turn(1, 20) + turn(2, 20) + turn(3, 20) + turn(4, 20) +
+                        turn(5, 20) + turn(6, 20) + user("вопрос 7 без ответа")
+                )
+
+                val response = postChat("новый вопрос", s.id, contextStrategy = strategy)
+
+                assertEquals(HttpStatusCode.OK, response.status, "стратегия $strategy")
+                val after = getSession(s.id).session()
+                assertEquals(15, after.messages.size, "$strategy не подрезает хранилище")
+                assertTrue(
+                    after.messages.any { it.content!!.startsWith("вопрос 1") },
+                    "$strategy: первый ход остался в хранилище"
+                )
+            }
         }
     }
 
@@ -741,7 +800,7 @@ class CompressionRoutesTest {
             assertFalse(chat.calls.single().messages.any { it.content.orEmpty().startsWith("вопрос 1") })
 
             val after = sessions.get(s.id)!!
-            assertEquals(8, after.messages.size, "хранилище не урезано: 6 seed + новый ход")
+            assertEquals(5, after.messages.size, "хранилище подрезано до окна: 8 сообщений → 5")
         }
     }
 

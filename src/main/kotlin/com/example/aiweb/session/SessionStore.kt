@@ -34,6 +34,20 @@ interface SessionStore {
     fun applyCompressionResult(sessionId: String, newSummary: String?, removeCount: Int): Session?
 
     /**
+     * Деструктивная подрезка хранилища под окно (стратегия «Окно»): в истории
+     * остаются только последние [windowSize] сообщений, всё за окном отбрасывается
+     * безвозвратно. Turn-boundary guard тот же, что у view-окна
+     * ([HistoryCompressor.sliceWindow]): если срез начинается с role="tool" (его
+     * assistant(tool_calls) остался за границей), окно расширяется назад до
+     * ближайшего user-сообщения — пара assistant(tool_calls) → role="tool"
+     * не разрывается. История короче окна — no-op. Сводка ([Session.summary]),
+     * факты и ветки операцией не затрагиваются («Окно» не пишет сводку).
+     *
+     * Возвращает обновлённый снимок сессии; null — сессия не существует.
+     */
+    fun applyWindow(sessionId: String, windowSize: Int): Session?
+
+    /**
      * Создаёт близнец-ветку: снимок активного состояния сессии (messages, summary,
      * facts) в новую ветку с id «b<seq>» и label «Ветка <seq>» (нумерация сквозная,
      * из [Session.branchSeq]). Активное состояние не меняется; у близнеца
@@ -208,6 +222,16 @@ class InMemorySessionStore(
         }
     }
 
+    override fun applyWindow(sessionId: String, windowSize: Int): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            val before = entry.messages.size
+            truncateToWindow(entry.messages, windowSize)
+            if (entry.messages.size != before) entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
     override fun forkTwin(sessionId: String): Branch? {
         val entry = sessions[sessionId] ?: return null
         return synchronized(entry) {
@@ -344,6 +368,23 @@ internal fun trimSessionHistory(messages: MutableList<OpenAIMessage>) {
         if (nextTurn == 0) return
         messages.subList(0, nextTurn).clear()
     }
+}
+
+/**
+ * Деструктивная подрезка истории одной сессии до последних [windowSize]
+ * сообщений (стратегия «Окно», store-операция [SessionStore.applyWindow]):
+ * всё за окном отбрасывается безвозвратно. Граница среза считается тем же
+ * turn-boundary guard, что у view-окна ([HistoryCompressor.sliceWindow]):
+ * окно не начинается с role="tool", чей assistant(tool_calls) остался за
+ * границей, — такое окно расширяется назад до ближайшего user-сообщения.
+ * История короче окна (или равна) — no-op. Сводка/факты/ветки не трогаются.
+ *
+ * Общая логика [InMemorySessionStore] и [FileSessionStore].
+ */
+internal fun truncateToWindow(messages: MutableList<OpenAIMessage>, windowSize: Int) {
+    val kept = HistoryCompressor.sliceWindow(messages, windowSize.coerceAtLeast(1))
+    val cut = messages.size - kept.size
+    if (cut > 0) messages.subList(0, cut).clear()
 }
 
 internal const val ROLE_USER = "user"

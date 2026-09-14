@@ -89,6 +89,18 @@ class FileSessionStore(
     }
 
     @Synchronized
+    override fun applyWindow(sessionId: String, windowSize: Int): Session? {
+        val current = sessions[sessionId] ?: return null
+        val kept = HistoryCompressor.sliceWindow(current.messages, windowSize.coerceAtLeast(1))
+        val cut = current.messages.size - kept.size
+        if (cut <= 0) return current
+        val updated = current.copy(messages = kept, updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
     override fun forkTwin(sessionId: String): Branch? {
         val current = sessions[sessionId] ?: return null
         if (current.branches.size >= InMemorySessionStore.MAX_BRANCHES) return null

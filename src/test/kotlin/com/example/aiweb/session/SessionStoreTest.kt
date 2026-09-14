@@ -104,6 +104,107 @@ class SessionStoreTest {
     }
 
     @Test
+    fun `applyWindow обрезает хранилище до последних windowSize сообщений`() {
+        val store = newStore()
+        val session = store.create()
+        repeat(3) { i ->
+            store.append(session.id, user("ход $i"))
+            store.append(session.id, assistant("ответ $i"))
+        }
+        store.append(session.id, user("висячий вопрос"))
+
+        val updated = assertNotNull(store.applyWindow(session.id, 5))
+
+        // На момент вызова 7 сообщений: за окном ход 0 и ответ 0
+        assertEquals(5, updated.messages.size)
+        assertEquals(
+            listOf("ход 1", "ответ 1", "ход 2", "ответ 2"),
+            updated.messages.dropLast(1).mapNotNull { it.content }
+        )
+        val reread = assertNotNull(store.get(session.id))
+        assertEquals(5, reread.messages.size)
+        assertTrue(reread.messages.none { it.content == "ход 0" }, "за окном отброшено безвозвратно")
+        assertTrue(reread.messages.none { it.content == "ответ 0" }, "за окном отброшено безвозвратно")
+    }
+
+    @Test
+    fun `applyWindow — история не длиннее окна — no-op`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("ход 1"))
+        store.append(session.id, assistant("ответ 1"))
+        val before = assertNotNull(store.get(session.id))
+
+        val updated = assertNotNull(store.applyWindow(session.id, 5))
+        val sameSize = assertNotNull(store.applyWindow(session.id, 2))
+
+        assertEquals(before, updated, "история короче окна — сессия не изменилась")
+        assertEquals(before, sameSize, "история равна окну — сессия не изменилась")
+    }
+
+    @Test
+    fun `applyWindow не рвёт пару assistant(tool_calls) и role=tool`() {
+        val store = newStore()
+        val session = store.create()
+        // 8 сообщений: окно 3 начинается ровно с role="tool" (индекс 5) —
+        // guard обязан расширить окно назад до user-сообщения (индекс 2)
+        store.append(session.id, user("вопрос 1"))
+        store.append(session.id, assistant("ответ 1"))
+        store.append(session.id, user("вопрос 2"))
+        store.append(session.id, assistant("ответ 2"))
+        store.append(
+            session.id,
+            OpenAIMessage(
+                role = "assistant",
+                content = null,
+                toolCalls = listOf(OpenAIToolCall(id = "call-1"))
+            )
+        )
+        store.append(session.id, OpenAIMessage(role = "tool", content = "результат", toolCallId = "call-1"))
+        store.append(session.id, user("вопрос 3"))
+        store.append(session.id, assistant("ответ 3"))
+
+        val updated = assertNotNull(store.applyWindow(session.id, 3))
+
+        // Граница наехала на tool — окно расширено назад до user-сообщения
+        assertEquals("user", updated.messages.first().role)
+        assertEquals("вопрос 2", updated.messages.first().content)
+        assertEquals(6, updated.messages.size, "окно расширилось назад, а не разорвало пару")
+        updated.messages.forEachIndexed { index, message ->
+            if (message.role == "tool") {
+                val prev = updated.messages[index - 1]
+                assertEquals("assistant", prev.role)
+                assertNotNull(prev.toolCalls)
+            }
+        }
+    }
+
+    @Test
+    fun `applyWindow не трогает summary, факты и ветки`() {
+        val store = newStore()
+        val session = store.create()
+        repeat(3) { i ->
+            store.append(session.id, user("ход $i"))
+            store.append(session.id, assistant("ответ $i"))
+        }
+        store.setFacts(session.id, listOf(Fact("тема", "змейка")))
+        store.applyCompressionResult(session.id, "сводка", 0)
+        store.forkTwin(session.id)
+
+        val updated = assertNotNull(store.applyWindow(session.id, 2))
+
+        assertEquals("сводка", updated.summary, "Окно не пишет и не стирает сводку")
+        assertEquals(listOf(Fact("тема", "змейка")), updated.facts)
+        assertEquals(1, updated.branches.size)
+        assertEquals(2, updated.messages.size)
+    }
+
+    @Test
+    fun `applyWindow на неизвестной сессии возвращает null`() {
+        assertNull(newStore().applyWindow("нет-такого", 5))
+    }
+
+    @Test
     fun `delete удаляет сессию и идемпотентен`() {
         val store = newStore()
         val session = store.create()

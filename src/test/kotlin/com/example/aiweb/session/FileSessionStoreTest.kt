@@ -3,6 +3,7 @@ package com.example.aiweb.session
 import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
+import com.example.aiweb.model.OpenAIToolCall
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicLong
@@ -162,6 +163,88 @@ class FileSessionStoreTest {
             File(dir, "sessions/${session.id}.json").readText().contains("жёсткая сводка"),
             "Файл должен содержать summary"
         )
+    }
+
+    @Test
+    fun `applyWindow обрезает историю и переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        repeat(4) { i ->
+            store.append(session.id, user("ход $i"))
+            store.append(session.id, assistant("ответ $i"))
+        }
+
+        val updated = assertNotNull(store.applyWindow(session.id, 5))
+        assertEquals(5, updated.messages.size)
+        assertNull(updated.summary, "Окно не пишет сводку")
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(updated, reloaded, "Подрезка записана на диск атомарно")
+        assertEquals(
+            listOf("ответ 1", "ход 2", "ответ 2", "ход 3"),
+            reloaded.messages.dropLast(1).mapNotNull { it.content }
+        )
+    }
+
+    @Test
+    fun `applyWindow — история не длиннее окна — файл не меняется`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос"))
+        store.append(session.id, assistant("ответ"))
+        val before = assertNotNull(store.get(session.id))
+
+        val updated = assertNotNull(store.applyWindow(session.id, 5))
+
+        assertEquals(before, updated)
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(before, reloaded)
+        assertFalse(
+            File(dir, "sessions").listFiles()!!.any { it.name.endsWith(".json.tmp") },
+            "Временных файлов после no-op быть не должно"
+        )
+    }
+
+    @Test
+    fun `applyWindow не рвёт пару assistant(tool_calls) и role=tool`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.append(
+            session.id,
+            OpenAIMessage(
+                role = "assistant",
+                content = null,
+                toolCalls = listOf(OpenAIToolCall(id = "call-1"))
+            )
+        )
+        store.append(session.id, OpenAIMessage(role = "tool", content = "результат", toolCallId = "call-1"))
+        store.append(session.id, user("вопрос 2"))
+        store.append(session.id, assistant("ответ 2"))
+
+        val updated = assertNotNull(store.applyWindow(session.id, 3))
+
+        // Граница наехала на role="tool" — окно расширено назад до user-сообщения
+        assertEquals("user", updated.messages.first().role)
+        assertEquals("вопрос 1", updated.messages.first().content)
+        updated.messages.forEachIndexed { index, message ->
+            if (message.role == "tool") {
+                val prev = updated.messages[index - 1]
+                assertEquals("assistant", prev.role)
+                assertNotNull(prev.toolCalls)
+            }
+        }
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(updated, reloaded)
+    }
+
+    @Test
+    fun `applyWindow на неизвестной сессии возвращает null`() {
+        assertNull(newStore().applyWindow("нет-такого", 5))
     }
 
     @Test
