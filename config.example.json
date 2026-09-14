@@ -10,7 +10,7 @@
   "compressionWindowSize": 5,
   "compressionMergeEvery": 5,
   "compressionSummaryMaxTokens": 400,
-  "contextStrategy": "off",
+  "contextStrategy": "on",
   "tools": {
     "current_datetime": true,
     "calculator": true,
