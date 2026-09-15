@@ -1,5 +1,7 @@
 package com.example.aiweb.model
 
+import com.example.aiweb.memory.MemoryEntry
+import com.example.aiweb.memory.WorkingEntry
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
@@ -49,6 +51,8 @@ data class FileConfig(
      * sandbox-инструменты выключены.
      */
     val tools: FileToolsConfig? = null,
+    /** Настройки памяти агента: стратегия поиска и (стадия 2) эмбеддинги; null — keyword-поиск. */
+    val memory: MemoryConfig? = null,
     val providers: List<FileProvider>? = null
 )
 
@@ -74,6 +78,31 @@ data class FileToolsConfig(
     @SerialName("read_file") val readFile: SandboxToolConfig? = null,
     /** Запись файлов в рабочую папку через sandbox-контейнер (инструмент write_file). */
     @SerialName("write_file") val writeFile: SandboxToolConfig? = null
+)
+
+/**
+ * Настройки памяти агента: стратегия поиска и (стадия 2) эмбеддинги.
+ * null/отсутствие раздела — поведение по умолчанию: keyword-поиск.
+ */
+@Serializable
+data class MemoryConfig(
+    /** Стратегия релевантного поиска: "keyword" (по умолчанию); fts/vector/hybrid — стадии 1–2. */
+    val search: String? = null,
+    /** Поставщик эмбеддингов (стадия 2); в этом чейндже не активирует реализацию. */
+    val embedding: EmbeddingConfig? = null
+)
+
+/** Конечная точка эмбеддингов (стадия 2). */
+@Serializable
+data class EmbeddingConfig(
+    /** Адрес OpenAI-совместимого API эмбеддингов (POST {url}/embeddings). */
+    val url: String,
+    /** Модель эмбеддингов, например text-embedding-3-small. */
+    val model: String,
+    /** Ключ API эндпоинта; null — используется общий ключ провайдера по умолчанию. */
+    val apiKey: String? = null,
+    /** Размерность вектора; null — родная для модели. */
+    val dimensions: Int? = null
 )
 
 /**
@@ -143,6 +172,12 @@ data class ChatRequest(
     val branchId: String? = null,
     /** Управление цепочкой рассуждений модели: true → thinking {type: enabled}, false → {type: disabled}, null — не передавать. */
     val thinkingEnabled: Boolean? = null,
+    /**
+     * Инструменты и блок памяти для этого запроса: null/true — включены
+     * (task_notes, memory_save, memory_recall и системное сообщение с блоком
+     * памяти), false — инструменты памяти и блок памяти выключены.
+     */
+    val memoryTools: Boolean? = null,
     val maxTokens: Int? = null,
     val temperature: Double? = null,
     val topP: Double? = null,
@@ -445,6 +480,121 @@ data class SessionsResponse(
 @Serializable
 data class SessionsCleared(
     val deleted: Int
+)
+
+// --- Память агента (рабочая и долговременная) ---
+
+/** Тело PUT /api/session/{id}/working — заметка рабочей памяти; id null → генерируется сервером. */
+@Serializable
+data class WorkingUpsertRequest(
+    /** Идентификатор записи; null или пусто — новая запись с UUID. */
+    val id: String? = null,
+    val title: String,
+    val content: String
+)
+
+/** Ответ рабочих маршрутов /api/session/{id}/working — записи сессии. */
+@Serializable
+data class WorkingEntriesResponse(
+    // Без значения по умолчанию: при encodeDefaults=false пустой список
+    // опустится из JSON, и ответом будет {} вместо {"entries":[]}
+    val entries: List<WorkingEntry>
+)
+
+/** Тело POST /api/memory — новая запись долговременной памяти. */
+@Serializable
+data class MemoryCreateRequest(
+    /** Вид записи: profile | decision | knowledge. */
+    val kind: String,
+    val title: String,
+    val content: String,
+    val tags: List<String>? = null
+)
+
+/** Тело PUT /api/memory/{id} — частичное обновление; null-поля остаются прежними. */
+@Serializable
+data class MemoryUpdateRequest(
+    val kind: String? = null,
+    val title: String? = null,
+    val content: String? = null,
+    val tags: List<String>? = null
+)
+
+/**
+ * Вид записи долговременной памяти для HTTP-ответов: повторяет [MemoryEntry],
+ * но поля со значениями по умолчанию помечены @EncodeDefault(ALWAYS) — серверный
+ * Json с encodeDefaults=false иначе omitил бы source="user" и пустые tags из
+ * ответа, ломая контракт для фронтенда.
+ */
+@Serializable
+data class MemoryEntryView(
+    val id: String,
+    /** Вид записи: profile | decision | knowledge. */
+    val kind: String,
+    val title: String,
+    val content: String,
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val tags: List<String> = emptyList(),
+    /** Кто создал запись: "user" | "agent". */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val source: String = "user",
+    val createdAt: Long,
+    val updatedAt: Long
+)
+
+/** Ответ POST /api/memory и PUT /api/memory/{id} — сохранённая/обновлённая запись. */
+@Serializable
+data class MemoryEntryResponse(
+    val entry: MemoryEntryView
+)
+
+/** Ответ GET /api/memory — отфильтрованные записи и полные счётчики по видам. */
+@Serializable
+data class MemoryListResponse(
+    val entries: List<MemoryEntryView>,
+    /** Число записей по каждому виду памяти; все три ключа присутствуют всегда. */
+    val counts: Map<String, Int>
+)
+
+/** Ответ DELETE /api/memory/{id} — была ли запись удалена. */
+@Serializable
+data class MemoryDeletedResponse(
+    val deleted: Boolean
+)
+
+/** Секция «короткая» (серверная сессия диалога) ответа GET /api/memory/overview. */
+@Serializable
+data class MemoryShortTermOverview(
+    /** Число сообщений в истории сессии; 0 — сессия неизвестна. */
+    val turns: Int,
+    /** Есть ли у сессии rolling-summary (компрессия). */
+    val hasSummary: Boolean
+)
+
+/** Секция «рабочая память» ответа GET /api/memory/overview. */
+@Serializable
+data class MemoryWorkingOverview(
+    /** Число заметок рабочей памяти сессии; 0 — сессия неизвестна. */
+    val entries: Int
+)
+
+/** Секция «долговременная память» ответа GET /api/memory/overview. */
+@Serializable
+data class MemoryLongTermOverview(
+    val total: Int,
+    val profile: Int,
+    val decision: Int,
+    val knowledge: Int
+)
+
+/** Ответ GET /api/memory/overview — сводка всех слоёв памяти для панели памяти. */
+@Serializable
+data class MemoryOverviewResponse(
+    val shortTerm: MemoryShortTermOverview,
+    val working: MemoryWorkingOverview,
+    val longTerm: MemoryLongTermOverview
 )
 
 // --- Протокол OpenCode (локальный экземпляр opencode serve) ---

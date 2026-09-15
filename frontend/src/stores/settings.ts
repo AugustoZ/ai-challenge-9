@@ -32,6 +32,8 @@ export interface SettingsValues {
   mirrorMode: boolean;
   mirrorStrategyFull: MirrorStrategy;
   mirrorStrategyComp: MirrorStrategy;
+  /** Инструменты памяти агента: чтение/сохранение памяти на сервере. */
+  memoryTools: boolean;
 }
 
 /** Дефолты = DEFAULTS из script.js минус поле режима рассуждений (режимы удалены). */
@@ -47,6 +49,7 @@ export const DEFAULT_SETTINGS: SettingsValues = {
   mirrorMode: false,
   mirrorStrategyFull: 'off',
   mirrorStrategyComp: 'summary',
+  memoryTools: true,
 };
 
 export const SETTINGS_STORAGE_KEY = 'shturman.settings.v1';
@@ -100,6 +103,7 @@ export function coerceSettings(raw: unknown): SettingsValues {
     mirrorStrategyComp: isStrategy(stored.mirrorStrategyComp, MIRROR_STRATEGIES)
       ? (stored.mirrorStrategyComp as MirrorStrategy)
       : DEFAULT_SETTINGS.mirrorStrategyComp,
+    memoryTools: bool('memoryTools', DEFAULT_SETTINGS.memoryTools),
   };
 }
 
@@ -120,6 +124,7 @@ export interface SettingsState extends SettingsValues {
   setMirrorMode: (mirrorMode: boolean) => void;
   setMirrorStrategyFull: (strategy: MirrorStrategy) => void;
   setMirrorStrategyComp: (strategy: MirrorStrategy) => void;
+  setMemoryTools: (memoryTools: boolean) => void;
   /** «Новый диалог»: настройки возвращаются к дефолтам. */
   reset: () => void;
 }
@@ -157,6 +162,7 @@ export function createSettingsStore(baseStorage?: StringStorage) {
         setMirrorMode: (mirrorMode) => set({ mirrorMode }),
         setMirrorStrategyFull: (strategy) => set({ mirrorStrategyFull: strategy }),
         setMirrorStrategyComp: (strategy) => set({ mirrorStrategyComp: strategy }),
+        setMemoryTools: (memoryTools) => set({ memoryTools }),
         reset: () => set({ ...DEFAULT_SETTINGS }),
       }),
       {
@@ -175,6 +181,7 @@ export function createSettingsStore(baseStorage?: StringStorage) {
           mirrorMode: state.mirrorMode,
           mirrorStrategyFull: state.mirrorStrategyFull,
           mirrorStrategyComp: state.mirrorStrategyComp,
+          memoryTools: state.memoryTools,
         }),
         // Битые/чужие данные в хранилище не пролезают: та же коэрсия, что у seed
         merge: (persisted, current) => ({ ...current, ...coerceSettings(persisted) }),

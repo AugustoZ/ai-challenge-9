@@ -28,7 +28,13 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
     - если в messages есть system-сообщение, содержащее фразу «Извлечение фактов»
       (маркер запроса к экстрактору фактов, задача 5) → детерминированный KV-JSON
       [{"key":"цель","value":"<текст из последнего user-сообщения>"}];
-    - tools в запросе игнорируются (обычный ответ, без tool_calls).
+    - tools в теле запроса игнорируются; промт-протокол инструментов
+      (PromptToolTransport, system-сообщение «Ты ассистент с доступом к
+      инструментам») эмулируется минимально для E2E памяти агента:
+      если в наборе инструментов есть memory_save и последнее сообщение
+      пользователя содержит «запомни» → ответ блоком ```json с вызовом
+      memory_save; если в контексте уже есть tool-результат (роль "tool")
+      → финальный текст «сохранено». Остальные обращения — обычный текст.
 
 Запуск:
     python3 scripts/mock-llm.py --port 18080
@@ -52,6 +58,30 @@ SUMMARY_MARKER = "Сводка ранее"
 # Маркер запроса на извлечение фактов (согласовано с FactPrompts.FACTS_MARKER,
 # задача 5): system-промпт содержит эту фразу — отвечаем детерминированным KV-JSON.
 FACTS_MARKER = "Извлечение фактов"
+
+# Маркер промт-протокола инструментов (PromptToolTransport.buildToolPrompt):
+# system-сообщение начинается с этой фразы и перечисляет доступные инструменты.
+TOOLS_MARKER = "Доступные инструменты"
+
+# Имя инструмента долговременной памяти: вызов эмулируется только если он
+# реально есть в наборе (memoryTools выключен — инструмента в промте нет).
+MEMORY_SAVE_TOOL = "memory_save"
+
+# Ответ-вызов инструмента: ровно один блок ```json по правилам промт-протокола
+# (PromptToolTransport.parseToolCall разбирает tool + arguments).
+TOOL_CALL_REPLY = (
+    "```json\n"
+    "{\"tool\": \"memory_save\", \"arguments\": "
+    "{\"kind\": \"decision\", \"title\": \"Порт деплоя\", "
+    "\"content\": \"Для деплоя используем порт 8083\"}}\n"
+    "```"
+)
+
+# Финальный текст после tool-результата memory_save (вторая итерация цикла).
+SAVED_REPLY = (
+    "Готово: сохранил в долговременную память — для деплоя используем порт 8083. "
+    "Запись видна в панели «Память», вкладка «Долговременная»."
+)
 
 # Фиксированный «summary-ответ» — короткий, как результат сжатия истории.
 SUMMARY_REPLY = (
@@ -115,8 +145,24 @@ def _facts_reply(messages):
     return json.dumps([{"key": "цель", "value": text}], ensure_ascii=False)
 
 
+def _last_user_text(messages):
+    """Текст последнего user-сообщения (строка или список частей)."""
+    text = ""
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "user":
+            content = message.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = " ".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+    return text
+
+
 def _pick_reply(messages):
-    """Сводка/факты — фиксированные ответы по маркерам; иначе — реплика из ротации."""
+    """Сводка/факты — фиксированные ответы по маркерам; tool-протокол памяти —
+    по итерации цикла (вызов → финальный текст); иначе — реплика из ротации."""
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "system":
             continue
@@ -128,6 +174,34 @@ def _pick_reply(messages):
             return _facts_reply(messages)
         if SUMMARY_MARKER in content:
             return SUMMARY_REPLY
+
+    # Follow-up раунд цикла: tool-результат уже в контексте — финальный текст
+    # (проверка ВЫШЕ раунда вызова, иначе «запомни» в истории зациклит стаб).
+    tool_contents = [
+        m.get("content") or "" for m in messages
+        if isinstance(m, dict) and m.get("role") == "tool"
+    ]
+    if tool_contents:
+        if "долговременную память" in tool_contents[-1]:
+            print("mock-llm: финал после memory_save", flush=True)
+            return SAVED_REPLY
+        return _pick_rotation()
+
+    # Раунд вызова: промт-протокол перечисляет инструменты; memory_save + «запомни» → блок вызова
+    last_user = _last_user_text(messages).lower()
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and TOOLS_MARKER in content:
+            if MEMORY_SAVE_TOOL in content and "запомни" in last_user:
+                print("mock-llm: эмуляция вызова memory_save (промт-протокол)", flush=True)
+                return TOOL_CALL_REPLY
+            break
+    return _pick_rotation()
+
+
+def _pick_rotation():
     global _counter
     with _lock:
         reply = REPLIES[_counter % len(REPLIES)]

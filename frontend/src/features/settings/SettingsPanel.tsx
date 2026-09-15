@@ -130,6 +130,7 @@ export default function SettingsPanel({ maintenance }: { maintenance?: ReactNode
   const judge = useSettingsStore((s) => s.judge);
   const contextStrategy = useSettingsStore((s) => s.contextStrategy);
   const mirrorMode = useSettingsStore((s) => s.mirrorMode);
+  const memoryTools = useSettingsStore((s) => s.memoryTools);
   const setModel = useSettingsStore((s) => s.setModel);
   const setTemperature = useSettingsStore((s) => s.setTemperature);
   const setMaxTokens = useSettingsStore((s) => s.setMaxTokens);
@@ -139,6 +140,7 @@ export default function SettingsPanel({ maintenance }: { maintenance?: ReactNode
   const setJudge = useSettingsStore((s) => s.setJudge);
   const setContextStrategy = useSettingsStore((s) => s.setContextStrategy);
   const setMirrorMode = useSettingsStore((s) => s.setMirrorMode);
+  const setMemoryTools = useSettingsStore((s) => s.setMemoryTools);
   const reset = useSettingsStore((s) => s.reset);
 
   const models = useModels();
@@ -326,6 +328,18 @@ export default function SettingsPanel({ maintenance }: { maintenance?: ReactNode
         <p className={annunciatorStyles.hint}>
           Стратегия памяти задаёт, что уходит в контекст; «Режим сравнения» ведёт
           параллельную пару сессий со своими стратегиями и показывает расход топлива обеих
+        </p>
+        <SettingInline
+          label="Инструменты памяти"
+          ariaLabel="Описание параметра «Инструменты памяти агента»"
+          tip="Выключите, чтобы агент не читал и не сохранял память"
+        >
+          <Toggle pressed={memoryTools} onToggle={() => setMemoryTools(!memoryTools)}>
+            {`Инструменты памяти агента: ${memoryTools ? 'ВКЛ' : 'ВЫКЛ'}`}
+          </Toggle>
+        </SettingInline>
+        <p className={annunciatorStyles.hint}>
+          Выключите, чтобы агент не читал и не сохранял память
         </p>
       </section>
 

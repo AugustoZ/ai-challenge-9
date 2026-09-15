@@ -20,6 +20,7 @@ ai-challenge-9/
     ├── kotlin/com/example/aiweb/
     │   ├── Application.kt         # старт Ktor, конфиг, «/» → index.html React-сборки, кэш статики
     │   ├── agent/AgentLoop.kt     # агентный цикл: шаги, вызовы инструментов, финал
+    │   ├── memory/                # память агента: WorkingMemoryStore, LongTermMemoryStore, MemoryRetriever
     │   ├── client/                # AIClient (openai/opencode), JudgePrompts, FactPrompts, ReasoningPrompts (budgetNote/withBudget)
     │   ├── config/AppConfig.kt    # разбор config.json: провайдеры (ProviderConfig), allowedModels
     │   ├── model/                 # Models.kt, AgentEvents.kt, StreamEvents.kt, ContextStrategy.kt
@@ -91,4 +92,5 @@ docker compose up                  # контейнерный запуск
 - После правки фронтенда — `npm run verify`; прод-статика попадает в jar только через Gradle-цепочку (copyFrontend → build/frontend-static/static).
 - Тесты: kotlin.test (JUnit Platform), ~260 @Test в 24 файлах; фронт — Vitest, 182 теста на чистых функциях, без jsdom.
 - `/api/modes` НЕ существует — режимы рассуждения удалены (волна 1), обработка всегда агентная.
+- Память агента — три слоя (краткосрочная = история сессии, рабочая = заметки задачи, долговременная = профиль/решения/знания); компоненты в `src/main/kotlin/com/example/aiweb/memory/`, инструменты — `tools/TaskNotesTool`, `MemorySaveTool`, `MemoryRecallTool` (подключаются через `ToolRegistry.augmentedWith` при `memoryTools != false`). Спецификация и задачи — `openspec/changes/memory-layers/`. Хранение и поиск вынесены за порты `MemoryRepository` / `MemorySearchEngine` (реализация поиска — из конфига `memory.search`, пока только `"keyword"`); спецификация рефакторинга — `openspec/changes/memory-search-ports/`.
 - Настройки фронта хранятся в localStorage ключ `shturman.settings.v1` (старый `ai-assistant.settings.v1` читается однократно как seed).

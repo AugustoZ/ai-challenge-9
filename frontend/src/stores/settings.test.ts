@@ -33,6 +33,7 @@ describe('createSettingsStore', () => {
     expect(state.mirrorMode).toBe(false);
     expect(state.mirrorStrategyFull).toBe('off');
     expect(state.mirrorStrategyComp).toBe('summary');
+    expect(state.memoryTools).toBe(true);
     expect(state).not.toHaveProperty(REMOVED_MODE_FIELD);
   });
 
@@ -57,6 +58,28 @@ describe('createSettingsStore', () => {
     const store = createSettingsStore(createMemoryStorage());
     store.getState().setTemperature(0.42);
     expect(store.getState().temperature).toBe(0.42);
+  });
+
+  it('setMemoryTools переключает инструменты памяти агента', () => {
+    const store = createSettingsStore(createMemoryStorage());
+    store.getState().setMemoryTools(false);
+    expect(store.getState().memoryTools).toBe(false);
+    store.getState().setMemoryTools(true);
+    expect(store.getState().memoryTools).toBe(true);
+  });
+
+  it('memoryTools персистится и читается обратно', () => {
+    const storage = createMemoryStorage();
+    const first = createSettingsStore(storage);
+    first.getState().setMemoryTools(false);
+
+    const envelope = JSON.parse(storage.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      state: Record<string, unknown>;
+    };
+    expect(envelope.state.memoryTools).toBe(false);
+
+    const second = createSettingsStore(storage);
+    expect(second.getState().memoryTools).toBe(false);
   });
 
   it('персист пишет конверт {state, version} без действий', () => {
@@ -92,6 +115,7 @@ describe('createSettingsStore', () => {
         thinking: 'да',
         contextStrategy: 'телепатия',
         mirrorStrategyComp: 'branching',
+        memoryTools: 'включено',
         junk: true,
       }),
     });
@@ -103,6 +127,7 @@ describe('createSettingsStore', () => {
     expect(state.thinking).toBe(DEFAULT_SETTINGS.thinking);
     expect(state.contextStrategy).toBe(DEFAULT_SETTINGS.contextStrategy);
     expect(state.mirrorStrategyComp).toBe(DEFAULT_SETTINGS.mirrorStrategyComp);
+    expect(state.memoryTools).toBe(DEFAULT_SETTINGS.memoryTools);
   });
 
   it('несовместимая версия персиста не ломает стор', () => {

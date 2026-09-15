@@ -25,6 +25,7 @@ function settings(overrides: Partial<SendSettings> = {}): SendSettings {
     thinking: DEFAULT_SETTINGS.thinking,
     judge: DEFAULT_SETTINGS.judge,
     contextStrategy: DEFAULT_SETTINGS.contextStrategy,
+    memoryTools: DEFAULT_SETTINGS.memoryTools,
     ...overrides,
   };
 }
@@ -43,7 +44,13 @@ describe('buildChatRequest', () => {
       sessionId: null,
       judgeEnabled: false,
       contextStrategy: 'off',
+      memoryTools: true,
     });
+  });
+
+  it('memoryTools уходит явным boolean всегда — и ВКЛ, и ВЫКЛ', () => {
+    expect(buildChatRequest(settings({ memoryTools: true }), NO_SESSION, 'q').memoryTools).toBe(true);
+    expect(buildChatRequest(settings({ memoryTools: false }), NO_SESSION, 'q').memoryTools).toBe(false);
   });
 
   it('составная модель «providerId/modelId» разбирается на пару провайдер/модель', () => {

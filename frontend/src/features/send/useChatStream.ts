@@ -40,6 +40,7 @@ import {
 import { getTwin, type TwinHandle } from '../mirror/twinRegistry';
 import { loadSessions } from '../sessions/loadSessions';
 import { useBranchesStore } from '../../stores/branches';
+import { useMemoryStore } from '../../stores/memory';
 import { useSessionStore } from '../../stores/session';
 import { useSettingsStore, type MirrorStrategy } from '../../stores/settings';
 import {
@@ -338,6 +339,12 @@ export function useChatStream() {
           void loadBranches(effectiveSessionId);
         }
         void loadSessions();
+        /* Память: агентные инструменты могли читать/писать рабочие заметки —
+           кэш стора обновляется тихо (fire-and-forget), стрим не блокируется */
+        if (effectiveSessionId) {
+          void useMemoryStore.getState().loadWorking(effectiveSessionId);
+          void useMemoryStore.getState().loadOverview(effectiveSessionId);
+        }
         setDirective({ kind: 'ready', text: 'Передача завершена' }); // L2559
       });
 

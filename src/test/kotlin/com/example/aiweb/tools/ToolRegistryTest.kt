@@ -37,4 +37,34 @@ class ToolRegistryTest {
     fun `get на неизвестное имя возвращает null`() {
         assertNull(registry.get("nope"))
     }
+
+    @Test
+    fun `augmentedWith сохраняет базовые инструменты и добавляет новые в конец`() {
+        val augmented = registry.augmentedWith(listOf(StubTool("task_notes"), StubTool("memory_save")))
+
+        assertEquals(
+            listOf("current_datetime", "calculator", "http_get", "task_notes", "memory_save"),
+            augmented.specs().map { it.function.name }
+        )
+        assertEquals(StubTool("task_notes").description, augmented.get("task_notes")?.description)
+    }
+
+    @Test
+    fun `augmentedWith пропускает дубликаты имён`() {
+        val augmented = registry.augmentedWith(
+            listOf(StubTool("calculator"), StubTool("memory_save"))
+        )
+
+        val names = augmented.specs().map { it.function.name }
+        assertEquals(listOf("current_datetime", "calculator", "http_get", "memory_save"), names)
+        // Базовый инструмент не заменён заглушкой
+        assertEquals(CalculatorTool().description, augmented.get("calculator")?.description)
+    }
+
+    /** Заглушка инструмента для проверок реестра. */
+    private class StubTool(override val name: String) : Tool {
+        override val description = "заглушка $name"
+        override val parametersJsonSchema = kotlinx.serialization.json.buildJsonObject { }
+        override suspend fun execute(argsJson: String) = ToolResult(true, "")
+    }
 }

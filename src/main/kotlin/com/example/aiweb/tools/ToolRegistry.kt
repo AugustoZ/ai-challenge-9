@@ -39,6 +39,19 @@ class ToolRegistry(
      */
     fun fileClient(): SandboxClient? = fileSandboxClient
 
+    /**
+     * Новый реестр с дополнительными инструментами: текущие инструменты (в
+     * порядке регистрации) плюс [extra]; инструменты с уже занятым именем
+     * пропускаются — дубликатов в реестре не появляется. Параметры реестра
+     * (включая клиент файловых инструментов) наследуются.
+     */
+    fun augmentedWith(extra: List<Tool>): ToolRegistry {
+        val merged = linkedMapOf<String, Tool>()
+        tools.forEach { (name, tool) -> merged[name] = tool }
+        extra.forEach { tool -> if (tool.name !in merged) merged[tool.name] = tool }
+        return ToolRegistry(merged, fileSandboxClient)
+    }
+
     companion object {
         /** Реестр со встроенными инструментами: current_datetime, calculator, http_get. */
         fun withBuiltIns(): ToolRegistry = ToolRegistry(

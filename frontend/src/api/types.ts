@@ -29,6 +29,8 @@ export interface ChatRequest {
   stop?: string | null;
   /** Клиентский UUID для отмены через POST /api/cancel (стриминг). */
   requestId?: string | null;
+  /** Инструменты и блок памяти агента: null/true — включены, false — выключены. */
+  memoryTools?: boolean | null;
 }
 
 /** Полный ответ сервера: и блокирующий /api/chat, и кадр final стрима. */
@@ -329,4 +331,57 @@ export interface SessionsResponse {
 /** Ответ DELETE /api/sessions. */
 export interface SessionsCleared {
   deleted: number;
+}
+
+/* ---------- Память: working-заметки (/api/session/{id}/working)
+   и long-term записи (/api/memory) ---------- */
+
+/** Категория long-term записи памяти. */
+export type MemoryKind = 'profile' | 'decision' | 'knowledge';
+
+/** Рабочая заметка сессии (краткоживущий слой памяти). */
+export interface WorkingEntry {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Long-term запись памяти. */
+export interface MemoryEntry {
+  id: string;
+  kind: MemoryKind;
+  title: string;
+  content: string;
+  tags: string[];
+  /** Кто добавил: пользователь или агент. */
+  source: 'user' | 'agent';
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Ответы ручек working: актуальный список заметок сессии. */
+export interface WorkingListResponse {
+  entries: WorkingEntry[];
+}
+
+/** Счётчики long-term записей по категориям. */
+export interface MemoryCounts {
+  profile: number;
+  decision: number;
+  knowledge: number;
+}
+
+/** Ответ GET /api/memory: отфильтрованный список + счётчики. */
+export interface MemoryListResponse {
+  entries: MemoryEntry[];
+  counts: MemoryCounts;
+}
+
+/** Сводка трёх слоёв памяти сессии (GET /api/memory/overview). */
+export interface MemoryOverview {
+  shortTerm: { turns: number; hasSummary: boolean };
+  working: { entries: number };
+  longTerm: { total: number; profile: number; decision: number; knowledge: number };
 }

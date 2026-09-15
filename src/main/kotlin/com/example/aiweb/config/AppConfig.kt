@@ -4,6 +4,7 @@ import com.example.aiweb.model.ContextStrategy
 import com.example.aiweb.model.FileConfig
 import com.example.aiweb.model.FileProvider
 import com.example.aiweb.model.FileToolsConfig
+import com.example.aiweb.model.MemoryConfig
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -68,6 +69,8 @@ data class AppConfig(
      * Только конфиг-файл: переменных окружения для инструментов нет.
      */
     val tools: FileToolsConfig? = null,
+    /** Настройки памяти агента: стратегия поиска; null — keyword-поиск. Только конфиг-файл. */
+    val memory: MemoryConfig? = null,
     /**
      * Сжатие истории диалога: null-поле запроса compressionEnabled трактуется как
      * это значение (приоритет: поле запроса > конфиг). Только конфиг-файл.
@@ -206,6 +209,7 @@ data class AppConfig(
                 allowedModels = fc.allowedModels.orEmpty().filter { it.isNotBlank() },
                 dataDir = fc.dataDir?.takeIf { it.isNotBlank() } ?: dataDir,
                 tools = fc.tools ?: tools,
+                memory = fc.memory ?: memory,
                 compressionEnabled = fc.compressionEnabled ?: compressionEnabled,
                 compressionWindowSize = fc.compressionWindowSize ?: compressionWindowSize,
                 compressionMergeEvery = fc.compressionMergeEvery ?: compressionMergeEvery,

@@ -16,6 +16,7 @@ import Branches from './features/branches/Branches';
 import Journal from './features/chat/Journal';
 import FuelMeter from './features/fuel/FuelMeter';
 import Maintenance from './features/maintenance/Maintenance';
+import MemoryPanel from './features/memory/MemoryPanel';
 import Recorder from './features/maintenance/Recorder';
 import Mirror from './features/mirror/Mirror';
 import SendBar from './features/send/SendBar';
@@ -30,6 +31,7 @@ import styles from './App.module.css';
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fuelOpen, setFuelOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [recorderOpen, setRecorderOpen] = useState(false);
   /* Режим ТО не персистится (как в ваниле): тумблер класса body и директивы */
   const [maintOn, setMaintOn] = useState(false);
@@ -73,6 +75,16 @@ export default function App() {
               {`Топливо за сессию ${totalTokens}`}
             </button>
           )}
+          <button
+            type="button"
+            className={styles.fuel}
+            aria-label="Память агента"
+            aria-haspopup="dialog"
+            aria-controls="memoryOverlay"
+            onClick={() => setMemoryOpen(true)}
+          >
+            Память
+          </button>
           <button
             type="button"
             className={styles.drawerToggle}
@@ -136,6 +148,9 @@ export default function App() {
       >
         <FuelMeter history={tokenHistory} />
       </Overlay>
+
+      {/* Память агента: три слоя — краткосрочный, рабочий, долговременный */}
+      <MemoryPanel open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       {/* Самописец: протокол обменов с моделью (ваниль recorderOverlay) */}
       <Recorder open={recorderOpen} onClose={() => setRecorderOpen(false)} />

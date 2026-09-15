@@ -21,6 +21,16 @@ import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.ContextStrategy
 import com.example.aiweb.model.ExchangeLogResponse
 import com.example.aiweb.model.JudgeReport
+import com.example.aiweb.model.MemoryCreateRequest
+import com.example.aiweb.model.MemoryDeletedResponse
+import com.example.aiweb.model.MemoryEntryResponse
+import com.example.aiweb.model.MemoryEntryView
+import com.example.aiweb.model.MemoryListResponse
+import com.example.aiweb.model.MemoryLongTermOverview
+import com.example.aiweb.model.MemoryOverviewResponse
+import com.example.aiweb.model.MemoryShortTermOverview
+import com.example.aiweb.model.MemoryUpdateRequest
+import com.example.aiweb.model.MemoryWorkingOverview
 import com.example.aiweb.model.ModelsResponse
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.ProviderModels
@@ -29,6 +39,15 @@ import com.example.aiweb.model.SessionsCleared
 import com.example.aiweb.model.SessionsResponse
 import com.example.aiweb.model.StreamEvent
 import com.example.aiweb.model.TurnUsage
+import com.example.aiweb.model.WorkingEntriesResponse
+import com.example.aiweb.model.WorkingUpsertRequest
+import com.example.aiweb.memory.LongTermMemoryStore
+import com.example.aiweb.memory.MemoryEntry
+import com.example.aiweb.memory.MemoryLimits
+import com.example.aiweb.memory.MemoryRetriever
+import com.example.aiweb.memory.MemorySearchEngine
+import com.example.aiweb.memory.WorkingEntry
+import com.example.aiweb.memory.WorkingMemoryStore
 import com.example.aiweb.session.HistoryCompressor
 import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.MergeResult
@@ -37,8 +56,11 @@ import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.session.SessionStore
 import com.example.aiweb.session.sessionStoreFor
 import com.example.aiweb.session.view
+import com.example.aiweb.tools.MemoryRecallTool
+import com.example.aiweb.tools.MemorySaveTool
 import com.example.aiweb.tools.NativeToolTransport
 import com.example.aiweb.tools.PromptToolTransport
+import com.example.aiweb.tools.TaskNotesTool
 import com.example.aiweb.tools.ToolRegistry
 import io.ktor.server.application.*
 import io.ktor.http.*
@@ -57,6 +79,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.nio.file.Files
+import java.util.UUID
 
 /**
  * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
@@ -111,6 +135,23 @@ fun Route.aiRoutes(
     // (отключённые в конфиге инструменты не видны модели)
     val registry = ToolRegistry.forConfig(config.tools)
 
+    // Память агента: строится один раз и живёт между запросами. Базовый каталог —
+    // тот же dataDir, что у хранилища сессий; без каталога данных (P0-режим)
+    // память живёт во временном каталоге процесса (переживать рестарт не обязана)
+    val memoryBaseDir = config.dataDir?.takeIf { it.isNotBlank() }
+        ?: Files.createTempDirectory("ai-memory").toString()
+    val workingMemory = WorkingMemoryStore(memoryBaseDir)
+    val longTermMemory = LongTermMemoryStore(memoryBaseDir)
+    val memory = AgentMemory(
+        workingMemory,
+        longTermMemory,
+        MemoryRetriever(workingMemory, longTermMemory, MemorySearchEngine.forConfig(config.memory, longTermMemory))
+    )
+
+    // Сироты рабочей памяти (файлы сессий, удалённых из хранилища) чистятся
+    // при старте; SessionStore умеет перечислять сессии через list()
+    workingMemory.pruneOrphans(sessions.list().map { it.id }.toSet())
+
     // Хуки контекстных стратегий после ответа (экстракция фактов / подрезка
     // окна): стратегия разрешается по тому же приоритету, что в обработчиках;
     // экстрактор — фабричный шов провайдера
@@ -164,7 +205,7 @@ fun Route.aiRoutes(
         try {
             val response = handleAgent(
                 chat.aiClient, body, chat.provider, chat.session,
-                sessions, config, compressors.getValue(chat.provider), registry
+                sessions, config, compressors.getValue(chat.provider), registry, memory
             )
 
             call.respond(
@@ -206,7 +247,7 @@ fun Route.aiRoutes(
                 try {
                     val response = handleAgent(
                         chat.aiClient, body, chat.provider, chat.session,
-                        sessions, config, compressors.getValue(chat.provider), registry
+                        sessions, config, compressors.getValue(chat.provider), registry, memory
                     ) { event ->
                         frames.trySend(StreamEvent.Agent(event))
                     }
@@ -369,15 +410,259 @@ fun Route.aiRoutes(
         call.respond(activated)
     }
 
-    // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно)
+    // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно);
+    // вместе с сессией стирается её рабочая память
     delete("/api/session/{id}") {
-        sessions.delete(call.parameters["id"] ?: "")
+        val id = call.parameters["id"] ?: ""
+        sessions.delete(id)
+        workingMemory.clear(id)
         call.respond(HttpStatusCode.NoContent)
     }
 
     // DELETE /api/sessions — стирает все сессии пользователя
     delete("/api/sessions") {
         call.respond(SessionsCleared(deleted = sessions.clear()))
+    }
+
+    // --- Память агента: HTTP-маршруты ---
+
+    // GET /api/session/{id}/working — записи рабочей памяти сессии.
+    // Неизвестная сессия — 404
+    get("/api/session/{id}/working") {
+        val session = sessions.get(call.parameters["id"] ?: "")
+        if (session == null) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@get
+        }
+        call.respond(WorkingEntriesResponse(workingMemory.entries(session.id)))
+    }
+
+    // PUT /api/session/{id}/working — добавить или заменить заметку рабочей
+    // памяти (id null → UUID, createdAt = now). Ответ — актуальный список записей.
+    // Неизвестная сессия — 404, пустые заголовок/текст — 400, капы хранилища —
+    // 400 с сообщением хранилища
+    put("/api/session/{id}/working") {
+        val session = sessions.get(call.parameters["id"] ?: "")
+        if (session == null) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@put
+        }
+        val request = try {
+            call.receive<WorkingUpsertRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, ChatResponse("Некорректный запрос."))
+            return@put
+        }
+        if (request.title.isBlank() || request.content.isBlank()) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse("Заголовок и текст заметки не могут быть пустыми.")
+            )
+            return@put
+        }
+        try {
+            val entries = workingMemory.upsert(
+                session.id,
+                WorkingEntry(
+                    id = request.id?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
+                    title = request.title,
+                    content = request.content,
+                    createdAt = System.currentTimeMillis(),
+                    updatedAt = 0L
+                )
+            )
+            call.respond(WorkingEntriesResponse(entries))
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse(e.message ?: "Не удалось сохранить заметку.")
+            )
+        }
+    }
+
+    // DELETE /api/session/{id}/working/{entryId} — удалить заметку по id
+    // (неизвестный id — без ошибки). Ответ — остаток записей. Неизвестная сессия — 404
+    delete("/api/session/{id}/working/{entryId}") {
+        val session = sessions.get(call.parameters["id"] ?: "")
+        if (session == null) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@delete
+        }
+        val entries = workingMemory.remove(session.id, call.parameters["entryId"] ?: "")
+        call.respond(WorkingEntriesResponse(entries))
+    }
+
+    // DELETE /api/session/{id}/working — стереть всю рабочую память сессии.
+    // Неизвестная сессия — 404
+    delete("/api/session/{id}/working") {
+        val session = sessions.get(call.parameters["id"] ?: "")
+        if (session == null) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@delete
+        }
+        workingMemory.clear(session.id)
+        call.respond(WorkingEntriesResponse(emptyList()))
+    }
+
+    // GET /api/memory?kind=&q= — записи долговременной памяти (свежие первыми)
+    // с фильтром по виду и/или подстроке; счётчики по видам — всегда полные.
+    // Неизвестный вид в query — 400
+    get("/api/memory") {
+        val kind = call.request.queryParameters["kind"]?.takeIf { it.isNotBlank() }
+        if (kind != null && kind !in MemoryLimits.KINDS) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse(
+                    "Неизвестный вид памяти '$kind' " +
+                        "(допустимы: ${MemoryLimits.KINDS.joinToString(", ")})"
+                )
+            )
+            return@get
+        }
+        val q = call.request.queryParameters["q"]?.takeIf { it.isNotBlank() }
+        call.respond(
+            MemoryListResponse(
+                entries = longTermMemory.list(kind, q).map { it.toView() },
+                counts = longTermMemory.counts()
+            )
+        )
+    }
+
+    // POST /api/memory — новая запись долговременной памяти (источник "user").
+    // Неизвестный вид — 400, пустые заголовок/текст — 400, лимиты хранилища —
+    // 400 с сообщением хранилища
+    post("/api/memory") {
+        val request = try {
+            call.receive<MemoryCreateRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, ChatResponse("Некорректный запрос."))
+            return@post
+        }
+        if (request.kind !in MemoryLimits.KINDS) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse("Вид записи должен быть одним из: profile, decision, knowledge")
+            )
+            return@post
+        }
+        if (request.title.isBlank() || request.content.isBlank()) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse("Заголовок и текст записи не могут быть пустыми.")
+            )
+            return@post
+        }
+        val now = System.currentTimeMillis()
+        try {
+            val entry = longTermMemory.add(
+                MemoryEntry(
+                    id = UUID.randomUUID().toString(),
+                    kind = request.kind,
+                    title = request.title,
+                    content = request.content,
+                    tags = request.tags.orEmpty(),
+                    source = "user",
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+            call.respond(MemoryEntryResponse(entry.toView()))
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse(e.message ?: "Не удалось сохранить запись.")
+            )
+        }
+    }
+
+    // PUT /api/memory/{id} — частичное обновление записи (null-поля остаются
+    // прежними, updatedAt проставляет хранилище). Неизвестный id — 404,
+    // нарушения лимитов — 400
+    put("/api/memory/{id}") {
+        val request = try {
+            call.receive<MemoryUpdateRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, ChatResponse("Некорректный запрос."))
+            return@put
+        }
+        if (request.kind != null && request.kind !in MemoryLimits.KINDS) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse("Вид записи должен быть одним из: profile, decision, knowledge")
+            )
+            return@put
+        }
+        if (request.title != null && request.title.isBlank()) {
+            call.respond(HttpStatusCode.BadRequest, ChatResponse("Заголовок не может быть пустым."))
+            return@put
+        }
+        if (request.content != null && request.content.isBlank()) {
+            call.respond(HttpStatusCode.BadRequest, ChatResponse("Текст записи не может быть пустым."))
+            return@put
+        }
+        try {
+            val updated = longTermMemory.update(call.parameters["id"] ?: "") { existing ->
+                existing.copy(
+                    kind = request.kind ?: existing.kind,
+                    title = request.title ?: existing.title,
+                    content = request.content ?: existing.content,
+                    tags = request.tags ?: existing.tags
+                )
+            }
+            if (updated == null) {
+                call.respond(HttpStatusCode.NotFound, ChatResponse("Запись не найдена."))
+            } else {
+                call.respond(MemoryEntryResponse(updated.toView()))
+            }
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ChatResponse(e.message ?: "Не удалось обновить запись.")
+            )
+        }
+    }
+
+    // DELETE /api/memory/{id} — удалить запись; {"deleted": true|false}
+    delete("/api/memory/{id}") {
+        call.respond(MemoryDeletedResponse(deleted = longTermMemory.delete(call.parameters["id"] ?: "")))
+    }
+
+    // GET /api/memory/overview?sessionId= — сводка всех слоёв памяти для панели
+    // памяти. Неизвестная сессия НЕ ошибка (панель открывают и для свежей
+    // сессии): turns/working — нули, долговременные счётчики — по хранилищу
+    get("/api/memory/overview") {
+        val sessionId = call.request.queryParameters["sessionId"]?.takeIf { it.isNotBlank() }
+        val session = sessionId?.let { sessions.get(it) }
+        val counts = longTermMemory.counts()
+        call.respond(
+            MemoryOverviewResponse(
+                shortTerm = MemoryShortTermOverview(
+                    turns = session?.messages?.size ?: 0,
+                    hasSummary = session?.summary != null
+                ),
+                working = MemoryWorkingOverview(
+                    entries = sessionId?.let { workingMemory.entries(it) }?.size ?: 0
+                ),
+                longTerm = MemoryLongTermOverview(
+                    total = counts.values.sum(),
+                    profile = counts["profile"] ?: 0,
+                    decision = counts["decision"] ?: 0,
+                    knowledge = counts["knowledge"] ?: 0
+                )
+            )
+        )
     }
 
     // GET /api/files/{name} — пользователь скачивает файлы, записанные агентом
@@ -563,6 +848,32 @@ private class ContextHooks(
 )
 
 /**
+ * Компоненты памяти агента, построенные один раз в aiRoutes и живущие между
+ * запросами: рабочая память сессий, долговременная память и ретривер блока
+ * памяти для системного сообщения.
+ */
+private class AgentMemory(
+    val working: WorkingMemoryStore,
+    val long: LongTermMemoryStore,
+    val retriever: MemoryRetriever
+)
+
+/**
+ * Запись долговременной памяти в HTTP-ответ: MemoryEntry с encodeDefaults=false
+ * omitил бы source="user" и пустые tags — вид [MemoryEntryView] кодирует их всегда.
+ */
+private fun MemoryEntry.toView(): MemoryEntryView = MemoryEntryView(
+    id = id,
+    kind = kind,
+    title = title,
+    content = content,
+    tags = tags,
+    source = source,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+/**
  * Общий препроцессинг /api/chat и /api/chat/stream: выбор провайдера, клиента LLM
  * и сессии диалога. Память диалога есть у каждого запроса: без sessionId создаётся
  * новая сессия, неизвестный/выселенный id тоже начинает диалог заново.
@@ -700,6 +1011,12 @@ private suspend fun finalizeResponse(
  * пользовательское сообщение и финальный ответ — промежуточный трафик инструментов
  * (общий пост-блок finalizeResponse после ответа) в память не пишет.
  *
+ * Память агента ([memory], компоненты построены один раз в aiRoutes): при
+ * ChatRequest.memoryTools != false к базовому реестру добавляются инструменты
+ * task_notes/memory_save/memory_recall (без мутации базового [registry]), а в seed
+ * после trim добавляется системное сообщение с блоком памяти (MemoryRetriever;
+ * null — оба слоя памяти пусты).
+ *
  * Сжатие истории — только при стратегии SUMMARY (legacy-флаг с конфиг-фолбэком):
  *  - merge выполняется СИНХРОННО до запуска цикла; сбой суммаризатора — деградация
  *    (лог, прежний summary, summaryTokens=null), агентный прогон не падает;
@@ -723,14 +1040,30 @@ private suspend fun handleAgent(
     config: AppConfig,
     compressor: HistoryCompressor,
     registry: ToolRegistry,
+    memory: AgentMemory,
     onEvent: suspend (AgentEvent) -> Unit = {}
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
+    // Память запроса: по умолчанию (null/true) инструменты памяти добавляются
+    // к копии реестра; memoryTools = false — базовый реестр без изменений
+    val memoryEnabled = body.memoryTools ?: true
+    val requestRegistry = if (memoryEnabled) {
+        registry.augmentedWith(
+            listOf(
+                TaskNotesTool(memory.working, session?.id),
+                MemorySaveTool(memory.long),
+                MemoryRecallTool(memory.long)
+            )
+        )
+    } else {
+        registry
+    }
+
     val loop = AgentLoop(
         client = aiClient,
         transport = if (provider.supportsTools) NativeToolTransport() else PromptToolTransport(),
-        registry = registry
+        registry = requestRegistry
     )
 
     // 1) Синхронный merge до запуска агентного цикла — ТОЛЬКО при стратегии SUMMARY
@@ -760,7 +1093,7 @@ private suspend fun handleAgent(
 
     // 2) Seed цикла: вид по стратегии из планировщика (view — чистая функция) +
     //    новый вопрос, затем СТАДИЯ-2 SessionHistory.trim (последний этап).
-    val seed = viewSession
+    val trimmedSeed = viewSession
         ?.let {
             SessionHistory.trim(
                 view(strategy, it.summary, it.messages, it.facts, compressor.windowSize, compressor) +
@@ -769,6 +1102,18 @@ private suspend fun handleAgent(
             )
         }
         ?: listOf(OpenAIMessage(role = "user", content = body.message))
+
+    // Блок памяти добавляется ПОСЛЕ trim (в конец seed), чтобы блок не резался:
+    // trim считается по истории до обрезки, и попадание памяти под срез лишило бы
+    // модель рабочего контекста. null — память выключена или оба слоя пусты
+    val memoryMessage =
+        if (memoryEnabled && session != null) {
+            memory.retriever.memoryBlock(session.id, body.message)
+                ?.let { OpenAIMessage(role = "system", content = it) }
+        } else {
+            null
+        }
+    val seed = trimmedSeed + listOfNotNull(memoryMessage)
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(

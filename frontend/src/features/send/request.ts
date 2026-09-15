@@ -59,7 +59,7 @@ export interface SendContext {
 /** Поля настроек, уходящие в запрос; зеркальные не участвуют (волна 6). */
 export type SendSettings = Pick<
   SettingsValues,
-  'model' | 'temperature' | 'maxTokens' | 'topP' | 'stop' | 'thinking' | 'judge' | 'contextStrategy'
+  'model' | 'temperature' | 'maxTokens' | 'topP' | 'stop' | 'thinking' | 'judge' | 'contextStrategy' | 'memoryTools'
 >;
 
 /**
@@ -75,6 +75,8 @@ export function buildChatRequest(
   message: string,
 ): ChatRequest {
   const selected = splitModelValue(settings.model || '');
+  /* Память агента всегда идёт явным boolean: сервер трактует
+     отсутствие поля как «включено» (spec «Память»). */
   const request: ChatRequest = {
     message,
     provider: selected.provider,
@@ -87,7 +89,8 @@ export function buildChatRequest(
     sessionId: ctx.sessionId || null,
     judgeEnabled: settings.judge,
     contextStrategy: settings.contextStrategy,
-  };
+    memoryTools: settings.memoryTools,
+  } as ChatRequest & { memoryTools: boolean };
   if (settings.contextStrategy === 'branching' && ctx.sessionId && ctx.activeBranchId) {
     request.branchId = ctx.activeBranchId;
   }
