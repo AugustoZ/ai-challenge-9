@@ -11,14 +11,17 @@ static/» в таблицах ниже — ссылка на исходник в
 ## СТРУКТУРА
 ```
 src/
-  api/        типы API (types.ts — зеркало Models.kt, синхронизировать вручную),
-              SSE-клиент (sse.ts: parseFrame + streamChat), client.ts (postJson/getJson)
-  lib/        чистые утилиты (format, markdown, storage)
-  stores/     zustand-сторы (settings — persist, session, branches)
+  api/        типы API (types.ts — зеркало Models.kt и prefs/UserPreferences.kt,
+              синхронизировать вручную), SSE-клиент (sse.ts: parseFrame + streamChat),
+              client.ts (postJson/getJson/putJson/deleteJson, X-Auth-Token и 401 — централизованно)
+  lib/        чистые утилиты (format, markdown, storage, validators — зеркало серверной валидации)
+  stores/     zustand-сторы (settings — persist, session, branches,
+              auth — sessionStorage, БЕЗ persist-мидлвир)
   components/ приборы: Dial, AnnunciatorGroup, Lamp, Clock, Overlay, StatusLine,
               Drawer + dialMath.ts, overlayStack.ts
   features/   фичевые модули (chat, send, settings, strategy, mirror,
-              sessions, branches, maintenance, judge, trace, fuel)
+              sessions, branches, maintenance, judge, trace, fuel,
+              auth, onboarding)
   styles/     tokens.css (единственный :root) + base.css (body, шрифты, скроллбары)
 ```
 
@@ -35,6 +38,8 @@ npm run verify                   # tsc --noEmit + eslint + vitest + vite build
 - Без Tailwind, компонентных библиотек и CSS-in-JS; зависимости — только по веской причине.
 - Сетевые стримы — только из обработчиков событий; в mount-эффектах — идемпотентные GET с abort в cleanup (StrictMode удваивает эффекты).
 - Vitest — только чистые функции (парсер, format, сторы); без jsdom/RTL.
+- Токен сессии — только `sessionStorage` (`shturman.auth.v1`), НЕ localStorage: вкладка закрылась — вход сброшен, перезапуск сервера — повторный вход (токен в памяти сервера).
+- Заголовок `X-Auth-Token` подставляют только `api/client.ts` и `api/sse.ts`; правила валидации — только в `lib/validators.ts` (зеркало сервера; единый источник лимитов — `api/types.ts`).
 
 ## СМОУК-ЧЕКЛИСТ (перед коммитом)
 - [ ] Отправка сообщения — стрим идёт, ответ появляется в журнале
@@ -44,6 +49,12 @@ npm run verify                   # tsc --noEmit + eslint + vitest + vite build
 - [ ] Топливомер — расход топлива за сессию
 - [ ] Судья — заключение под ответом
 - [ ] Режим ТО/самописец — сырой JSON обмена с моделью
+- [ ] Пустой sessionStorage — гейт входа «ВВЕДИТЕ ПИН пользователя»
+- [ ] Неверный ПИН — русская ошибка, поле очищается; 3-я неудача — кулдаун 429 с текстом сервера
+- [ ] Создание пользователя (имя ≤25 + ПИН) — авто-вход → визард 7 вопросов
+- [ ] Визард: Esc — ничего не сохранено (серверные дефолты), «Сохранить» — PUT /api/preferences
+- [ ] Reload с токеном — сразу консоль (restore); перезапуск бэкенда — снова гейт
+- [ ] Чип «Сменить пользователя»/«Выйти» — гейт; у нового пользователя чистый журнал и чужих данных нет
 
 ## КОМПОНЕНТЫ (волна 3a — примитивы приборки)
 
@@ -196,3 +207,76 @@ Mount-эффекты — только идемпотентные GET (переч
 колонка каркаса, не оверлей. Тесты волны 6: `mirror/twin.test.ts`,
 `sessions/sessionList.test.ts`, `branches/branchList.test.ts`,
 `chat/history.test.ts` (чистая логика, без jsdom).
+
+## ВХОД, ПРЕДПОЧТАНИЯ, СМЕНА ПОЛЬЗОВАТЕЛЯ (персонализация)
+
+Персонализация поверх memory-layers
+(openspec/changes/add-user-preferences): многопользовательский режим.
+Пока `authStore.status` не `authed`, App рендерит гейт входа **вместо**
+консоли (условный рендер, не Overlay); чип пользователя — в шапке,
+онбординг-визард — Overlay поверх консоли, секция «Предпочтения» — в
+панели приборов. Данные пользователей живут на сервере per-user; вкладка
+держит только токен (`sessionStorage`, ключ `shturman.auth.v1`).
+
+| Файл | Назначение | Примечания |
+|---|---|---|
+| `stores/auth.ts` + `auth.test.ts` | auth-стор, фабрика `createAuthStore(storage)` — хранилище первым аргументом (паттерн `createSettingsStore`), тесты — in-memory | состояние `checking`/`anon`/`authed` + `onboardingRequired`; persist-мидлвир НЕ используется — read/write/clear маленькими хелперами; `login` (сохраняет token+user → `authed`), `createUser` (автовход, поднимает `onboardingRequired`), `logout`, `completeOnboarding`, `getToken`; `restore()` — токен есть → проверочный GET /api/preferences → `authed`, при ЛЮБОЙ ошибке (401/сеть) — `logout` (план: «authed или logout»); `handle401()` — централизованный разлогин |
+| `features/auth/AuthGate.tsx` + `.module.css` | полноэкранный гейт вместо консоли | список пользователей (клавиши-аннунциаторы, `aria-pressed`) → выбор → поле ПИН «ВВЕДИТЕ ПИН пользователя» (`inputmode=numeric`, маска 4 цифры, «Войти» заблокирован до выбора + 4 цифр, «Сброс»); «Создать пользователя» — имя ≤25 + ПИН с live-валидацией → авто-вход; пустой список — сразу форма создания; отказ GET — «Не удалось загрузить список пользователей» + «Повторить» (сброс — в обработчике, `reloadTick`); ошибки — по-русски: текст 401 от сервера приоритетен (фолбэк «Неверный ПИН или пользователь»), 429 — кулдаун-текст сервера, сеть — «Нет связи с сервером. Проверьте, что бэкенд запущен»; стиль — приборная доска, только токены |
+| `features/auth/authGateLogic.ts` + `authGate.test.ts` | чистая логика гейта | `maskPin` (strip non-digits, cap 4), `isPinComplete`, `validateCreateForm`, `loginErrorText`, `createErrorText`; имя файла — НЕ `authGate.ts`: коллизия с `AuthGate.tsx` ломает tsc (см. грабли) |
+| `features/auth/UserChip.tsx` + `.module.css` | чип текущего пользователя в шапке | имя из auth-стора, янтарная лампа; меню `role="menu"`: «Сменить пользователя» и «Выйти» — ОБА ведут в `logout()` → гейт (отдельного экрана «выхода» нет); Esc — через общий `overlayStack` (только верхний слой), клик мимо закрывает, фокус возвращается на чип |
+| `features/auth/resetState.ts` + `resetState.test.ts` | очистка бортового состояния при выходе/смене | `clearUserState(stores)` — чистая, операции инъекцией (SessionResetOps/BranchResetOps/MemoryResetOps/TwinsResetOps); `resetUserState()` — на реальных сторах; reset-лист: sessionId=null, журнал, топливомер, перечень сессий, факты, ветки (hideBranches), память (resetMemory), twinRegistry; SettingsStore НЕ входит (настройки приборов = браузерный `shturman.settings.v1`, конфигурация прибора, а не данные пользователя); черновик SendBar — неконтролируемое поле, умирает с демонтированием консоли (условный рендер) — отдельной очистки нет; вызывает App при переходе `authed → anon` (эффект с `prevAuthStatusRef`: клавиши чипа, logout, любой 401, рестарт сервера) |
+| `features/onboarding/OnboardingWizard.tsx` + `.module.css` | визард 7 вопросов на общем Overlay | «Настройка предпочтений» (подзаголовок «7 вопросов о том, как вам отвечать»): прогресс — 7 сегментов + «Шаг N из 7»; radio-шаги — `AnnunciatorGroup` (длина — `variant="strategy"`, подсказки-ориентиры ≈1/до 3/≈10 тыс. токенов); «иное» в структуре — текстовое поле активно только при выборе «иное» (≤255, счётчик); свободные поля ≤1000 со счётчиком «8/1000»; предзаполнение — GET /api/preferences на mount (отказ → дефолты, опросник не блокируем; StrictMode — abort в cleanup); «Назад»/«Далее» (заблокирован при ошибке шага), «Сохранить» — PUT → `onSaved()`; прерывание (Esc/крестик/фон) — `onClose()`, НИЧЕГО не сохраняется — работают серверные дефолты; обёртка без хуков (`if (!open) return null`) + внутренний `WizardDialog` — при каждом открытии свежий mount, шаги/ответы сбрасываются сами |
+| `features/onboarding/wizard.ts` + `wizard.test.ts` | чистая логика визарда (30 тестов) | `WIZARD_STEP_COUNT=7`, `STEP_TITLES` (русские тексты вопросов); `createInitialAnswers` — серверные дефолты; `answersFromPreferences` — словарная структура → клавиша, всё прочее → «иное»+текст (кастом с сервера не теряется); `sanitizeFreeText` (контрольные символы → пробел, зеркало `Character.isISOControl`; ввод НЕ триммится — trim в `buildPayload` и на сервере), `capFreeText` (дубль maxLength), `counterText`; `buildPayload` («иное» → свой текст, trim); `stepError`/`canAdvance`/`payloadErrors` — через `validatePreferences` с фильтром по префиксу поля (валидация НЕ дублируется); `saveErrorText` (текст 400 от сервера приоритетен, сеть — «Нет связи с сервером…») |
+| `features/settings/PreferencesSection.tsx` + `.module.css` | секция «Предпочтения» панели приборов | между «Памятью» и «Обслуживанием»: табло 7 значений (dt/dd, зелёный моно, ellipsis, пустое = гравировка «не задано») + клавиша-аннунциатор «Изменить в опроснике» — СОБСТВЕННЫЙ экземпляр `OnboardingWizard` (своё open-состояние, `onSaved` → закрыть + перечитать); чтение GET при монтаже и при первом открытии Drawer'а (флаг `hasOpened` — см. грабли), закрытие Drawer'а не перечитывает; отказ — строка «Не удалось загрузить предпочтения» + «Повторить»; подпись: блок «Предпочтения пользователя» прикладывается к каждому запросу, правка только в опроснике |
+| `App.tsx` (расширение) | гейт + чип + визард + сброс | селекторы auth-стора — ДО остальных хуков; `restore()` в mount-эффекте (идемпотентно: StrictMode удваивает); `checking` → заглушка «Проверка сессии…», `anon` → `<AuthGate/>` вместо консоли; `UserChip` в `topStrip`; `<OnboardingWizard open={onboardingRequired} onClose/onSaved={completeOnboarding}/>` (поднимается после createUser); переход `authed → anon` → `resetUserState()`; перечни нового пользователя перечитываются сами (SessionsPanel — mount-GET, память — при открытии) |
+
+Конвенции домена:
+- Токен — **sessionStorage** (`shturman.auth.v1`), не localStorage:
+  вкладки независимы, закрытие вкладки = сброс входа, перезапуск сервера =
+  повторный вход (токены живут в памяти сервера).
+- **Инверсия client↔store**: `api/client.ts` НЕ импортирует auth-стор;
+  стор при создании сам регистрируется через `setAuthTokenProvider` /
+  `setUnauthorizedHandler` (последний созданный стор побеждает — в
+  приложении он один). `api/sse.ts` читает токен напрямую
+  (`useAuthStore.getState().getToken()`) в момент открытия потока;
+  401 на стриме → `{ok:false}` → блокирующий фолбэк `postJson('chat')`
+  дёргает центральный 401-хендлер.
+- **GET /api/preferences всегда отдаёт все 7 полей** — на сервере каждое
+  поле `UserPreferences` помечено `@EncodeDefault(EncodeDefault.Mode.ALWAYS)`
+  (Json сервера `encodeDefaults=false`; без аннотации GET дефолтных
+  предпочтений отвечал бы `{}`). Зеркалируя DTO в `api/types.ts` —
+  учитывать.
+- `PUT /api/preferences` = ЗАМЕЩЕНИЕ, не мердж: фронт шлёт полный
+  7-полевой объект (визард так и делает).
+- Правила валидации — только в `lib/validators.ts` (зеркало
+  `auth/UserAccount.kt` и `prefs/PreferenceLimits.kt`: `isValidPin`,
+  `isValidName`, `validatePreferences`); сервер — последняя линия обороны
+  (400 с русским текстом поля).
+
+Грабли (для будущих агентов):
+- **Кейс-коллизия имён**: `authGate.ts` + `AuthGate.tsx` в одном
+  каталоге ломают tsc на macOS (case-insensitive FS: «differs only in
+  casing») — чистая логика названа `authGateLogic.ts`, тесты
+  импортируют `./authGateLogic`.
+- **StrictMode × open-затвор**: вариант «mountedRef + `if (!open &&
+  !isMount) return`» ЛОМАЕТСЯ двойным монтированием — первый fetch
+  абортируется cleanup'ом, второй видит `isMount=false` и уходит, не
+  фетча, данные никогда не приходят (находилось Playwright-прогоном:
+  пустая секция). Лечение: `hasOpened` выводится **во время рендера**
+  (setState при рендере — задокументированный React-паттерн «adjusting
+  state when a prop changes») + безусловный эффект на
+  `[hasOpened, reloadTick]`. Не «упрощать» обратно.
+- **setState в теле эффекта** — ошибка линта
+  (`react-hooks/set-state-in-effect`): сброс состояния — в обработчике
+  клавиши (`reloadTick`), «идёт загрузка» — выводимое состояние
+  (показаний нет + отказа нет), не хранимый флаг.
+- **StrictMode × GET в эффекте** (AuthGate, визард, PreferencesSection):
+  abort в cleanup и гвард `controller.signal.aborted` и в catch, и в
+  finally.
+- **Playwright**: `innerText` отдаёт CSS-uppercase («ВВЕДИТЕ ПИН
+  ПОЛЬЗОВАТЕЛЯ»), `aria-label` не попадает в `innerText` — ассертить
+  через `querySelector`/role; заголовок «Штурман» есть и в гейте, и в
+  консоли — ждать приборы консоли («Память агента»); локаторы визарда —
+  в скоупе `getByRole('dialog')` («Назад» коллидирует с кнопкой памяти
+  под оверлеем — strict violation); `fill()` обходит `maxLength` —
+  кап режет в `onChange`, честный тест капа именно такой.

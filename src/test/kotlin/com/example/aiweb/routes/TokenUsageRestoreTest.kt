@@ -24,17 +24,11 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import java.net.ServerSocket
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -72,19 +66,13 @@ class TokenUsageRestoreTest {
         )
     )
 
-    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
-
     /** Поднимает приложение с фейковым LLM (ответ 1/2/3 токенов) и передаёт harness. */
     private fun withApp(block: suspend (base: String, store: SessionStore) -> Unit) {
         val store = InMemorySessionStore()
         val chat = FakeLLMClient(
             ChatResult(reply = "ответ сервера", promptTokens = 1, completionTokens = 2, totalTokens = 3, elapsedMs = 42L)
         )
-        val port = freePort()
-        val server = embeddedServer(Netty, port = port, host = "127.0.0.1") {
-            install(ServerContentNegotiation) {
-                json(Json { ignoreUnknownKeys = true; isLenient = true })
-            }
+        withAuthApp(module = {
             routing {
                 aiRoutes(
                     config = config(),
@@ -103,20 +91,12 @@ class TokenUsageRestoreTest {
                     }
                 )
             }
-        }
-        server.start(wait = false)
-        try {
-            kotlinx.coroutines.runBlocking { block("http://127.0.0.1:$port", store) }
-        } finally {
-            server.stop(100, 500)
+        }) { app ->
+            kotlinx.coroutines.runBlocking { block(app.base, store) }
         }
     }
 
-    private fun httpClient() = HttpClient(CIO) {
-        install(ContentNegotiation) {
-            json(Json { ignoreUnknownKeys = true })
-        }
-    }
+    private fun httpClient() = testHttpClient()
 
     /** Последнее сообщение с заданной ролью из сырого JSON сессии. */
     private fun messageByRole(sessionJson: kotlinx.serialization.json.JsonObject, role: String) =

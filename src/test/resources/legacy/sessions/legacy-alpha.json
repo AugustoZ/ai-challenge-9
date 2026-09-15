@@ -1,0 +1,9 @@
+{
+  "id": "legacy-alpha",
+  "messages": [
+    {"role": "user", "content": "Проверка связи, борт."},
+    {"role": "assistant", "content": "Связь есть, слушаю."}
+  ],
+  "createdAt": 1726000000000,
+  "updatedAt": 1726000000001
+}

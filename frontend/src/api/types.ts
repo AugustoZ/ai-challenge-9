@@ -385,3 +385,97 @@ export interface MemoryOverview {
   working: { entries: number };
   longTerm: { total: number; profile: number; decision: number; knowledge: number };
 }
+
+/* ---------- Auth (Models.kt: AuthUserView / LoginRequest /
+   CreateUserRequest / AuthTokenResponse / UserCreatedResponse) ---------- */
+
+/** Пользователь без секретов: wire-ответ несёт ТОЛЬКО id и name. */
+export interface AuthUserView {
+  id: string;
+  name: string;
+}
+
+/** Тело POST /api/auth/login. */
+export interface LoginRequest {
+  userId: string;
+  pin: string;
+}
+
+/** Тело POST /api/auth/users. */
+export interface CreateUserRequest {
+  name: string;
+  pin: string;
+}
+
+/** Ответ успешного входа: токен для заголовка X-Auth-Token + пользователь. */
+export interface AuthTokenResponse {
+  token: string;
+  user: AuthUserView;
+}
+
+/**
+ * Ответ POST /api/auth/users: создание пользователя сразу с токеном
+ * (авто-вход). Форма совпадает с AuthTokenResponse — отдельный тип для
+ * читаемости контракта (зеркало Models.kt).
+ */
+export interface UserCreatedResponse {
+  token: string;
+  user: AuthUserView;
+}
+
+/* ---------- Предпочтения (prefs/UserPreferences.kt + PreferenceLimits.kt) ---------- */
+
+/** Форма обращения: словарь поля addressForm. */
+export const ADDRESS_FORMS = ['ты', 'вы', 'пилот', 'гонщик'] as const;
+export type AddressForm = (typeof ADDRESS_FORMS)[number];
+
+/** Тон ответов: словарь поля tone. */
+export const TONES = ['формальный', 'дружелюбный', 'панибратский', 'роботизированный'] as const;
+export type Tone = (typeof TONES)[number];
+
+/** Язык ответов: словарь поля language. */
+export const LANGUAGES = ['Русский', 'Английский'] as const;
+export type Language = (typeof LANGUAGES)[number];
+
+/** Готовые варианты длины ответов; произвольные строки не допускаются. */
+export const LENGTHS = ['кратко', 'средне', 'развернуто'] as const;
+export type Length = (typeof LENGTHS)[number];
+
+/** Лимиты свободных полей (зеркало PreferenceLimits.kt). */
+export const ADDRESS_MAX = 255; // answerStructure (свободный текст)
+export const TEXT_MAX = 1000; // avoidTopics, interests
+
+/** Семь полей предпочтений пользователя (Kotlin: UserPreferences). */
+export interface UserPreferences {
+  /** Форма обращения: ты | вы | пилот | гонщик. */
+  addressForm: AddressForm;
+  /** Тон: формальный | дружелюбный | панибратский | роботизированный. */
+  tone: Tone;
+  /** Язык ответов: Русский | Английский. */
+  language: Language;
+  /** Структура ответов: таблицы | текст | стихи | произвольное ≤255. */
+  answerStructure: string;
+  /** Длина ответов: кратко | средне | развернуто. */
+  length: Length;
+  /** Темы, которых избегать, ≤1000 символов. */
+  avoidTopics: string;
+  /** Интересы пользователя, ≤1000 символов. */
+  interests: string;
+}
+
+/** Тело PUT /api/preferences — тот же контракт (зеркало UpdatePreferencesRequest). */
+export type UpdatePreferencesRequest = UserPreferences;
+
+/**
+ * Дефолты сервера (Kotlin: PreferencesStore.DEFAULTS): применяются при
+ * первом входе и когда пользователь ещё не сохранял предпочтения.
+ */
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  addressForm: 'ты',
+  tone: 'дружелюбный',
+  language: 'Русский',
+  answerStructure: 'текст',
+  length: 'средне',
+  avoidTopics: '',
+  interests: '',
+};

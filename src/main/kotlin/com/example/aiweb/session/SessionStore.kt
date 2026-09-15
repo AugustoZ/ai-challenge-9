@@ -12,8 +12,13 @@ import java.util.concurrent.ConcurrentHashMap
  * finalizeResponse.
  */
 interface SessionStore {
-    /** Создаёт пустую сессию с новым уникальным идентификатором. */
-    fun create(): Session
+    /**
+     * Создаёт пустую сессию с новым уникальным идентификатором.
+     *
+     * [userId] — владелец сессии (изоляция per-user); null — сессия без владельца
+     * (legacy-совместимость: старые вызовы и до-миграционные сессии).
+     */
+    fun create(userId: String? = null): Session
 
     /** Возвращает сессию по идентификатору; null, пустая строка или неизвестный id — null. */
     fun get(id: String?): Session?
@@ -83,6 +88,20 @@ interface SessionStore {
     /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
     fun list(): List<Session>
 
+    /**
+     * Снимок сессий пользователя [userId], отсортированных по updatedAt по убыванию
+     * (тот же порядок, что у [list]). Сессии других владельцев и сессии без владельца
+     * (userId == null) в список не попадают.
+     */
+    fun listForUser(userId: String): List<Session>
+
+    /**
+     * Удаляет все сессии пользователя [userId] (в файловой реализации — вместе
+     * с их файлами). Сессии других владельцев и сессии без владельца не трогаются.
+     * Возвращает число удалённых сессий.
+     */
+    fun deleteAllForUser(userId: String): Int
+
     /** Удаляет сессию; вызов для неизвестного идентификатора ошибкой не является (идемпотентно). */
     fun delete(id: String)
 
@@ -109,6 +128,11 @@ internal fun Session.activeDiverged(): Boolean =
 @Serializable
 data class Session(
     val id: String,
+    /**
+     * Владелец сессии (изоляция per-user); null — сессия без владельца.
+     * Back-compat: legacy-файлы сессий без этого поля читаются с null.
+     */
+    val userId: String? = null,
     val messages: List<OpenAIMessage> = emptyList(),
     /** Rolling-summary более старой истории (компрессия); null — сжатие ещё не выполнялось. */
     val summary: String? = null,
@@ -176,7 +200,11 @@ class InMemorySessionStore(
 ) : SessionStore {
 
     companion object {
-        /** Максимальное число живых сессий; лишние выселяются по старости (updatedAt). */
+        /**
+         * Максимальное число живых сессий; лишние выселяются по старости (updatedAt).
+         * ЭВИКЦИЯ ГЛОБАЛЬНАЯ — по всему хранилищу, без per-user квот (задокументированное
+         * решение; per-user квоты вне скоупа).
+         */
         const val MAX_SESSIONS = 50
 
         /** Жёсткий кап сообщений одной сессии. */
@@ -189,7 +217,8 @@ class InMemorySessionStore(
     /** Изменяемое внутреннее состояние сессии; [Session] — его снимок. */
     private class Entry(
         val id: String,
-        val createdAt: Long
+        val createdAt: Long,
+        val userId: String?
     ) {
         val messages = mutableListOf<OpenAIMessage>()
 
@@ -224,8 +253,8 @@ class InMemorySessionStore(
 
     private val sessions = ConcurrentHashMap<String, Entry>()
 
-    override fun create(): Session {
-        val entry = Entry(id = UUID.randomUUID().toString(), createdAt = now())
+    override fun create(userId: String?): Session {
+        val entry = Entry(id = UUID.randomUUID().toString(), createdAt = now(), userId = userId)
         sessions[entry.id] = entry
         evictOldest()
         return entry.snapshot()
@@ -354,6 +383,20 @@ class InMemorySessionStore(
     override fun list(): List<Session> =
         sessions.values.map { it.snapshot() }.sortedByDescending { it.updatedAt }
 
+    override fun listForUser(userId: String): List<Session> =
+        sessions.values
+            .filter { it.userId == userId }
+            .map { it.snapshot() }
+            .sortedByDescending { it.updatedAt }
+
+    override fun deleteAllForUser(userId: String): Int {
+        var deleted = 0
+        for ((id, entry) in sessions) {
+            if (entry.userId == userId && sessions.remove(id) != null) deleted++
+        }
+        return deleted
+    }
+
     override fun delete(id: String) {
         if (id.isNullOrBlank()) return
         sessions.remove(id.trim())
@@ -379,6 +422,7 @@ class InMemorySessionStore(
     private fun Entry.snapshot(): Session = synchronized(this) {
         Session(
             id = id,
+            userId = userId,
             messages = messages.toList(),
             summary = summary,
             branches = branches,

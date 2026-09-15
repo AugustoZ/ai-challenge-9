@@ -281,7 +281,9 @@ data class ExchangeInfo(
     /** Длительность обмена, мс (только для ответов). */
     val ms: Long? = null,
     /** Тело обмена: JSON запроса или ответа (либо текст ошибки связи). */
-    val payload: String
+    val payload: String,
+    /** Владелец обмена (userId из токена запроса чата); null — системная запись вне обработки запроса. */
+    val userId: String? = null
 )
 
 /** Ответ GET /api/log — содержимое бортового самописца. */
@@ -728,4 +730,50 @@ data class JudgeReport(
     val raw: String? = null,
     /** Время, потраченное на проверку, мс. */
     val elapsedMs: Long? = null
+)
+
+// --- Авторизация: пользователи, вход по ПИН, токены ---
+
+/**
+ * Публичный вид пользователя для списков и ответов auth-маршрутов:
+ * ТОЛЬКО id и имя — никаких pinHash/salt/createdAt (guardrail auth-домена).
+ */
+@Serializable
+data class AuthUserView(
+    val id: String,
+    val name: String
+)
+
+/** Тело POST /api/auth/login — выбранный пользователь и его ПИН. */
+@Serializable
+data class LoginRequest(
+    val userId: String,
+    val pin: String
+)
+
+/** Тело POST /api/auth/users — создание пользователя (имя + ПИН из 4 цифр). */
+@Serializable
+data class CreateUserRequest(
+    val name: String,
+    val pin: String
+)
+
+/** Ответ POST /api/auth/login — выданный токен (заголовок X-Auth-Token) и пользователь. */
+@Serializable
+data class AuthTokenResponse(
+    val token: String,
+    val user: AuthUserView
+)
+
+/** Ответ POST /api/auth/users — созданный пользователь и его первый токен (авто-вход). */
+@Serializable
+data class UserCreatedResponse(
+    val token: String,
+    val user: AuthUserView
+)
+
+/** Ошибка auth-маршрутов (400/401/429): русский текст для показа пользователю. */
+@Serializable
+data class AuthErrorResponse(
+    val error: String
 )

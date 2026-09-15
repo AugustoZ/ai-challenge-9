@@ -111,6 +111,20 @@
     outline-offset: 2px;
 }
 
+/* ---------- Гейт входа: заглушка на время restore() ---------- */
+
+.boot {
+    height: 100vh;
+    height: 100dvh;
+    display: grid;
+    place-items: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    background: var(--ground);
+}
+
 /* ---------- Полоса журнала (style.css L818–824) ---------- */
 
 .logColumn {

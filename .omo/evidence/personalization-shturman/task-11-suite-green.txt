@@ -1,0 +1,10 @@
+=== Task 11: withAuthApp fixture — full suite ===
+Tue Sep 15 15:21:42 UTC 2026
+
+./gradlew test -PskipFrontend
+BUILD SUCCESSFUL
+Tests: 436 total, 0 failures, 0 errors (baseline T6: 426; +3 WithAuthAppTest, +7 T7-concurrent PreferencesRoutesTest)
+
+Routes suites (per XML): Memory=9, Compression=41+, TokenUsage=2+, Auth=12, Intercept=4, LogFilter=2, WithAuthApp=3 — 0 failures
+
+TDD red phase (fixture stubbed TODO()): 3/3 FAILED NotImplementedError -> .omo/evidence/personalization-shturman/task-11-tdd-red.txt

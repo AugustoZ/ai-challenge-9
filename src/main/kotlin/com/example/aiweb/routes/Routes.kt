@@ -1,6 +1,10 @@
 package com.example.aiweb.routes
 
 import com.example.aiweb.agent.AgentLoop
+import com.example.aiweb.auth.LoginGuard
+import com.example.aiweb.auth.LoginResult
+import com.example.aiweb.auth.TokenManager
+import com.example.aiweb.auth.UserStore
 import com.example.aiweb.client.AIClient
 import com.example.aiweb.client.ChatResult
 import com.example.aiweb.client.ExchangeLog
@@ -14,14 +18,20 @@ import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
 import com.example.aiweb.model.ActivateBranchRequest
 import com.example.aiweb.model.AgentEvent
+import com.example.aiweb.model.AuthErrorResponse
+import com.example.aiweb.model.AuthTokenResponse
+import com.example.aiweb.model.AuthUserView
 import com.example.aiweb.model.BranchInfo
 import com.example.aiweb.model.BranchesResponse
 import com.example.aiweb.model.ChatRequest
 import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.ContextStrategy
+import com.example.aiweb.model.CreateUserRequest
 import com.example.aiweb.model.ExchangeLogResponse
 import com.example.aiweb.model.JudgeReport
+import com.example.aiweb.model.LoginRequest
 import com.example.aiweb.model.MemoryCreateRequest
+import com.example.aiweb.model.MemoryConfig
 import com.example.aiweb.model.MemoryDeletedResponse
 import com.example.aiweb.model.MemoryEntryResponse
 import com.example.aiweb.model.MemoryEntryView
@@ -39,15 +49,20 @@ import com.example.aiweb.model.SessionsCleared
 import com.example.aiweb.model.SessionsResponse
 import com.example.aiweb.model.StreamEvent
 import com.example.aiweb.model.TurnUsage
+import com.example.aiweb.model.UserCreatedResponse
 import com.example.aiweb.model.WorkingEntriesResponse
 import com.example.aiweb.model.WorkingUpsertRequest
-import com.example.aiweb.memory.LongTermMemoryStore
+import com.example.aiweb.memory.PerUserLongTermMemory
 import com.example.aiweb.memory.MemoryEntry
 import com.example.aiweb.memory.MemoryLimits
 import com.example.aiweb.memory.MemoryRetriever
 import com.example.aiweb.memory.MemorySearchEngine
 import com.example.aiweb.memory.WorkingEntry
 import com.example.aiweb.memory.WorkingMemoryStore
+import com.example.aiweb.prefs.PreferenceLimits
+import com.example.aiweb.prefs.PreferencesStore
+import com.example.aiweb.prefs.UserPreferences
+import com.example.aiweb.prefs.renderPromptBlock
 import com.example.aiweb.session.HistoryCompressor
 import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.MergeResult
@@ -67,6 +82,7 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.util.AttributeKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -79,8 +95,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.io.File
 import java.nio.file.Files
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
@@ -137,20 +155,226 @@ fun Route.aiRoutes(
 
     // Память агента: строится один раз и живёт между запросами. Базовый каталог —
     // тот же dataDir, что у хранилища сессий; без каталога данных (P0-режим)
-    // память живёт во временном каталоге процесса (переживать рестарт не обязана)
+    // память живёт во временном каталоге процесса (переживать рестарт не обязана).
+    // Долговременная память per-user (задача 8): файлы memory/{userId}/longterm.json,
+    // стор пользователя резолвится по userId из токена на уровне роутов
     val memoryBaseDir = config.dataDir?.takeIf { it.isNotBlank() }
         ?: Files.createTempDirectory("ai-memory").toString()
     val workingMemory = WorkingMemoryStore(memoryBaseDir)
-    val longTermMemory = LongTermMemoryStore(memoryBaseDir)
+    val longTermMemory = PerUserLongTermMemory(memoryBaseDir)
     val memory = AgentMemory(
         workingMemory,
         longTermMemory,
-        MemoryRetriever(workingMemory, longTermMemory, MemorySearchEngine.forConfig(config.memory, longTermMemory))
+        config.memory
     )
 
     // Сироты рабочей памяти (файлы сессий, удалённых из хранилища) чистятся
     // при старте; SessionStore умеет перечислять сессии через list()
     workingMemory.pruneOrphans(sessions.list().map { it.id }.toSet())
+
+    // Домен авторизации (задача 2): пользователи на диске, токены и кулдаун —
+    // только в памяти процесса. Единственные экземпляры на процесс — здесь,
+    // в замыкании aiRoutes (без DI): рестарт сервера сбрасывает входы.
+    val users = UserStore(memoryBaseDir)
+    val tokens = TokenManager()
+    val loginGuard = LoginGuard()
+
+    // Предпочтения пользователей (задачи 4 и 7): по файлу на пользователя в
+    // preferences/{userId}.json; отсутствие файла — дефолтные значения.
+    // Единственный экземпляр на процесс; инъекция блока в seed каждого запроса
+    // (задача 12) берёт предпочтения отсюда — preferences.get(userId)
+    val preferences = PreferencesStore(memoryBaseDir)
+
+    // ЦЕНТРАЛЬНАЯ защита роутов (choke point, задача 6): единый intercept для
+    // всей поверхности /api*. Токен НЕ проверяется вручную ни в одном
+    // route-блоке. Открытые роуты (whitelist, зеркально specs/user-auth/spec.md):
+    //
+    // | Роут                        | Метод  | Диспозиция                              |
+    // |-----------------------------|--------|-----------------------------------------|
+    // | /api/auth/login             | POST   | open                                    |
+    // | /api/auth/users             | GET    | open (список пользователей)             |
+    // | /api/auth/users             | POST   | open (создание пользователя)            |
+    // | статика / и /static/*       | GET    | open (маршрутизируются вне aiRoutes)    |
+    //
+    // Всё остальное под /api/* — protected/user-scoped, по таблице disposition:
+    // | #  | Роут                              | Метод  | Диспозиция                          |
+    // |----|-----------------------------------|--------|-------------------------------------|
+    // | 1  | /api/log                          | GET    | user-scoped (свои записи)           |
+    // | 2  | /api/models                       | GET    | protected (общий справочник)        |
+    // | 3  | /api/chat                         | POST   | user-scoped                         |
+    // | 4  | /api/chat/stream                  | POST   | user-scoped (SSE)                   |
+    // | 5  | /api/cancel                       | POST   | protected                           |
+    // | 6  | /api/sessions                     | GET    | user-scoped                         |
+    // | 7  | /api/sessions                     | DELETE | user-scoped                         |
+    // | 8  | /api/session/{id}                 | GET    | user-scoped                         |
+    // | 9  | /api/session/{id}                 | DELETE | user-scoped                         |
+    // | 10 | /api/session/{id}/branches        | GET    | user-scoped                         |
+    // | 11 | /api/session/{id}/branches        | POST   | user-scoped                         |
+    // | 12 | /api/session/{id}/branches/activate | POST | user-scoped                         |
+    // | 13 | /api/session/{id}/working         | GET    | user-scoped                         |
+    // | 14 | /api/session/{id}/working         | PUT    | user-scoped                         |
+    // | 15 | /api/session/{id}/working         | DELETE | user-scoped                         |
+    // | 16 | /api/session/{id}/working/{entryId} | DELETE | user-scoped                       |
+    // | 17 | /api/memory                       | GET    | user-scoped                         |
+    // | 18 | /api/memory                       | POST   | user-scoped                         |
+    // | 19 | /api/memory/{id}                  | PUT    | user-scoped                         |
+    // | 20 | /api/memory/{id}                  | DELETE | user-scoped                         |
+    // | 21 | /api/memory/overview              | GET    | user-scoped                         |
+    // | 22 | /api/files/{name}                 | GET    | protected (общая песочница)         |
+    // | 23 | /api/preferences                  | GET    | user-scoped (свои предпочтения)     |
+    // | 24 | /api/preferences                  | PUT    | user-scoped (свои предпочтения)     |
+    // | +  | /api/auth/users/{id}              | DELETE | protected (нужен валидный токен)    |
+    //
+    // user-scoped означает: ресурс адресуется только в границах своего userId
+    // (сессии/ветки/рабочая память — по владельцу сессии); чужой id и legacy-сессия
+    // без владельца отвечают 404, неотличимо от несуществующего.
+    intercept(ApplicationCallPipeline.Plugins) {
+        val path = call.request.path()
+        val method = call.request.httpMethod
+        // Статика и `/` приходят сюда только потому, что intercept стоит на узле
+        // routing рядом с ними; все не-/api пути открыты по disposition
+        val open = !path.startsWith("/api/") ||
+            (method == HttpMethod.Post && path == "/api/auth/login") ||
+            (path == "/api/auth/users" && (method == HttpMethod.Get || method == HttpMethod.Post))
+        if (open) return@intercept
+
+        val userId = call.request.headers["X-Auth-Token"]?.let { tokens.resolve(it) }
+        if (userId == null) {
+            call.respond(HttpStatusCode.Unauthorized, AuthErrorResponse("Требуется вход"))
+            finish()
+        } else {
+            call.attributes.put(UserIdKey, userId)
+        }
+    }
+
+    // POST /api/auth/login — вход по ПИН: кулдаун 429, неверный ПИН/юзер 401,
+    // успех — токен (AuthTokenResponse). Неудачи неизвестных id тоже учитываются
+    // guard'ом: ответ не раскрывает, существует ли пользователь
+    post("/api/auth/login") {
+        val request = try {
+            call.receive<LoginRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, AuthErrorResponse("Некорректный запрос."))
+            return@post
+        }
+        val userId = request.userId.trim()
+        loginGuard.check(userId)?.let { cooldown ->
+            call.respond(HttpStatusCode.TooManyRequests, AuthErrorResponse(cooldown.message))
+            return@post
+        }
+        val result = users.findById(userId)
+            ?.let { account -> loginGuard.verify(account, request.pin) }
+            ?: run {
+                loginGuard.recordFailure(userId)
+                LoginResult.InvalidCredentials
+            }
+        when (result) {
+            is LoginResult.Success -> call.respond(
+                AuthTokenResponse(
+                    token = tokens.issue(result.userId),
+                    user = users.findById(result.userId)?.let { AuthUserView(it.id, it.name) }
+                        ?: AuthUserView(result.userId, "")
+                )
+            )
+            LoginResult.InvalidCredentials ->
+                call.respond(HttpStatusCode.Unauthorized, AuthErrorResponse("Неверный ПИН или пользователь"))
+            is LoginResult.Locked ->
+                call.respond(HttpStatusCode.TooManyRequests, AuthErrorResponse(result.cooldown.message))
+        }
+    }
+
+    // GET /api/auth/users — список пользователей для экрана входа (открытый роут):
+    // только id и имя, без хешей и ПИНов
+    get("/api/auth/users") {
+        call.respond(users.list().map { AuthUserView(id = it.id, name = it.name) })
+    }
+
+    // POST /api/auth/users — создание пользователя (открытый роут): валидация
+    // домена (русский текст с полем → 400), затем мгновенный автовход — токен
+    // в ответе UserCreatedResponse. Дубликаты имён разрешены (различают ПИНЫ)
+    post("/api/auth/users") {
+        val request = try {
+            call.receive<CreateUserRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, AuthErrorResponse("Некорректный запрос."))
+            return@post
+        }
+        val account = try {
+            users.create(request.name, request.pin)
+        } catch (e: IllegalArgumentException) {
+            call.respond(HttpStatusCode.BadRequest, AuthErrorResponse(e.message ?: "Некорректные данные."))
+            return@post
+        }
+        call.respond(UserCreatedResponse(token = tokens.issue(account.id), user = AuthUserView(account.id, account.name)))
+    }
+
+    // DELETE /api/auth/users/{id} — удаление пользователя с каскадом его данных
+    // (сессии с рабочей памятью, предпочтения, каталог долговременной памяти,
+    // токены). Единственный оставшийся пользователь не удаляется (400).
+    // Неизвестный id — 404 без деталей
+    delete("/api/auth/users/{id}") {
+        val userId = call.parameters["id"] ?: ""
+        if (users.findById(userId) == null) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Пользователь не найден."))
+            return@delete
+        }
+        if (users.list().size <= 1) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                AuthErrorResponse("Нельзя удалить единственного пользователя")
+            )
+            return@delete
+        }
+        cascadeDeleteUserData(userId, sessions, workingMemory, tokens, users, memoryBaseDir)
+        call.respond(HttpStatusCode.NoContent)
+    }
+
+    // GET /api/preferences — предпочтения текущего пользователя (опросник из 7
+    // вопросов, задача 4). Файла ещё нет (визард не проходили) — дефолтные
+    // значения, а не 404: прерванный визард обычным состоянием является
+    get("/api/preferences") {
+        val userId = requireNotNull(call.attributes.getOrNull(UserIdKey)) {
+            "Intercept обязан выставить UserIdKey для защищённого маршрута"
+        }
+        call.respond(preferences.get(userId))
+    }
+
+    // PUT /api/preferences — сохранить ответы опросника: серверная валидация
+    // задачи 4 (enum-словари, лимиты 255/1000/1000; нарушение — 400 с русским
+    // текстом, называющим поле), затем атомарное сохранение. Ответ —
+    // сохранённый (санитизированный) объект. Дефолты полей допускают
+    // частичный JSON: отсутствующие поля заменяются значениями по умолчанию
+    put("/api/preferences") {
+        val request = try {
+            call.receive<UserPreferences>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, AuthErrorResponse("Некорректный запрос."))
+            return@put
+        }
+        val valid = try {
+            PreferenceLimits.validate(request)
+        } catch (e: IllegalArgumentException) {
+            call.respond(HttpStatusCode.BadRequest, AuthErrorResponse(e.message ?: "Некорректные данные."))
+            return@put
+        }
+        val userId = requireNotNull(call.attributes.getOrNull(UserIdKey)) {
+            "Intercept обязан выставить UserIdKey для защищённого маршрута"
+        }
+        preferences.save(userId, valid)
+        call.respond(valid)
+    }
 
     // Хуки контекстных стратегий после ответа (экстракция фактов / подрезка
     // окна): стратегия разрешается по тому же приоритету, что в обработчиках;
@@ -165,9 +389,11 @@ fun Route.aiRoutes(
         windowSize = config.compressionWindowSize
     )
 
-    // GET /api/log — сырой протокол обменов с моделью (самописец)
+    // GET /api/log — сырой протокол обменов с моделью (самописец): только записи
+    // текущего пользователя (userId из токена; записи без владельца не видны никому)
     get("/api/log") {
-        call.respond(ExchangeLogResponse(entries = ExchangeLog.all()))
+        val userId = call.attributes.getOrNull(UserIdKey)
+        call.respond(ExchangeLogResponse(entries = ExchangeLog.forUser(userId)))
     }
 
     // GET /api/models — модели по провайдерам: у провайдера по умолчанию применяется
@@ -198,21 +424,29 @@ fun Route.aiRoutes(
     post("/api/chat") {
         val body = call.receiveChatRequest() ?: return@post
         if (!call.validContextStrategy(body)) return@post
-        if (!call.activateRequestedBranch(sessions, body, config)) return@post
+        val userId = currentUserId(call)
+        if (!call.activateRequestedBranch(sessions, body, config, userId)) return@post
         val startedAt = System.currentTimeMillis()
-        val chat = resolveChat(config, clients, sessions, body)
+        val chat = resolveChat(config, clients, sessions, body, userId) ?: run {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@post
+        }
 
         try {
-            val response = handleAgent(
-                chat.aiClient, body, chat.provider, chat.session,
-                sessions, config, compressors.getValue(chat.provider), registry, memory
-            )
+            val response = withContext(ExchangeLog.userContext(userId)) {
+                handleAgent(
+                    chat.aiClient, body, chat.provider, chat.session,
+                    sessions, config, compressors.getValue(chat.provider), registry, memory, preferences, userId
+                )
+            }
 
             call.respond(
-                finalizeResponse(
-                    chat.aiClient, body, response, chat.session, sessions, startedAt,
-                    hooks = contextHooks(chat.provider, body)
-                )
+                withContext(ExchangeLog.userContext(userId)) {
+                    finalizeResponse(
+                        chat.aiClient, body, response, chat.session, sessions, startedAt,
+                        hooks = contextHooks(chat.provider, body)
+                    )
+                }
             )
         } catch (e: Exception) {
             println("Ошибка при обращении к API: ${e.message}")
@@ -229,9 +463,13 @@ fun Route.aiRoutes(
     post("/api/chat/stream") {
         val body = call.receiveChatRequest() ?: return@post
         if (!call.validContextStrategy(body)) return@post
-        if (!call.activateRequestedBranch(sessions, body, config)) return@post
+        val userId = currentUserId(call)
+        if (!call.activateRequestedBranch(sessions, body, config, userId)) return@post
         val startedAt = System.currentTimeMillis()
-        val chat = resolveChat(config, clients, sessions, body)
+        val chat = resolveChat(config, clients, sessions, body, userId) ?: run {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@post
+        }
 
         val requestId = body.requestId?.trim().orEmpty()
         val frames = Channel<StreamEvent>(Channel.UNLIMITED)
@@ -245,17 +483,21 @@ fun Route.aiRoutes(
             // писатель ниже параллельно вычитывает их в HTTP-поток (живой стрим)
             val processor = launch {
                 try {
-                    val response = handleAgent(
-                        chat.aiClient, body, chat.provider, chat.session,
-                        sessions, config, compressors.getValue(chat.provider), registry, memory
-                    ) { event ->
-                        frames.trySend(StreamEvent.Agent(event))
+                    val response = withContext(ExchangeLog.userContext(userId)) {
+                        handleAgent(
+                            chat.aiClient, body, chat.provider, chat.session,
+                            sessions, config, compressors.getValue(chat.provider), registry, memory, preferences, userId
+                        ) { event ->
+                            frames.trySend(StreamEvent.Agent(event))
+                        }
                     }
-                    val finalized = finalizeResponse(
-                        chat.aiClient, body, response, chat.session, sessions, startedAt,
-                        hooks = contextHooks(chat.provider, body)
-                    ) { status ->
-                        frames.trySend(StreamEvent.Status(status))
+                    val finalized = withContext(ExchangeLog.userContext(userId)) {
+                        finalizeResponse(
+                            chat.aiClient, body, response, chat.session, sessions, startedAt,
+                            hooks = contextHooks(chat.provider, body)
+                        ) { status ->
+                            frames.trySend(StreamEvent.Status(status))
+                        }
                     }
                     frames.trySend(StreamEvent.Final(finalized))
                 } catch (e: CancellationException) {
@@ -316,9 +558,10 @@ fun Route.aiRoutes(
         call.respond(buildJsonObject { put("cancelled", activeRequests.cancel(requestId)) })
     }
 
-    // GET /api/sessions — список сессий пользователя для панели справа, самые свежие первыми
+    // GET /api/sessions — список сессий ТЕКУЩЕГО пользователя для панели справа,
+    // самые свежие первыми (изоляция per-user: чужие и legacy-сессии не видны)
     get("/api/sessions") {
-        val summaries = sessions.list().map { session ->
+        val summaries = sessions.listForUser(currentUserId(call)).map { session ->
             SessionSummary(
                 id = session.id,
                 title = sessionTitle(session),
@@ -333,8 +576,10 @@ fun Route.aiRoutes(
     // журнала после перезагрузки страницы; system-сообщения в истории не живут —
     // только user/assistant/tool. Неизвестный id — 404
     get("/api/session/{id}") {
+        val userId = currentUserId(call)
         val session = sessions.get(call.parameters["id"] ?: "")
-        if (session == null) {
+        if (session == null || session.foreignTo(userId)) {
+            // Чужая сессия неотличима от несуществующей: 404 без деталей
             call.respond(HttpStatusCode.NotFound)
         } else {
             call.respond(session)
@@ -345,8 +590,9 @@ fun Route.aiRoutes(
     // запись живого активного состояния (active=true), затем снимки веток в порядке
     // создания. Неизвестная сессия — 404
     get("/api/session/{id}/branches") {
+        val userId = currentUserId(call)
         val session = sessions.get(call.parameters["id"] ?: "")
-        if (session == null) {
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound)
         } else {
             call.respond(branchesView(session))
@@ -360,8 +606,10 @@ fun Route.aiRoutes(
     // Ответ — запись созданной ветки (форма BranchInfo, active=false).
     // Неизвестная сессия — 404, достигнут кап веток — 409. Тела запроса нет
     post("/api/session/{id}/branches") {
+        val userId = currentUserId(call)
         val sessionId = call.parameters["id"] ?: ""
-        if (sessions.get(sessionId) == null) {
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
             return@post
         }
@@ -386,8 +634,10 @@ fun Route.aiRoutes(
     // (своп без потерь); ответ — полная сессия, как у GET /api/session/{id}.
     // Неизвестная сессия или ветка — 404
     post("/api/session/{id}/branches/activate") {
+        val userId = currentUserId(call)
         val sessionId = call.parameters["id"] ?: ""
-        if (sessions.get(sessionId) == null) {
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound)
             return@post
         }
@@ -413,15 +663,24 @@ fun Route.aiRoutes(
     // DELETE /api/session/{id} — сброс диалога: сессия удаляется (идемпотентно);
     // вместе с сессией стирается её рабочая память
     delete("/api/session/{id}") {
+        val userId = currentUserId(call)
         val id = call.parameters["id"] ?: ""
+        // Идемпотентно для своих и несуществующих; чужая (и legacy без владельца)
+        // сессия не удаляется и не раскрывается: 404
+        val session = sessions.get(id)
+        if (session != null && session.foreignTo(userId)) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@delete
+        }
         sessions.delete(id)
         workingMemory.clear(id)
         call.respond(HttpStatusCode.NoContent)
     }
 
-    // DELETE /api/sessions — стирает все сессии пользователя
+    // DELETE /api/sessions — стирает все сессии ТЕКУЩЕГО пользователя (изоляция
+    // per-user): сессии других владельцев и legacy-сессии без владельца не трогаются
     delete("/api/sessions") {
-        call.respond(SessionsCleared(deleted = sessions.clear()))
+        call.respond(SessionsCleared(deleted = sessions.deleteAllForUser(currentUserId(call))))
     }
 
     // --- Память агента: HTTP-маршруты ---
@@ -429,8 +688,9 @@ fun Route.aiRoutes(
     // GET /api/session/{id}/working — записи рабочей памяти сессии.
     // Неизвестная сессия — 404
     get("/api/session/{id}/working") {
+        val userId = currentUserId(call)
         val session = sessions.get(call.parameters["id"] ?: "")
-        if (session == null) {
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
             return@get
         }
@@ -442,8 +702,9 @@ fun Route.aiRoutes(
     // Неизвестная сессия — 404, пустые заголовок/текст — 400, капы хранилища —
     // 400 с сообщением хранилища
     put("/api/session/{id}/working") {
+        val userId = currentUserId(call)
         val session = sessions.get(call.parameters["id"] ?: "")
-        if (session == null) {
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
             return@put
         }
@@ -487,8 +748,9 @@ fun Route.aiRoutes(
     // DELETE /api/session/{id}/working/{entryId} — удалить заметку по id
     // (неизвестный id — без ошибки). Ответ — остаток записей. Неизвестная сессия — 404
     delete("/api/session/{id}/working/{entryId}") {
+        val userId = currentUserId(call)
         val session = sessions.get(call.parameters["id"] ?: "")
-        if (session == null) {
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
             return@delete
         }
@@ -499,8 +761,9 @@ fun Route.aiRoutes(
     // DELETE /api/session/{id}/working — стереть всю рабочую память сессии.
     // Неизвестная сессия — 404
     delete("/api/session/{id}/working") {
+        val userId = currentUserId(call)
         val session = sessions.get(call.parameters["id"] ?: "")
-        if (session == null) {
+        if (session == null || session.foreignTo(userId)) {
             call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
             return@delete
         }
@@ -510,8 +773,10 @@ fun Route.aiRoutes(
 
     // GET /api/memory?kind=&q= — записи долговременной памяти (свежие первыми)
     // с фильтром по виду и/или подстроке; счётчики по видам — всегда полные.
-    // Неизвестный вид в query — 400
+    // Неизвестный вид в query — 400. Записи и счётчики — память текущего
+    // пользователя (userId из токена)
     get("/api/memory") {
+        val long = longTermMemory.forUser(currentUserId(call))
         val kind = call.request.queryParameters["kind"]?.takeIf { it.isNotBlank() }
         if (kind != null && kind !in MemoryLimits.KINDS) {
             call.respond(
@@ -526,8 +791,8 @@ fun Route.aiRoutes(
         val q = call.request.queryParameters["q"]?.takeIf { it.isNotBlank() }
         call.respond(
             MemoryListResponse(
-                entries = longTermMemory.list(kind, q).map { it.toView() },
-                counts = longTermMemory.counts()
+                entries = long.list(kind, q).map { it.toView() },
+                counts = long.counts()
             )
         )
     }
@@ -536,6 +801,7 @@ fun Route.aiRoutes(
     // Неизвестный вид — 400, пустые заголовок/текст — 400, лимиты хранилища —
     // 400 с сообщением хранилища
     post("/api/memory") {
+        val long = longTermMemory.forUser(currentUserId(call))
         val request = try {
             call.receive<MemoryCreateRequest>()
         } catch (e: Exception) {
@@ -562,7 +828,7 @@ fun Route.aiRoutes(
         }
         val now = System.currentTimeMillis()
         try {
-            val entry = longTermMemory.add(
+            val entry = long.add(
                 MemoryEntry(
                     id = UUID.randomUUID().toString(),
                     kind = request.kind,
@@ -587,6 +853,7 @@ fun Route.aiRoutes(
     // прежними, updatedAt проставляет хранилище). Неизвестный id — 404,
     // нарушения лимитов — 400
     put("/api/memory/{id}") {
+        val long = longTermMemory.forUser(currentUserId(call))
         val request = try {
             call.receive<MemoryUpdateRequest>()
         } catch (e: Exception) {
@@ -613,7 +880,7 @@ fun Route.aiRoutes(
             return@put
         }
         try {
-            val updated = longTermMemory.update(call.parameters["id"] ?: "") { existing ->
+            val updated = long.update(call.parameters["id"] ?: "") { existing ->
                 existing.copy(
                     kind = request.kind ?: existing.kind,
                     title = request.title ?: existing.title,
@@ -634,18 +901,33 @@ fun Route.aiRoutes(
         }
     }
 
-    // DELETE /api/memory/{id} — удалить запись; {"deleted": true|false}
+    // DELETE /api/memory/{id} — удалить запись памяти текущего пользователя;
+    // {"deleted": true} либо 404, когда записи нет: чужая запись неотличима
+    // от неизвестного id, существование чужих данных не раскрывается
     delete("/api/memory/{id}") {
-        call.respond(MemoryDeletedResponse(deleted = longTermMemory.delete(call.parameters["id"] ?: "")))
+        val long = longTermMemory.forUser(currentUserId(call))
+        val deleted = long.delete(call.parameters["id"] ?: "")
+        if (deleted) {
+            call.respond(MemoryDeletedResponse(deleted = true))
+        } else {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Запись не найдена."))
+        }
     }
 
     // GET /api/memory/overview?sessionId= — сводка всех слоёв памяти для панели
     // памяти. Неизвестная сессия НЕ ошибка (панель открывают и для свежей
-    // сессии): turns/working — нули, долговременные счётчики — по хранилищу
+    // сессии): turns/working — нули, долговременные счётчики — по хранилищу.
+    // Чужая (или legacy без владельца) сессия — 404: счётчики чужой памяти
+    // неотличимы от несуществующей сессии
     get("/api/memory/overview") {
+        val userId = currentUserId(call)
         val sessionId = call.request.queryParameters["sessionId"]?.takeIf { it.isNotBlank() }
         val session = sessionId?.let { sessions.get(it) }
-        val counts = longTermMemory.counts()
+        if (session != null && session.foreignTo(userId)) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@get
+        }
+        val counts = longTermMemory.forUser(currentUserId(call)).counts()
         call.respond(
             MemoryOverviewResponse(
                 shortTerm = MemoryShortTermOverview(
@@ -701,6 +983,58 @@ fun Route.aiRoutes(
 private fun keepOrder(allowed: List<String>, fetched: List<String>): List<String> {
     val present = fetched.toSet()
     return allowed.filter { it in present }
+}
+
+/**
+ * Идентификатор пользователя, проверенный intercept'ом по X-Auth-Token:
+ * кладётся в атрибуты вызова, читается роутами (call.attributes.getOrNull(UserIdKey)).
+ */
+internal val UserIdKey = AttributeKey<String>("shturman.userId")
+
+/**
+ * Владелец запроса к защищённому маршруту: инвариант intercept'а — атрибут
+ * [UserIdKey] выставлен всегда, ручной проверки токена здесь нет и быть не должно.
+ */
+private fun currentUserId(call: ApplicationCall): String =
+    requireNotNull(call.attributes.getOrNull(UserIdKey)) {
+        "Intercept обязан выставить UserIdKey для защищённого маршрута"
+    }
+
+/**
+ * Сессия чужая для владельца запроса: принадлежит другому пользователю или
+ * никому (legacy, userId == null; атрибутирует её только миграция). Кросс-доступ
+ * отвечает 404, не 403 (specs/user-isolation/spec.md): чужая сессия неотличима
+ * от несуществующей.
+ */
+private fun Session.foreignTo(userId: String): Boolean = this.userId != userId
+
+/**
+ * Каскадное удаление всех данных пользователя (DELETE /api/auth/users/{id}):
+ *  1. отзыв всех его токенов — живые клиенты разлогиниваются первым же запросом;
+ *  2. его сессии из хранилища вместе с файлами рабочей памяти каждой
+ *     (deleteAllForUser затрагивает только сессии этого userId, legacy-сессии
+ *     без userId не трогаются);
+ *  3. файл предпочтений preferences/{userId}.json и каталог долговременной
+ *     памяти memory/{userId}/ (Task 8 раскладывает LTM per-user);
+ *  4. файл пользователя — последним: сбой на середине каскада оставляет
+ *     аккаунт живым, и DELETE можно повторить.
+ * userId прошёл проверку findById в вызывающем маршруте — безопасен для пути.
+ */
+private fun cascadeDeleteUserData(
+    userId: String,
+    sessions: SessionStore,
+    workingMemory: WorkingMemoryStore,
+    tokens: TokenManager,
+    users: UserStore,
+    baseDir: String
+) {
+    tokens.revokeAllFor(userId)
+    val userSessionIds = sessions.listForUser(userId).map { it.id }
+    sessions.deleteAllForUser(userId)
+    userSessionIds.forEach { workingMemory.clear(it) }
+    File(baseDir, "preferences").resolve("$userId.json").delete()
+    File(baseDir, "memory").resolve(userId).deleteRecursively()
+    users.delete(userId)
 }
 
 /** Максимум символов в заголовке сессии в списке; длиннее — обрезается с «…». */
@@ -807,7 +1141,8 @@ private suspend fun ApplicationCall.validContextStrategy(body: ChatRequest): Boo
 private suspend fun ApplicationCall.activateRequestedBranch(
     sessions: SessionStore,
     body: ChatRequest,
-    config: AppConfig
+    config: AppConfig,
+    userId: String
 ): Boolean {
     if (body.branchId == null) return true
     val strategy = ContextStrategy.resolve(
@@ -818,6 +1153,11 @@ private suspend fun ApplicationCall.activateRequestedBranch(
     if (strategy != ContextStrategy.BRANCHING) return true
 
     val session = sessions.get(body.sessionId) ?: return true
+    if (session.foreignTo(userId)) {
+        // В чужую сессию ветку не переключаем и её существование не раскрываем
+        respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+        return false
+    }
     val activated = sessions.activateBranch(session.id, body.branchId)
     if (activated == null) {
         respond(HttpStatusCode.NotFound, ChatResponse("Ветка не найдена: ${body.branchId}"))
@@ -849,14 +1189,26 @@ private class ContextHooks(
 
 /**
  * Компоненты памяти агента, построенные один раз в aiRoutes и живущие между
- * запросами: рабочая память сессий, долговременная память и ретривер блока
- * памяти для системного сообщения.
+ * запросами: рабочая память сессий, per-user долговременная память и
+ * ретриверы блока памяти (по одному на пользователя, кешируются по userId).
  */
 private class AgentMemory(
     val working: WorkingMemoryStore,
-    val long: LongTermMemoryStore,
-    val retriever: MemoryRetriever
-)
+    val long: PerUserLongTermMemory,
+    /** Настройки поиска памяти — для поискового движка каждого пользователя. */
+    private val memoryConfig: MemoryConfig?
+) {
+
+    private val retrievers = ConcurrentHashMap<String, MemoryRetriever>()
+
+    /** Ретривер блока памяти пользователя: стор и поисковый движок per-user. */
+    fun retrieverFor(userId: String): MemoryRetriever {
+        val store = long.forUser(userId)
+        return retrievers.computeIfAbsent(userId) {
+            MemoryRetriever(working, store, MemorySearchEngine.forConfig(memoryConfig, store))
+        }
+    }
+}
 
 /**
  * Запись долговременной памяти в HTTP-ответ: MemoryEntry с encodeDefaults=false
@@ -876,19 +1228,25 @@ private fun MemoryEntry.toView(): MemoryEntryView = MemoryEntryView(
 /**
  * Общий препроцессинг /api/chat и /api/chat/stream: выбор провайдера, клиента LLM
  * и сессии диалога. Память диалога есть у каждого запроса: без sessionId создаётся
- * новая сессия, неизвестный/выселенный id тоже начинает диалог заново.
+ * новая сессия ВЛАДЕЛЬЦА ЗАПРОСА (userId из токена), неизвестный id тоже начинает
+ * диалог заново. Указанный sessionId ЧУЖОЙ сессии (другой владелец или legacy
+ * без userId) возвращает null: вызывающий маршрут отвечает 404 — дописывать в
+ * чужую историю нельзя, и чужая сессия неотличима от несуществующей.
  */
 private fun resolveChat(
     config: AppConfig,
     clients: Map<ProviderConfig, LLMClient>,
     sessions: SessionStore,
-    body: ChatRequest
-): ChatContext {
+    body: ChatRequest,
+    userId: String?
+): ChatContext? {
+    val requested = body.sessionId?.let { sessions.get(it) }
+    if (requested != null && requested.foreignTo(userId.orEmpty())) return null
     val provider = config.provider(body.provider)
     return ChatContext(
         provider = provider,
         aiClient = clients.getValue(provider),
-        session = sessions.get(body.sessionId) ?: sessions.create()
+        session = requested ?: sessions.create(userId)
     )
 }
 
@@ -1041,19 +1399,23 @@ private suspend fun handleAgent(
     compressor: HistoryCompressor,
     registry: ToolRegistry,
     memory: AgentMemory,
+    preferences: PreferencesStore,
+    userId: String,
     onEvent: suspend (AgentEvent) -> Unit = {}
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
     // Память запроса: по умолчанию (null/true) инструменты памяти добавляются
-    // к копии реестра; memoryTools = false — базовый реестр без изменений
+    // к копии реестра; memoryTools = false — базовый реестр без изменений.
+    // Долговременный слой — память текущего пользователя (задача 8)
     val memoryEnabled = body.memoryTools ?: true
+    val userLongTerm = memory.long.forUser(userId)
     val requestRegistry = if (memoryEnabled) {
         registry.augmentedWith(
             listOf(
                 TaskNotesTool(memory.working, session?.id),
-                MemorySaveTool(memory.long),
-                MemoryRecallTool(memory.long)
+                MemorySaveTool(userLongTerm),
+                MemoryRecallTool(userLongTerm)
             )
         )
     } else {
@@ -1108,12 +1470,21 @@ private suspend fun handleAgent(
     // модель рабочего контекста. null — память выключена или оба слоя пусты
     val memoryMessage =
         if (memoryEnabled && session != null) {
-            memory.retriever.memoryBlock(session.id, body.message)
+            memory.retrieverFor(userId).memoryBlock(session.id, body.message)
                 ?.let { OpenAIMessage(role = "system", content = it) }
         } else {
             null
         }
-    val seed = trimmedSeed + listOfNotNull(memoryMessage)
+
+    // Слот предпочтений (задача 12): тот же хвостовой слот, что и у памяти,
+    // порядок по плану — сначала предпочтения, затем память; безусловная
+    // инъекция (нет файла — блок дефолтов). Саб-вызовы (экстрактор, сводка,
+    // судья) блок не получают: их промпты строятся вне seed.
+    val preferencesMessage = OpenAIMessage(
+        role = "system",
+        content = renderPromptBlock(preferences.get(userId))
+    )
+    val seed = trimmedSeed + listOfNotNull(preferencesMessage, memoryMessage)
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(

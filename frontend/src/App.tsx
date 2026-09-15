@@ -7,7 +7,7 @@
    «Обслуживание» в приборах (слот) и самописец.
    ============================================================ */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Clock from './components/Clock';
 import Drawer from './components/Drawer';
 import Overlay from './components/Overlay';
@@ -22,13 +22,26 @@ import Mirror from './features/mirror/Mirror';
 import SendBar from './features/send/SendBar';
 import { statusKindFor } from './features/send/request';
 import { useChatStream } from './features/send/useChatStream';
+import AuthGate from './features/auth/AuthGate';
+import UserChip from './features/auth/UserChip';
+import { resetUserState } from './features/auth/resetState';
+import OnboardingWizard from './features/onboarding/OnboardingWizard';
 import SessionsPanel from './features/sessions/SessionsPanel';
 import SettingsPanel from './features/settings/SettingsPanel';
+import { useAuthStore } from './stores/auth';
 import { useSessionStore } from './stores/session';
 import { useSettingsStore } from './stores/settings';
 import styles from './App.module.css';
 
 export default function App() {
+  /* Гейт входа: checking — идёт restore(); anon — экран входа;
+     authed — бортовая консоль. Селектор до остальных хуков. */
+  const authStatus = useAuthStore((s) => s.status);
+  const restore = useAuthStore((s) => s.restore);
+  /* Онбординг-визард (Task 13): поднимается после создания пользователя */
+  const onboardingRequired = useAuthStore((s) => s.onboardingRequired);
+  const completeOnboarding = useAuthStore((s) => s.completeOnboarding);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fuelOpen, setFuelOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -58,11 +71,43 @@ export default function App() {
     return () => document.body.classList.remove('maint-on');
   }, [maintOn]);
 
+  /* Выход/смена пользователя/401 (переход authed → anon): чистим
+     sessionId, журнал, топливомер, перечень сессий, факты, ветки,
+     память и реестр зеркала (reset-лист плана Task 14) — пользователь
+     B не видит данных пользователя A. Перечни нового пользователя
+     перечитываются сами: SessionsPanel запрашивает /api/sessions в
+     mount-эффекте после повторного входа. */
+  const prevAuthStatusRef = useRef(authStatus);
+  useEffect(() => {
+    if (prevAuthStatusRef.current === 'authed' && authStatus === 'anon') {
+      resetUserState();
+    }
+    prevAuthStatusRef.current = authStatus;
+  }, [authStatus]);
+
+  /* Восстановление сессии вкладки (один раз): токен из sessionStorage
+     проверяется запросом → authed, иначе anon → AuthGate. Идемпотентно:
+     StrictMode удваивает эффекты, повторный restore безвреден. */
+  useEffect(() => {
+    void restore();
+  }, [restore]);
+
+  /* Полноэкранный гейт: заглушка на время проверки, экран входа —
+     вместо консоли (условный рендер, не Overlay). После 401 в любом
+     вызове auth-стор уводит в anon — гейт возвращается сам. */
+  if (authStatus === 'checking') {
+    return <div className={styles.boot}>Проверка сессии…</div>;
+  }
+  if (authStatus !== 'authed') {
+    return <AuthGate />;
+  }
+
   return (
     <div className={styles.container}>
       <header className={styles.topStrip}>
         <h1 className={styles.brand}>Штурман</h1>
         <div className={styles.stripRight}>
+          <UserChip />
           <Clock className={styles.clock} />
           {tokenHistory.length > 0 && (
             <button
@@ -114,6 +159,7 @@ export default function App() {
         id="settings"
       >
         <SettingsPanel
+          open={settingsOpen}
           maintenance={(
             <Maintenance
               maintOn={maintOn}
@@ -154,6 +200,14 @@ export default function App() {
 
       {/* Самописец: протокол обменов с моделью (ваниль recorderOverlay) */}
       <Recorder open={recorderOpen} onClose={() => setRecorderOpen(false)} />
+
+      {/* Онбординг-визард предпочтений (Task 13): поднимается после создания
+          пользователя; прерывание ничего не сохраняет (серверные дефолты) */}
+      <OnboardingWizard
+        open={onboardingRequired}
+        onClose={completeOnboarding}
+        onSaved={completeOnboarding}
+      />
     </div>
   );
 }

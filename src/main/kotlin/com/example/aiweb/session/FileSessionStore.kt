@@ -49,10 +49,11 @@ class FileSessionStore(
     }
 
     @Synchronized
-    override fun create(): Session {
+    override fun create(userId: String?): Session {
         val timestamp = now()
         val session = Session(
             id = UUID.randomUUID().toString(),
+            userId = userId,
             createdAt = timestamp,
             updatedAt = timestamp
         )
@@ -194,6 +195,22 @@ class FileSessionStore(
         sessions.values.sortedByDescending { it.updatedAt }
 
     @Synchronized
+    override fun listForUser(userId: String): List<Session> =
+        sessions.values
+            .filter { it.userId == userId }
+            .sortedByDescending { it.updatedAt }
+
+    @Synchronized
+    override fun deleteAllForUser(userId: String): Int {
+        val owned = sessions.values.filter { it.userId == userId }
+        owned.forEach { ownedSession ->
+            sessions.remove(ownedSession.id)
+            deleteFile(ownedSession.id)
+        }
+        return owned.size
+    }
+
+    @Synchronized
     override fun delete(id: String) {
         if (id.isNullOrBlank()) return
         val trimmed = id.trim()
@@ -283,7 +300,7 @@ class FileSessionStore(
         /** Расширение временного файла атомарной записи. */
         private const val TMP_EXTENSION = ".json.tmp"
 
-        /** Максимальное число живых сессий — как в [InMemorySessionStore]. */
+        /** Максимальное число живых сессий — как в [InMemorySessionStore]. ЭВИКЦИЯ ГЛОБАЛЬНАЯ: лишние выселяются по старости по всему хранилищу, без per-user квот (задокументированное решение). */
         val MAX_SESSIONS = InMemorySessionStore.MAX_SESSIONS
     }
 }

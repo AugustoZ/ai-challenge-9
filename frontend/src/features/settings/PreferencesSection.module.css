@@ -1,0 +1,62 @@
+/* ============================================================
+   Секция «Предпочтения»: строки табло «термин — показание».
+   Классы секции/подписи берутся из SettingsPanel.module.css
+   (panelSection/sectionCaption/settingLabel), клавиша визарда —
+   готовый аннунциатор. Здесь только табло значений и подсказки.
+   Значения не изобретаются: колодец, моно, зелёные цифры — как
+   у показаний приборов. Цвета — только токены tokens.css.
+   ============================================================ */
+
+.rows {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.row {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    align-items: center;
+    gap: 6px;
+}
+
+.term {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--ink-dim);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Показание прибора: зелёные табло-цифры в колодце; длинные
+    свободные тексты (до 1000 символов) не ломают строку панели */
+.value {
+    margin: 0;
+    padding: 3px 7px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Пустое свободное поле: гравировка «не задано» без показаний */
+.valueEmpty {
+    color: var(--ink-faint);
+}
+
+.note {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--ink-faint);
+}

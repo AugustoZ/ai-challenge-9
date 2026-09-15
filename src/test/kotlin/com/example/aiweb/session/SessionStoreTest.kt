@@ -657,4 +657,64 @@ class SessionStoreTest {
 
         assertNull(store.setFacts("нет-такого", listOf(Fact("тема", "змейка"))))
     }
+
+    // ── Per-user скоупинг: create(userId), listForUser, deleteAllForUser ──
+
+    @Test
+    fun `create с userId хранит владельца, create без userId — сессия без владельца`() {
+        val store = newStore()
+
+        val owned = store.create(userId = "u1")
+        val anonymous = store.create()
+
+        assertEquals("u1", assertNotNull(store.get(owned.id)).userId)
+        assertNull(assertNotNull(store.get(anonymous.id)).userId)
+    }
+
+    @Test
+    fun `listForUser фильтрует сессии строго по владельцу`() {
+        val store = newStore()
+        val first = store.create(userId = "u1")
+        store.create(userId = "u2")
+        val third = store.create(userId = "u1")
+
+        val owned = store.listForUser("u1")
+
+        assertEquals(listOf(third.id, first.id), owned.map { it.id }, "сортировка как в list(): updatedAt по убыванию")
+        assertEquals(1, store.listForUser("u2").size)
+        assertTrue(store.listForUser("нет-такого").isEmpty())
+    }
+
+    @Test
+    fun `listForUser не отдаёт сессии без владельца`() {
+        val store = newStore()
+        store.create()
+
+        assertTrue(store.listForUser("u1").isEmpty())
+    }
+
+    @Test
+    fun `deleteAllForUser удаляет только сессии своего владельца`() {
+        val store = newStore()
+        store.create(userId = "u1")
+        val foreign = store.create(userId = "u2")
+        store.create(userId = "u1")
+        val legacy = store.create()
+
+        val deleted = store.deleteAllForUser("u1")
+
+        assertEquals(2, deleted)
+        assertTrue(store.listForUser("u1").isEmpty())
+        assertEquals(1, store.listForUser("u2").size)
+        assertNotNull(store.get(foreign.id))
+        // Сессии без userId (legacy) чужими руками не удаляются
+        assertNotNull(store.get(legacy.id))
+    }
+
+    @Test
+    fun `deleteAllForUser на пустом и неизвестном пользователе возвращает ноль`() {
+        val store = newStore()
+
+        assertEquals(0, store.deleteAllForUser("нет-такого"))
+    }
 }

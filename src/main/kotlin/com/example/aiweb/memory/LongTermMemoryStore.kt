@@ -28,10 +28,16 @@ class LongTermMemoryStore(
     /** Каталог данных (AI_DATA_DIR); подкаталог memory создаётся по требованию. */
     private val dir: String,
     /** Источник времени — шов для детерминированных тестов. */
-    private val now: () -> Long = System::currentTimeMillis
+    private val now: () -> Long = System::currentTimeMillis,
+    /**
+     * Подкаталог файла памяти относительно [dir]; по умолчанию «memory» —
+     * общая (до-авторизационная) раскладка. Per-user хранилища
+     * ([PerUserLongTermMemory]) указывают «memory/{userId}».
+     */
+    private val memorySubPath: String = MEMORY_DIR
 ) : MemoryRepository {
 
-    private val memoryDir = File(dir, MEMORY_DIR)
+    private val memoryDir = File(dir, memorySubPath)
     private val entries = mutableListOf<MemoryEntry>()
 
     private val json = Json {

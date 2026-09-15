@@ -22,6 +22,7 @@ import { DIALS } from '../../components/dialMath';
 import Facts from '../strategy/Facts';
 import type { ContextStrategy } from '../../stores/settings';
 import { useSettingsStore } from '../../stores/settings';
+import PreferencesSection from './PreferencesSection';
 import { resolveModelValue } from './models';
 import useModels from './useModels';
 import styles from './SettingsPanel.module.css';
@@ -119,7 +120,7 @@ function Toggle(props: {
   );
 }
 
-export default function SettingsPanel({ maintenance }: { maintenance?: ReactNode }) {
+export default function SettingsPanel({ open, maintenance }: { open: boolean; maintenance?: ReactNode }) {
   /* Селекторы точечные: перерисовывается только изменившийся прибор. */
   const model = useSettingsStore((s) => s.model);
   const temperature = useSettingsStore((s) => s.temperature);
@@ -342,6 +343,10 @@ export default function SettingsPanel({ maintenance }: { maintenance?: ReactNode
           Выключите, чтобы агент не читал и не сохранял память
         </p>
       </section>
+
+      {/* Секция «Предпочтения» (план Task 14): табло текущих значений
+          опросника и визард правки; чтение — при открытии Drawer'а */}
+      <PreferencesSection open={open} />
 
       {/* Секция «Обслуживание» (index.html L244–255) — слот App: состояние
           Режима ТО и самописца живёт в каркасе страницы, как в ваниле */}

@@ -38,3 +38,13 @@ export function unregisterTwin(side: TwinSide): void {
 export function getTwin(side: TwinSide): TwinHandle | undefined {
   return registry.get(side);
 }
+
+/**
+ * Полная очистка реестра при выходе/смене пользователя (план Task 14):
+ * хэндлы колонок ушедшего пользователя недействительны. При выходе
+ * консоль демонтируется и cleanup сам убирает записи, очистка —
+ * страховка resetState на случай любого другого порядка демонтирования.
+ */
+export function resetTwinRegistry(): void {
+  registry.clear();
+}

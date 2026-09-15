@@ -9,6 +9,7 @@ import {
   type ChatRequest,
   type StreamEvent,
 } from './types';
+import { useAuthStore } from '../stores/auth';
 
 /** Wire-типы кадров; неизвестный тип — кадр пропускается (как в vanilla). */
 const STREAM_EVENT_TYPES = ['agent', 'status', 'final', 'cancelled', 'error'];
@@ -93,9 +94,15 @@ export async function streamChat(
   request: ChatRequest,
   { signal, onEvent }: StreamChatOptions,
 ): Promise<StreamChatResult> {
+  // Токен берётся в момент открытия потока (как настройки в send()):
+  // без него intercept сервера вернёт 401 → ok:false → фолбэк
+  const token = useAuthStore.getState().getToken();
   const res = await fetch('/api/chat/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'X-Auth-Token': token } : {}),
+    },
     body: JSON.stringify(request),
     signal,
   });

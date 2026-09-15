@@ -22,7 +22,7 @@
      POST /api/chat (L2565–2589) — и для основного, и для twin-запроса.
    ============================================================ */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, postJson } from '../../api/client';
 import { makeRequestId, streamChat } from '../../api/sse';
 import type { ChatRequest, ChatResponse, StreamEvent } from '../../api/types';
@@ -80,6 +80,19 @@ export function useChatStream() {
       (ваниль L2510–2519: активный activeRequest; в зеркале его нет). */
   const [stoppable, setStoppable] = useState(false);
   const [directive, setDirective] = useState<Directive>(IDLE_DIRECTIVE);
+
+  /* Консоль демонтируется только при выходе/смене пользователя/401
+     (App рендерит AuthGate вместо контента): обрываем чтение потока,
+     чтобы ответ ушедшего пользователя не дозаписался в чистые сторы
+     нового (reset-лист Task 14). Запросы открываются только из
+     обработчика «Передать», поэтому в StrictMode-цикле монтирования
+     здесь просто нечего обрывать. */
+  useEffect(() => () => {
+    const active = activeRef.current;
+    if (!active) return;
+    activeRef.current = null;
+    active.controller.abort();
+  }, []);
 
   /* ---------- Клавиша «Стоп» (script.js L2521–2536) ---------- */
 

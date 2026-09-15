@@ -1,5 +1,6 @@
 package com.example.aiweb
 
+import com.example.aiweb.auth.ShturmanMigration
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.routes.aiRoutes
 import io.ktor.http.*
@@ -47,6 +48,14 @@ fun Application.module(config: AppConfig) {
             )
         }
     }
+
+    // Идемпотентная миграция «Шумахер» (задача 10 плана персонализации): legacy-сессии
+    // без владельца и общий memory/longterm.json наследуются пользователем «Шумахер».
+    // ДО построения маршрутов: сторы aiRoutes читают файлы с диска при создании.
+    // План размещал bootstrap в aiRoutes, но Routes.kt в этой волне не трогается
+    // (задача 12 владеет файлом); Application.module — тот же момент жизненного
+    // цикла «при старте приложения».
+    ShturmanMigration.run(config.dataDir)
 
     routing {
         staticResources("/static", "static")

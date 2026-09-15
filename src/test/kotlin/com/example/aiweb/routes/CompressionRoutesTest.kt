@@ -33,11 +33,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -49,7 +44,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import java.net.ServerSocket
 
 /**
  * Routes-уровневая проверка интеграции компрессии истории в агентную обработку
@@ -138,8 +132,6 @@ class CompressionRoutesTest {
         compressionSummaryMaxTokens = maxTokens
     )
 
-    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
-
     /** Поднимает Application на случайном порту с инъецированными фейками и передаёт [block] harness. */
     private fun withApp(
         config: AppConfig,
@@ -151,12 +143,8 @@ class CompressionRoutesTest {
             ChatResult(reply = "ответ сервера", promptTokens = 1, completionTokens = 2, totalTokens = 3, elapsedMs = 0L)
         )
         val summarizer = FakeSummarizer()
-        val port = freePort()
 
-        val server = embeddedServer(Netty, port = port, host = "127.0.0.1") {
-            install(ServerContentNegotiation) {
-                json(Json { ignoreUnknownKeys = true; isLenient = true })
-            }
+        withAuthApp(module = {
             routing {
                 aiRoutes(
                     config = config,
@@ -166,28 +154,25 @@ class CompressionRoutesTest {
                     factExtractorFactory = { factExtractor }
                 )
             }
-        }
-        server.start(wait = false)
-        try {
-            Harness("http://127.0.0.1:$port", store, chat, summarizer, factExtractor)
+        }) { app ->
+            // Фикстурный пользователь уже посажен: DefaultRequest клиента Harness
+            // читает токен при построении (внутри withAuthApp — до блока).
+            // userId нужен seed(): сессии-фикстуры принадлежат этому пользователю
+            // (изоляция сессий: чат в сессию без владельца отвечал бы 404)
+            Harness(app.base, store, app.userId, chat, summarizer, factExtractor)
                 .block()
-        } finally {
-            server.stop(100, 500)
         }
     }
 
     private class Harness(
         val base: String,
         val sessions: SessionStore,
+        val userId: String,
         val chat: FakeLLMClient,
         val summarizer: FakeSummarizer,
         val extractor: FakeFactExtractor
     ) {
-        val client = HttpClient(CIO) {
-            install(ContentNegotiation) {
-                json(Json { ignoreUnknownKeys = true })
-            }
-        }
+        val client = testHttpClient()
 
         /** Синхронный POST /api/chat (без suspend в теле теста). */
         fun postChat(
@@ -276,7 +261,7 @@ class CompressionRoutesTest {
         }
 
         fun seed(messages: List<OpenAIMessage>, summary: String? = null): Session {
-            val s = sessions.create()
+            val s = sessions.create(userId)
             messages.forEach { sessions.append(s.id, it) }
             if (summary != null) sessions.applyCompressionResult(s.id, summary, 0)
             return sessions.get(s.id)!!
@@ -603,15 +588,17 @@ class CompressionRoutesTest {
 
             // Агентная обработка: первый system — промт агента, последний —
             // описание инструментов промт-протокола (supportsTools = false);
-            // между ними окно (5) + новый вопрос; запрос собирается ДО подрезки
+            // между ними окно (5) + новый вопрос; хвостовое system-сообщение
+            // предпочтений (задача 12) идёт перед описанием инструментов;
+            // запрос собирается ДО подрезки
             val ask = chat.calls.single().messages
-            assertEquals(1 + 5 + 1 + 1, ask.size)
+            assertEquals(1 + 5 + 1 + 1 + 1, ask.size)
             assertEquals(
                 listOf("вопрос 5", "ответ 5", "вопрос 6", "ответ 6", "вопрос 7"),
-                ask.drop(1).dropLast(2).map { it.content!!.take(8).trimEnd() },
+                ask.drop(1).dropLast(3).map { it.content!!.take(8).trimEnd() },
                 "в запрос уходят ровно последние 5 сообщений"
             )
-            assertEquals("новый вопрос", ask[ask.size - 2].content)
+            assertEquals("новый вопрос", ask[ask.size - 3].content)
             assertFalse(ask.any { it.content.orEmpty().startsWith("вопрос 1") }, "внеоконные ходы в запрос не попадают")
             assertFalse(
                 ask.any { it.role == "tool" },
@@ -699,7 +686,7 @@ class CompressionRoutesTest {
             assertEquals("facts", parsed.contextStrategy, "echo стратегии в ответе")
 
             val ask = chat.calls.single().messages
-            assertEquals(1 + 1 + 3 + 1 + 1, ask.size, "промт агента + блок фактов + окно 3 + новый вопрос + описание инструментов")
+            assertEquals(1 + 1 + 3 + 1 + 1 + 1, ask.size, "промт агента + блок фактов + окно 3 + новый вопрос + предпочтения + описание инструментов")
             val factsBlock = ask[1]
             assertEquals("system", factsBlock.role)
             assertTrue(
@@ -709,13 +696,13 @@ class CompressionRoutesTest {
             assertTrue(factsBlock.content!!.contains("- цель: проверить блок фактов"))
             assertTrue(factsBlock.content!!.contains("- язык: kotlin"))
 
-            val tail = ask.drop(2).dropLast(2)
+            val tail = ask.drop(2).dropLast(3)
             assertEquals(
                 listOf("вопрос 2", "ответ 2", "вопрос 3"),
                 tail.map { it.content!!.take(8).trimEnd() },
                 "после блока фактов — последние 3 сообщения"
             )
-            assertEquals("новый вопрос", ask[ask.size - 2].content)
+            assertEquals("новый вопрос", ask[ask.size - 3].content)
         }
     }
 
@@ -728,7 +715,7 @@ class CompressionRoutesTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             val ask = chat.calls.single().messages
-            assertEquals(1 + 3 + 1 + 1, ask.size, "пустые факты — пустой вклад: промт агента, окно 3, новый вопрос, описание инструментов")
+            assertEquals(1 + 3 + 1 + 1 + 1, ask.size, "пустые факты — пустой вклад: промт агента, окно 3, новый вопрос, предпочтения, описание инструментов")
             assertTrue(
                 ask.none { it.role == "system" && it.content!!.startsWith("Известные факты") },
                 "пустые факты — блока фактов в запросе нет"

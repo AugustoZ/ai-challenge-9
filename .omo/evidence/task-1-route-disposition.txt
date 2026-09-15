@@ -1,0 +1,38 @@
+=== QA Task 1: disposition покрывает все роуты Routes.kt ===
+$ grep -oE '"/api/[a-zA-Z0-9/{}._-]+"' src/main/kotlin/com/example/aiweb/routes/Routes.kt | sort -u
+/api/cancel
+/api/chat
+/api/chat/stream
+/api/files/{name}
+/api/log
+/api/memory
+/api/memory/overview
+/api/memory/{id}
+/api/models
+/api/session/{id}
+/api/session/{id}/branches
+/api/session/{id}/branches/activate
+/api/session/{id}/working
+/api/session/{id}/working/{entryId}
+/api/sessions
+
+OK      /api/cancel
+OK      /api/chat
+OK      /api/chat/stream
+OK      /api/files/{name}
+OK      /api/log
+OK      /api/memory
+OK      /api/memory/overview
+OK      /api/memory/{id}
+OK      /api/models
+OK      /api/session/{id}
+OK      /api/session/{id}/branches
+OK      /api/session/{id}/branches/activate
+OK      /api/session/{id}/working
+OK      /api/session/{id}/working/{entryId}
+OK      /api/sessions
+
+Просканировано уникальных путей: 15, не покрыто: 0
+
+Строк таблицы disposition (метод+путь): 22
+Ожидаемый итог: 22/22 endpoint'а классифицированы (в таблице 22 строки метод+путь).

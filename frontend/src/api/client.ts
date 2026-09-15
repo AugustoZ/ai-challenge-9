@@ -1,13 +1,41 @@
 /* Типобезопасные обёртки над fetch для JSON-эндпоинтов /api.
-   Не-2xx превращается в ApiError со статусом и телом ответа. */
+   Не-2xx превращается в ApiError со статусом и телом ответа.
+   Токен X-Auth-Token подставляется здесь (и в api/sse.ts) — по
+   call-site'ам не рассыпается; любой ответ 401 дёргает хук
+   auth-стора (см. stores/auth.ts), чтобы разлогинить вкладку. */
 
 import type {
+  AuthTokenResponse,
+  AuthUserView,
   MemoryEntry,
   MemoryKind,
   MemoryListResponse,
   MemoryOverview,
+  UpdatePreferencesRequest,
+  UserCreatedResponse,
+  UserPreferences,
   WorkingListResponse,
 } from './types';
+
+/* ---------- Токен и централизованный 401 (провайдера регистрирует stores/auth.ts) ---------- */
+
+let authToken: () => string | null = () => null;
+let onUnauthorized: (() => void) | null = null;
+
+/** Регистрирует поставщика токена (stores/auth.ts). */
+export function setAuthTokenProvider(provider: () => string | null): void {
+  authToken = provider;
+}
+
+/** Регистрирует обработчик 401 — вызывается при ЛЮБОМ ответе 401. */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = authToken();
+  return token ? { 'X-Auth-Token': token } : {};
+}
 
 export class ApiError extends Error {
   readonly status: number;
@@ -23,13 +51,21 @@ export class ApiError extends Error {
 
 async function parseBody<T>(res: Response): Promise<T> {
   const text = await res.text();
+  if (res.status === 401) onUnauthorized?.();
   if (!res.ok) throw new ApiError(res.status, text);
   return JSON.parse(text) as T;
 }
 
+/** Как parseBody, но тело может быть пустым (DELETE без ответа). */
+async function parseEmptyBody(res: Response): Promise<void> {
+  await res.text();
+  if (res.status === 401) onUnauthorized?.();
+  if (!res.ok) throw new ApiError(res.status, '');
+}
+
 /** GET /api/<path> — база '/api', path без префикса ('models', 'sessions'). */
 export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`/api/${path}`, { signal });
+  const res = await fetch(`/api/${path}`, { headers: authHeaders(), signal });
   return parseBody<T>(res);
 }
 
@@ -41,7 +77,7 @@ export async function postJson<T>(
 ): Promise<T> {
   const res = await fetch(`/api/${path}`, {
     method: 'POST',
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: { ...authHeaders(), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
@@ -50,7 +86,7 @@ export async function postJson<T>(
 
 /** DELETE /api/<path>; 204 обрабатывается как пустое тело. */
 export async function deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`/api/${path}`, { method: 'DELETE', signal });
+  const res = await fetch(`/api/${path}`, { method: 'DELETE', headers: authHeaders(), signal });
   return parseBody<T>(res);
 }
 
@@ -62,7 +98,7 @@ export async function putJson<T>(
 ): Promise<T> {
   const res = await fetch(`/api/${path}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   });
@@ -158,4 +194,46 @@ export async function fetchMemoryOverview(
   signal?: AbortSignal,
 ): Promise<MemoryOverview> {
   return getJson<MemoryOverview>(`memory/overview?sessionId=${encodeURIComponent(sessionId)}`, signal);
+}
+
+/* ---------- Auth: вход, список, создание, удаление пользователей ---------- */
+
+/** POST /api/auth/login — вход по ПИН; 401 «Неверный ПИН или пользователь», 429 кулдаун. */
+export async function login(userId: string, pin: string, signal?: AbortSignal): Promise<AuthTokenResponse> {
+  return postJson<AuthTokenResponse>('auth/login', { userId, pin }, signal);
+}
+
+/** GET /api/auth/users — список пользователей экрана входа (open-роут, только id+name). */
+export async function listUsers(signal?: AbortSignal): Promise<AuthUserView[]> {
+  return getJson<AuthUserView[]>('auth/users', signal);
+}
+
+/** POST /api/auth/users — создать пользователя; ответ сразу несёт токен (авто-вход). */
+export async function createUser(name: string, pin: string, signal?: AbortSignal): Promise<UserCreatedResponse> {
+  return postJson<UserCreatedResponse>('auth/users', { name, pin }, signal);
+}
+
+/** DELETE /api/auth/users/{id} — удалить пользователя с каскадом его данных. */
+export async function deleteUser(id: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`/api/auth/users/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+    signal,
+  });
+  return parseEmptyBody(res);
+}
+
+/* ---------- Предпочтения: GET/PUT /api/preferences ---------- */
+
+/** GET /api/preferences — предпочтения текущего пользователя (401 → хук auth-стора). */
+export async function fetchPreferences(signal?: AbortSignal): Promise<UserPreferences> {
+  return getJson<UserPreferences>('preferences', signal);
+}
+
+/** PUT /api/preferences — сохранить предпочтения (UpdatePreferencesRequest). */
+export async function savePreferences(
+  prefs: UpdatePreferencesRequest,
+  signal?: AbortSignal,
+): Promise<UserPreferences> {
+  return putJson<UserPreferences>('preferences', prefs, signal);
 }

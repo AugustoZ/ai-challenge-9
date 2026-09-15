@@ -14,8 +14,6 @@ import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.SummarizeResult
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -26,18 +24,12 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.serialization.kotlinx.json.json
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.plugins.contentnegotiation.ContentNegotiation as ServerContentNegotiation
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import java.net.ServerSocket
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -81,19 +73,13 @@ class MemoryRoutesTest {
         dataDir = dataDir
     )
 
-    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
-
     /** Поднимает приложение с фейковым LLM и временным dataDir; хранилище сессий — файловое над тем же каталогом. */
     private fun withApp(block: suspend (base: String, fake: FakeLLMClient, dataDir: String) -> Unit) {
         val dataDir = tempDataDir()
         val chat = FakeLLMClient(
             ChatResult(reply = "ответ сервера", promptTokens = 1, completionTokens = 2, totalTokens = 3, elapsedMs = 42L)
         )
-        val port = freePort()
-        val server = embeddedServer(Netty, port = port, host = "127.0.0.1") {
-            install(ServerContentNegotiation) {
-                json(Json { ignoreUnknownKeys = true; isLenient = true })
-            }
+        withAuthApp(module = {
             routing {
                 aiRoutes(
                     config = config(dataDir),
@@ -111,20 +97,12 @@ class MemoryRoutesTest {
                     }
                 )
             }
-        }
-        server.start(wait = false)
-        try {
-            kotlinx.coroutines.runBlocking { block("http://127.0.0.1:$port", chat, dataDir) }
-        } finally {
-            server.stop(100, 500)
+        }) { app ->
+            kotlinx.coroutines.runBlocking { block(app.base, chat, dataDir) }
         }
     }
 
-    private fun httpClient() = HttpClient(CIO) {
-        install(ContentNegotiation) {
-            json(Json { ignoreUnknownKeys = true })
-        }
-    }
+    private fun httpClient() = testHttpClient()
 
     /** Создаёт сессию ходом чата и возвращает её идентификатор. */
     private suspend fun createSession(client: HttpClient, base: String): String {
@@ -276,11 +254,10 @@ class MemoryRoutesTest {
                 }.status
             )
 
-            // DELETE: первый true, второй false
+            // Повторное удаление — 404: неизвестный id неотличим от чужой записи
             val deleted = jsonOf(client.delete("$base/api/memory/$id").bodyAsText())
             assertEquals(true, deleted["deleted"]!!.jsonPrimitive.content.toBooleanStrict())
-            val again = jsonOf(client.delete("$base/api/memory/$id").bodyAsText())
-            assertEquals(false, again["deleted"]!!.jsonPrimitive.content.toBooleanStrict())
+            assertEquals(HttpStatusCode.NotFound, client.delete("$base/api/memory/$id").status)
             client.close()
         }
     }

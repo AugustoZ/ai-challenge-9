@@ -574,4 +574,102 @@ class FileSessionStoreTest {
         assertNull(store.activateBranch(session.id, "b2"))
         assertEquals(before, assertNotNull(store.get(session.id)))
     }
+
+    // ── Per-user скоупинг: create(userId), listForUser, deleteAllForUser, legacy ──
+
+    @Test
+    fun `userId пишется в файл сессии и переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+
+        val owned = store.create(userId = "u1")
+        val anonymous = store.create()
+
+        val rawOwned = File(dir, "sessions/${owned.id}.json").readText()
+        assertTrue(rawOwned.contains("\"userId\":\"u1\""), "Файл: $rawOwned")
+        // encodeDefaults=false: null-userId в файл не попадает — файлы legacy остаются прежними
+        val rawAnonymous = File(dir, "sessions/${anonymous.id}.json").readText()
+        assertFalse(rawAnonymous.contains("\"userId\""), "Файл: $rawAnonymous")
+
+        val reloaded = newStore(dir)
+        assertEquals("u1", assertNotNull(reloaded.get(owned.id)).userId)
+        assertNull(assertNotNull(reloaded.get(anonymous.id)).userId)
+    }
+
+    @Test
+    fun `старый json-файл сессии без userId читается с владельцем null и виден в list`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-4.json").writeText(
+            """{"id":"old-4","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val store = newStore(dir)
+        val loaded = assertNotNull(store.get("old-4"))
+
+        assertNull(loaded.userId)
+        assertEquals(listOf("old-4"), store.list().map { it.id })
+        assertTrue(store.listForUser("кто-угодно").isEmpty())
+    }
+
+    @Test
+    fun `listForUser фильтрует сессии строго по владельцу`() {
+        val store = newStore()
+        val first = store.create(userId = "u1")
+        store.create(userId = "u2")
+        val third = store.create(userId = "u1")
+
+        val owned = store.listForUser("u1")
+
+        assertEquals(listOf(third.id, first.id), owned.map { it.id }, "сортировка как в list(): updatedAt по убыванию")
+        assertEquals(1, store.listForUser("u2").size)
+        assertTrue(store.listForUser("нет-такого").isEmpty())
+    }
+
+    @Test
+    fun `deleteAllForUser удаляет только сессии своего владельца вместе с файлами`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        store.create(userId = "u1")
+        val foreign = store.create(userId = "u2")
+        store.create(userId = "u1")
+        val legacy = store.create()
+        val sessionsDir = File(dir, "sessions")
+
+        val deleted = store.deleteAllForUser("u1")
+
+        assertEquals(2, deleted)
+        assertTrue(store.listForUser("u1").isEmpty())
+        assertEquals(1, store.listForUser("u2").size)
+        assertTrue(File(sessionsDir, "${foreign.id}.json").exists(), "Чужой файл должен остаться")
+        assertNotNull(store.get(foreign.id))
+        assertNotNull(store.get(legacy.id))
+
+        val reloaded = newStore(dir)
+        assertNull(reloaded.listForUser("u1").firstOrNull())
+        assertEquals(1, reloaded.listForUser("u2").size)
+        assertNotNull(reloaded.get(legacy.id))
+    }
+
+    @Test
+    fun `deleteAllForUser на пустом и неизвестном пользователе возвращает ноль`() {
+        val store = newStore()
+
+        assertEquals(0, store.deleteAllForUser("нет-такого"))
+    }
+
+    @Test
+    fun `выселение сессий при переполнении остаётся глобальным — не по владельцу`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val oldest = store.create(userId = "u1")
+        repeat(FileSessionStore.MAX_SESSIONS - 1) { store.create(userId = "u1") }
+        assertEquals(FileSessionStore.MAX_SESSIONS, store.listForUser("u1").size)
+
+        store.create(userId = "u1")
+
+        // Выселение по старости, а не per-user квота: старейшая ушла, даже если у владельца не 50
+        assertNull(store.get(oldest.id))
+        assertEquals(FileSessionStore.MAX_SESSIONS, store.listForUser("u1").size)
+    }
 }
