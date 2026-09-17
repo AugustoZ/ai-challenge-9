@@ -5,6 +5,8 @@ import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIToolCall
 import com.example.aiweb.model.TurnUsage
+import com.example.aiweb.task.TaskState
+import com.example.aiweb.task.TaskStage
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicLong
@@ -671,5 +673,53 @@ class FileSessionStoreTest {
         // Выселение по старости, а не per-user квота: старейшая ушла, даже если у владельца не 50
         assertNull(store.get(oldest.id))
         assertEquals(FileSessionStore.MAX_SESSIONS, store.listForUser("u1").size)
+    }
+
+    @Test
+    fun `сессия с taskState переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        val state = TaskState(
+            stage = TaskStage.EXECUTION,
+            step = "шаг 1",
+            expectedAction = "действие",
+            prevStage = TaskStage.PLANNING
+        )
+
+        val updated = assertNotNull(store.updateTaskState(session.id, state))
+        assertEquals(state, updated.taskState)
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(state, reloaded.taskState)
+        assertTrue(
+            File(dir, "sessions/${session.id}.json").readText().contains("taskState"),
+            "Файл должен содержать taskState"
+        )
+    }
+
+    @Test
+    fun `updateTaskState по неизвестному sessionId — no-op без исключения`() {
+        val dir = newDir()
+        val store = newStore(dir)
+
+        assertNull(store.updateTaskState("нет-такого", TaskState(TaskStage.PLANNING, "шаг", "действие")))
+        assertNull(store.getTaskState("нет-такого"))
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `старый json-файл сессии без taskState читается с taskState null`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-legacy-taskstate.json").writeText(
+            """{"id":"old-legacy-taskstate","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val loaded = assertNotNull(newStore(dir).get("old-legacy-taskstate"))
+
+        assertNull(loaded.taskState)
+        assertEquals(1, loaded.messages.size)
+        assertEquals("старый вопрос", loaded.messages.single().content)
     }
 }

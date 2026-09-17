@@ -2,6 +2,7 @@ package com.example.aiweb.session
 
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
+import com.example.aiweb.task.TaskState
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -188,6 +189,21 @@ class FileSessionStore(
         sessions[sessionId] = updated
         persist(updated)
         return updated
+    }
+
+    @Synchronized
+    override fun updateTaskState(sessionId: String, state: TaskState?): Session? {
+        val current = sessions[sessionId] ?: return null
+        val updated = current.copy(taskState = state, updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
+    override fun getTaskState(sessionId: String): TaskState? {
+        val current = sessions[sessionId] ?: return null
+        return current.taskState
     }
 
     @Synchronized

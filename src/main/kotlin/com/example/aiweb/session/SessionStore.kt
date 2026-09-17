@@ -2,6 +2,7 @@ package com.example.aiweb.session
 
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
+import com.example.aiweb.task.TaskState
 import kotlinx.serialization.Serializable
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -85,6 +86,16 @@ interface SessionStore {
      */
     fun setFacts(sessionId: String, facts: List<Fact>): Session?
 
+    /**
+     * Заменяет состояние задачи конечного автомата ([Session.taskState]) на
+     * уровне всей сессии. null сбрасывает состояние. Возвращает обновлённую
+     * сессию; null — сессия не существует (вызов no-op).
+     */
+    fun updateTaskState(sessionId: String, state: TaskState?): Session?
+
+    /** Состояние задачи ([Session.taskState]); null — сессия не существует или состояние ещё не ставилось. */
+    fun getTaskState(sessionId: String): TaskState?
+
     /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
     fun list(): List<Session>
 
@@ -144,6 +155,11 @@ data class Session(
     val branchSeq: Int = 0,
     /** Выделенные факты диалога (стратегия «Факты») активного состояния. */
     val facts: List<Fact> = emptyList(),
+    /**
+     * Состояние задачи конечного автомата «Штурмана» на уровне всей сессии.
+     * Back-compat: legacy-файлы сессий без этого поля читаются с null.
+     */
+    val taskState: TaskState? = null,
     val createdAt: Long,
     val updatedAt: Long,
     /**
@@ -169,6 +185,9 @@ data class Session(
  * user-сообщения активной минус [forkUserCount] активной ветки (для исходной
  * истории — минус ноль). Запись ветки, развёрнутой в активное состояние,
  * хранит её снимок на момент активации («зеркало»).
+ *
+ * Осознанное ограничение: [Session.taskState] в снимок ветки НЕ входит —
+ * состояние задачи общее на сессию и переживает переключение веток.
  */
 @Serializable
 data class Branch(
@@ -236,6 +255,9 @@ class InMemorySessionStore(
 
         @Volatile
         var facts: List<Fact> = emptyList()
+
+        @Volatile
+        var taskState: TaskState? = null
 
         /** Отпечаток захвата активного состояния (см. [Session.capturedMessages]). */
         @Volatile
@@ -380,6 +402,20 @@ class InMemorySessionStore(
         }
     }
 
+    override fun updateTaskState(sessionId: String, state: TaskState?): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            entry.taskState = state
+            entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
+    override fun getTaskState(sessionId: String): TaskState? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) { entry.taskState }
+    }
+
     override fun list(): List<Session> =
         sessions.values.map { it.snapshot() }.sortedByDescending { it.updatedAt }
 
@@ -429,6 +465,7 @@ class InMemorySessionStore(
             activeBranchId = activeBranchId,
             branchSeq = branchSeq,
             facts = facts,
+            taskState = taskState,
             createdAt = createdAt,
             updatedAt = updatedAt,
             capturedMessages = capturedMessages,

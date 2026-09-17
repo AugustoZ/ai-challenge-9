@@ -29,7 +29,7 @@
    открытии (перезагрузка списков, план Task 14).
    ============================================================ */
 
-import type { Fact, SessionSummary } from '../../api/types';
+import type { Fact, SessionSummary, TaskState } from '../../api/types';
 import { useBranchesStore } from '../../stores/branches';
 import { useMemoryStore } from '../../stores/memory';
 import { useSessionStore } from '../../stores/session';
@@ -42,6 +42,7 @@ export interface SessionResetOps {
   resetSessionFuel: () => void;
   setSessionsCache: (sessions: SessionSummary[]) => void;
   setFacts: (facts: Fact[]) => void;
+  setTaskState: (taskState: TaskState | null) => void;
 }
 
 export interface BranchResetOps {
@@ -71,6 +72,7 @@ export function clearUserState(stores: UserStateStores): void {
   stores.session.resetSessionFuel();
   stores.session.setSessionsCache([]);
   stores.session.setFacts([]);
+  stores.session.setTaskState(null);
   stores.branches.hideBranches();
   stores.memory.resetMemory();
   stores.twins.clear();

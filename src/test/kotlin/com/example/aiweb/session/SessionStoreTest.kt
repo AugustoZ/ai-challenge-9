@@ -3,6 +3,8 @@ package com.example.aiweb.session
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIToolCall
+import com.example.aiweb.task.TaskState
+import com.example.aiweb.task.TaskStage
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -716,5 +718,45 @@ class SessionStoreTest {
         val store = newStore()
 
         assertEquals(0, store.deleteAllForUser("нет-такого"))
+    }
+
+    private fun taskState(step: String = "шаг", stage: TaskStage = TaskStage.PLANNING) =
+        TaskState(stage = stage, step = step, expectedAction = "действие")
+
+    @Test
+    fun `taskState round-trip — create → updateTaskState → getTaskState → snapshot содержит состояние`() {
+        val store = newStore()
+        val session = store.create()
+        val state = taskState("шаг 1")
+
+        assertNull(store.getTaskState(session.id))
+        assertNull(store.get(session.id)?.taskState)
+
+        val updated = assertNotNull(store.updateTaskState(session.id, state))
+        assertEquals(state, updated.taskState)
+        assertEquals(state, store.getTaskState(session.id))
+        assertEquals(state, assertNotNull(store.get(session.id)).taskState)
+        assertEquals(state, store.list().single().taskState)
+    }
+
+    @Test
+    fun `updateTaskState null сбрасывает состояние`() {
+        val store = newStore()
+        val session = store.create()
+        store.updateTaskState(session.id, taskState())
+
+        val cleared = assertNotNull(store.updateTaskState(session.id, null))
+
+        assertNull(cleared.taskState)
+        assertNull(store.getTaskState(session.id))
+    }
+
+    @Test
+    fun `updateTaskState и getTaskState по неизвестному sessionId — no-op без исключения`() {
+        val store = newStore()
+
+        assertNull(store.updateTaskState("нет-такого", taskState()))
+        assertNull(store.getTaskState("нет-такого"))
+        assertTrue(store.list().isEmpty())
     }
 }

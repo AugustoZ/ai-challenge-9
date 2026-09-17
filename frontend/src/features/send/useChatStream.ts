@@ -341,6 +341,9 @@ export function useChatStream() {
         /* Факты из ответа (стратегия «Факты») — в панель, если она на виду
            (updateFactsPanel, L2549–2550); видимость решает компонент Facts */
         useSessionStore.getState().setFacts(Array.isArray(data.facts) ? data.facts : []);
+        /* Состояние задачи FSM (ChatResponse.taskState) — в статусную строку,
+           безусловно каждый ход, по образцу facts выше; null — задачи нет */
+        useSessionStore.getState().setTaskState(data.taskState ?? null);
         /* Ветки: могла смениться активная. Отзыв по стратегии, а не только
            по branchId — под «Ветками» счётчики чипов пересчитываются каждым
            ходом (L2551–2558); панель сессий устарела (L2560–2562). */

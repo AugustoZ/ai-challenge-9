@@ -4,7 +4,7 @@
    маппинг заменяет только затронутую запись (spec «Состояние»). */
 
 import { create } from 'zustand';
-import type { AgentEvent, Fact, SessionSummary } from '../api/types';
+import type { AgentEvent, Fact, SessionSummary, TaskState } from '../api/types';
 import type { JournalEntry } from '../features/chat/Entry';
 
 /** Запись истории топливомера: один обмен = один столбец графика. */
@@ -31,6 +31,8 @@ export interface SessionStateData {
   sessionsCache: SessionSummary[];
   /** Актуальный список фактов сессии (стратегия «Факты», ChatResponse.facts). */
   facts: Fact[];
+  /** Состояние задачи FSM (ChatResponse.taskState); null — задачи нет. */
+  taskState: TaskState | null;
   /** Бортовой журнал: записи дописываются, обновляются по id. */
   entries: JournalEntry[];
   setSessionId: (sessionId: string | null) => void;
@@ -47,6 +49,8 @@ export interface SessionStateData {
   setSessionsCache: (sessions: SessionSummary[]) => void;
   /** Факты последнего ответа (updateFactsPanel — панель скрыта вне «Фактов»). */
   setFacts: (facts: Fact[]) => void;
+  /** Состояние задачи последнего ответа (ChatResponse.taskState, безусловно каждый ход). */
+  setTaskState: (taskState: TaskState | null) => void;
   /**
    * Дописать запись и вернуть её id. Id генерирует стор — стабильный
    * монотонный счётчик, «Новый диалог» (clearEntries) его не сбрасывает,
@@ -77,6 +81,7 @@ export const useSessionStore = create<SessionStateData>()((set) => ({
   tokenHistory: [],
   sessionsCache: [],
   facts: [],
+  taskState: null,
   entries: [],
   setSessionId: (sessionId) => set({ sessionId }),
   applyUsage: (usage) =>
@@ -102,6 +107,7 @@ export const useSessionStore = create<SessionStateData>()((set) => ({
     }),
   setSessionsCache: (sessionsCache) => set({ sessionsCache }),
   setFacts: (facts) => set({ facts }),
+  setTaskState: (taskState) => set({ taskState }),
   appendEntry: (entry) => {
     const id = nextEntryId();
     set((state) => ({ entries: [...state.entries, { ...entry, id }] }));

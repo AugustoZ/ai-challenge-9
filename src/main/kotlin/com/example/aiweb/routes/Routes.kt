@@ -71,6 +71,11 @@ import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.session.SessionStore
 import com.example.aiweb.session.sessionStoreFor
 import com.example.aiweb.session.view
+import com.example.aiweb.task.TaskStage
+import com.example.aiweb.task.TaskState
+import com.example.aiweb.task.TaskStateMachine
+import com.example.aiweb.task.TaskStateJson
+import com.example.aiweb.task.renderTaskStateBlock
 import com.example.aiweb.tools.MemoryRecallTool
 import com.example.aiweb.tools.MemorySaveTool
 import com.example.aiweb.tools.NativeToolTransport
@@ -90,9 +95,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
@@ -223,6 +231,8 @@ fun Route.aiRoutes(
     // | 22 | /api/files/{name}                 | GET    | protected (общая песочница)         |
     // | 23 | /api/preferences                  | GET    | user-scoped (свои предпочтения)     |
     // | 24 | /api/preferences                  | PUT    | user-scoped (свои предпочтения)     |
+    // | 25 | /api/task/pause                   | POST   | user-scoped (своя сессия)           |
+    // | 26 | /api/task/resume                  | POST   | user-scoped (своя сессия)           |
     // | +  | /api/auth/users/{id}              | DELETE | protected (нужен валидный токен)    |
     //
     // user-scoped означает: ресурс адресуется только в границах своего userId
@@ -432,6 +442,13 @@ fun Route.aiRoutes(
             return@post
         }
 
+        // Точные команды «пауза»/«продолжить» перехватываются ДО вызова LLM (Q8):
+        // мутация состояния + системный ответ; всё остальное — обычный путь
+        handleTaskCommand(chat.session, sessions, body.message, startedAt)?.let { commandReply ->
+            call.respond(commandReply)
+            return@post
+        }
+
         try {
             val response = withContext(ExchangeLog.userContext(userId)) {
                 handleAgent(
@@ -468,6 +485,17 @@ fun Route.aiRoutes(
         val startedAt = System.currentTimeMillis()
         val chat = resolveChat(config, clients, sessions, body, userId) ?: run {
             call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@post
+        }
+
+        // Точные команды «пауза»/«продолжить» — до LLM; системный ответ уходит
+        // одним кадром Final того же SSE-протокола (без processor/activeRequests)
+        handleTaskCommand(chat.session, sessions, body.message, startedAt)?.let { commandReply ->
+            call.response.header(HttpHeaders.CacheControl, "no-cache")
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                write(encodeFrame(StreamEvent.Final(commandReply)))
+                flush()
+            }
             return@post
         }
 
@@ -556,6 +584,37 @@ fun Route.aiRoutes(
         }
 
         call.respond(buildJsonObject { put("cancelled", activeRequests.cancel(requestId)) })
+    }
+
+    // POST /api/task/pause — пауза задачи сессии (FSM, задача 5): {"sessionId": "..."}
+    // → {"taskState": <состояние|null>}. Неизвестная или чужая сессия — 404.
+    // Идемпотентно: пауза при null-состоянии и повторная пауза — no-op без ошибки,
+    // состояние не портится; ответ — актуальное состояние (null, если задачи нет)
+    post("/api/task/pause") {
+        val sessionId = call.receiveSessionId() ?: return@post
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(currentUserId(call))) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@post
+        }
+        val next = taskStateMachine.pause(sessions.getTaskState(sessionId))
+        if (next != null) sessions.updateTaskState(sessionId, next)
+        call.respond(taskStateResponse(sessions.getTaskState(sessionId)))
+    }
+
+    // POST /api/task/resume — продолжение задачи после паузы: {"sessionId": "..."}
+    // → {"taskState": <состояние|null>}. Неизвестная или чужая сессия — 404.
+    // Идемпотентно: resume не на паузе (включая null-состояние) — no-op без ошибки
+    post("/api/task/resume") {
+        val sessionId = call.receiveSessionId() ?: return@post
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(currentUserId(call))) {
+            call.respond(HttpStatusCode.NotFound, ChatResponse("Сессия не найдена."))
+            return@post
+        }
+        val next = taskStateMachine.resume(sessions.getTaskState(sessionId))
+        if (next != null) sessions.updateTaskState(sessionId, next)
+        call.respond(taskStateResponse(sessions.getTaskState(sessionId)))
     }
 
     // GET /api/sessions — список сессий ТЕКУЩЕГО пользователя для панели справа,
@@ -1280,6 +1339,12 @@ private suspend fun finalizeResponse(
     hooks: ContextHooks? = null,
     onStatus: suspend (String) -> Unit = {}
 ): ChatResponse {
+    // FSM (задача 5, G3): стрип task-state блоков из reply ДО append истории
+    // и ДО judge — история и судья блока не видят. Парсинг перехода идёт по
+    // ИСХОДНОМУ reply (после стрипа блоков там уже нет)
+    val rawReply = response.reply
+    val cleanReply = TaskStateJson.strip(rawReply)
+
     if (session != null) {
         sessions.append(session.id, OpenAIMessage(role = "user", content = body.message))
         // Трейс агента и показания топлива хранятся на assistant-сообщении —
@@ -1291,7 +1356,7 @@ private suspend fun finalizeResponse(
             session.id,
             OpenAIMessage(
                 role = "assistant",
-                content = response.reply,
+                content = cleanReply,
                 events = response.events,
                 usage = response.totalTokens?.let { total ->
                     TurnUsage(
@@ -1305,6 +1370,21 @@ private suspend fun finalizeResponse(
                 }
             )
         )
+
+        // FSM (задача 5): pipeline обновления состояния — СТРОГО до хуков
+        // стратегий (setFacts остаётся после updateTaskState) и на СВЕЖЕМ
+        // перечитании store (G2): пауза, приложившаяся во время полёта,
+        // побеждает переход, предложенный моделью
+        val fresh = sessions.get(session.id)
+        if (fresh != null) {
+            val proposed = TaskStateJson.parse(rawReply, fresh.taskState)
+            if (proposed != null && fresh.taskState?.stage != TaskStage.PAUSED) {
+                val next = taskStateMachine.apply(fresh.taskState, proposed)
+                if (next != null) {
+                    sessions.updateTaskState(fresh.id, next)
+                }
+            }
+        }
     }
 
     // Хуки контекстных стратегий — после записи ответа в историю
@@ -1343,16 +1423,98 @@ private suspend fun finalizeResponse(
         } else {
             session?.facts ?: emptyList()
         }
+    // FSM (задача 5, Q5): echo актуального состояния задачи каждый ход —
+    // читается из store ПОСЛЕ возможного updateTaskState выше
+    val echoTaskState = session?.let { sessions.getTaskState(it.id) }
     return if (body.judgeEnabled == true) {
         onStatus("Судья проверяет ответ…")
         response.copy(
+            reply = cleanReply,
             elapsedMs = elapsedMs,
-            judge = runJudge(aiClient, body, response, elapsedMs),
-            facts = currentFacts
+            judge = runJudge(aiClient, body, response.copy(reply = cleanReply), elapsedMs),
+            facts = currentFacts,
+            taskState = echoTaskState
         )
     } else {
-        response.copy(elapsedMs = elapsedMs, facts = currentFacts)
+        response.copy(reply = cleanReply, elapsedMs = elapsedMs, facts = currentFacts, taskState = echoTaskState)
     }
+}
+
+/** Единственный экземпляр автомата: чистый класс без состояния (FSM always-on, без конфиг-шва). */
+private val taskStateMachine = TaskStateMachine()
+
+/** Точные chat-команды паузы/продолжения (trim+lowercase); «сделай паузу» командой НЕ является (E8). */
+private val TASK_PAUSE_COMMANDS = setOf("пауза", "/пауза")
+private val TASK_RESUME_COMMANDS = setOf("продолжить", "/продолжить")
+
+/**
+ * Точная chat-команда паузы/продолжения (задача 5): «пауза», «/пауза»,
+ * «продолжить», «/продолжить» — точное совпадение после trim+lowercase.
+ * Выполняется ДО вызова LLM: мутация состояния автоматом + системный ответ
+ * (LLM не вызывается, Q8). Всё остальное — null (обычный путь через AgentLoop).
+ * Ответ всегда эхоит актуальное состояние; история командой не пополняется.
+ */
+private suspend fun handleTaskCommand(
+    session: Session?,
+    sessions: SessionStore,
+    message: String,
+    startedAt: Long
+): ChatResponse? {
+    val normalized = message.trim().lowercase()
+    val isPause = normalized in TASK_PAUSE_COMMANDS
+    val isResume = !isPause && normalized in TASK_RESUME_COMMANDS
+    if (!isPause && !isResume) return null
+
+    val current = session?.let { sessions.getTaskState(it.id) }
+    val next = if (isPause) taskStateMachine.pause(current) else taskStateMachine.resume(current)
+    if (next != null && session != null) {
+        sessions.updateTaskState(session.id, next)
+    }
+
+    val reply = when {
+        isPause && current == null -> "Нет активной задачи"
+        isPause -> "Задача поставлена на паузу. Этап: ${stageLabel(next ?: requireNotNull(current))}"
+        next != null -> "Задача продолжена. Этап: ${stageLabel(next)}"
+        else -> "Нет активной задачи"
+    }
+    return ChatResponse(
+        reply = reply,
+        elapsedMs = System.currentTimeMillis() - startedAt,
+        sessionId = session?.id,
+        taskState = session?.let { sessions.getTaskState(it.id) }
+    )
+}
+
+/** Название этапа для системных ответов; на паузе показывается приостановленный этап. */
+private fun stageLabel(state: TaskState): String =
+    (if (state.stage == TaskStage.PAUSED) state.prevStage else state.stage)
+        ?.name?.lowercase() ?: state.stage.name.lowercase()
+
+/** Формат кодирования TaskState в ответ паузы/продолжения. */
+private val taskStateJsonFormat = Json { ignoreUnknownKeys = true }
+
+/** Ответ паузы/продолжения по контракту задачи 5: {"taskState": <состояние|null>}. */
+private fun taskStateResponse(state: TaskState?): JsonObject = buildJsonObject {
+    put("taskState", state?.let { taskStateJsonFormat.encodeToJsonElement(it) } ?: JsonNull)
+}
+
+/**
+ * Читает sessionId из тела паузы/продолжения (общий вход /api/task/pause и
+ * /api/task/resume, образец /api/cancel). Возвращает null, если ответ уже
+ * отправлен: некорректный JSON или пустой sessionId → 400.
+ */
+private suspend fun ApplicationCall.receiveSessionId(): String? {
+    val sessionId = try {
+        receive<JsonObject>()["sessionId"]?.jsonPrimitive?.contentOrNull
+    } catch (e: Exception) {
+        println("Ошибка десериализации запроса: ${e.message}")
+        null
+    }
+    if (sessionId.isNullOrBlank()) {
+        respond(HttpStatusCode.BadRequest, ChatResponse("Укажите sessionId сессии."))
+        return null
+    }
+    return sessionId
 }
 
 /**
@@ -1484,7 +1646,18 @@ private suspend fun handleAgent(
         role = "system",
         content = renderPromptBlock(preferences.get(userId))
     )
-    val seed = trimmedSeed + listOfNotNull(preferencesMessage, memoryMessage)
+
+    // Слот состояния задачи (FSM, задача 5 плана task-state-fsm): тот же
+    // хвостовой слот, что у предпочтений и памяти — между ними (порядок:
+    // предпочтения → состояние → память). Эфемерная system-строка: в
+    // Session.messages не пишется (G5), trim её не режет (инъекция после trim).
+    // Снимок [session] достаточен: пауза в полёте перехватывается в
+    // finalizeResponse на свежем перечитании (G2)
+    val taskStateMessage = OpenAIMessage(
+        role = "system",
+        content = renderTaskStateBlock(session?.taskState)
+    )
+    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, memoryMessage)
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(

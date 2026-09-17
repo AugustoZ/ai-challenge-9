@@ -589,16 +589,16 @@ class CompressionRoutesTest {
             // Агентная обработка: первый system — промт агента, последний —
             // описание инструментов промт-протокола (supportsTools = false);
             // между ними окно (5) + новый вопрос; хвостовое system-сообщение
-            // предпочтений (задача 12) идёт перед описанием инструментов;
-            // запрос собирается ДО подрезки
+            // предпочтений (задача 12) и блок состояния задачи (FSM) идут
+            // перед описанием инструментов; запрос собирается ДО подрезки
             val ask = chat.calls.single().messages
-            assertEquals(1 + 5 + 1 + 1 + 1, ask.size)
+            assertEquals(1 + 5 + 1 + 1 + 1 + 1, ask.size, "промт агента + окно 5 + новый вопрос + предпочтения + состояние задачи + описание инструментов")
             assertEquals(
                 listOf("вопрос 5", "ответ 5", "вопрос 6", "ответ 6", "вопрос 7"),
-                ask.drop(1).dropLast(3).map { it.content!!.take(8).trimEnd() },
+                ask.drop(1).dropLast(4).map { it.content!!.take(8).trimEnd() },
                 "в запрос уходят ровно последние 5 сообщений"
             )
-            assertEquals("новый вопрос", ask[ask.size - 3].content)
+            assertEquals("новый вопрос", ask[ask.size - 4].content)
             assertFalse(ask.any { it.content.orEmpty().startsWith("вопрос 1") }, "внеоконные ходы в запрос не попадают")
             assertFalse(
                 ask.any { it.role == "tool" },
@@ -686,7 +686,7 @@ class CompressionRoutesTest {
             assertEquals("facts", parsed.contextStrategy, "echo стратегии в ответе")
 
             val ask = chat.calls.single().messages
-            assertEquals(1 + 1 + 3 + 1 + 1 + 1, ask.size, "промт агента + блок фактов + окно 3 + новый вопрос + предпочтения + описание инструментов")
+            assertEquals(1 + 1 + 3 + 1 + 1 + 1 + 1, ask.size, "промт агента + блок фактов + окно 3 + новый вопрос + предпочтения + состояние задачи + описание инструментов")
             val factsBlock = ask[1]
             assertEquals("system", factsBlock.role)
             assertTrue(
@@ -696,13 +696,13 @@ class CompressionRoutesTest {
             assertTrue(factsBlock.content!!.contains("- цель: проверить блок фактов"))
             assertTrue(factsBlock.content!!.contains("- язык: kotlin"))
 
-            val tail = ask.drop(2).dropLast(3)
+            val tail = ask.drop(2).dropLast(4)
             assertEquals(
                 listOf("вопрос 2", "ответ 2", "вопрос 3"),
                 tail.map { it.content!!.take(8).trimEnd() },
                 "после блока фактов — последние 3 сообщения"
             )
-            assertEquals("новый вопрос", ask[ask.size - 3].content)
+            assertEquals("новый вопрос", ask[ask.size - 4].content)
         }
     }
 
@@ -715,7 +715,7 @@ class CompressionRoutesTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             val ask = chat.calls.single().messages
-            assertEquals(1 + 3 + 1 + 1 + 1, ask.size, "пустые факты — пустой вклад: промт агента, окно 3, новый вопрос, предпочтения, описание инструментов")
+            assertEquals(1 + 3 + 1 + 1 + 1 + 1, ask.size, "пустые факты — пустой вклад: промт агента, окно 3, новый вопрос, предпочтения, состояние задачи, описание инструментов")
             assertTrue(
                 ask.none { it.role == "system" && it.content!!.startsWith("Известные факты") },
                 "пустые факты — блока фактов в запросе нет"

@@ -13,6 +13,7 @@ import { Fragment, useEffect, useMemo, useRef } from 'react';
 import type { AgentEvent, JudgeReport } from '../../api/types';
 import { fmtElapsed, fmtRate } from '../../lib/format';
 import { highlightCodeBlocks, renderMarkdown } from '../../lib/markdown';
+import { stripTaskStateBlocks } from '../../lib/taskStateFilter';
 import AgentTrace from '../trace/AgentTrace';
 import JudgeReportComponent from '../judge/JudgeReport';
 import styles from './Entry.module.css';
@@ -96,10 +97,12 @@ export default function Entry({ entry }: { entry: JournalEntry }) {
   const bubbleRef = useRef<HTMLDivElement | null>(null);
 
   /* У user/system пузырь — сырой текст (в ваниле textContent = экранирование
-     браузером; JSX-подстановка даёт то же), у bot — markdown. */
+     браузером; JSX-подстановка даёт то же), у bot — markdown. Оба пути
+     проходят через фильтр служебных ```task-state``` колодцев (G3). */
   const isPlain = entry.kind !== 'bot';
+  const plainText = isPlain ? stripTaskStateBlocks(entry.text) : '';
   const html = useMemo(
-    () => (isPlain ? '' : renderMarkdown(entry.text)),
+    () => (isPlain ? '' : renderMarkdown(stripTaskStateBlocks(entry.text))),
     [isPlain, entry.text],
   );
 
@@ -158,7 +161,7 @@ export default function Entry({ entry }: { entry: JournalEntry }) {
             ? `${styles.bubble} ${styles.system}`
             : styles.bubble}
           >
-            {entry.text}
+            {plainText}
           </div>
         ) : (
           <div

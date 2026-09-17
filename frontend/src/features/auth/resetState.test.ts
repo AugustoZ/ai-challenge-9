@@ -30,6 +30,7 @@ describe('clearUserState (чистая логика на инъекции)', () 
         resetSessionFuel: () => calls.push('fuel'),
         setSessionsCache: (sessions) => calls.push(`cache:${sessions.length}`),
         setFacts: (facts) => calls.push(`facts:${facts.length}`),
+        setTaskState: (taskState) => calls.push(`taskState:${taskState === null ? 'null' : 'set'}`),
       },
       branches: { hideBranches: () => calls.push('branches') },
       memory: { resetMemory: () => calls.push('memory') },
@@ -44,6 +45,7 @@ describe('clearUserState (чистая логика на инъекции)', () 
       'fuel',
       'cache:0',
       'facts:0',
+      'taskState:null',
       'branches',
       'memory',
       'twins',
@@ -66,6 +68,7 @@ describe('resetUserState (реальные сторы приложения)', ()
     session.applyUsage({ totalTokens: 321 });
     session.setSessionsCache(dirtState());
     session.setFacts([{ key: 'борт', value: 'Шумахер' }]);
+    session.setTaskState({ stage: 'EXECUTION', step: 'шаг', expectedAction: 'действие' });
 
     resetUserState();
 
@@ -76,6 +79,7 @@ describe('resetUserState (реальные сторы приложения)', ()
     expect(after.tokenHistory).toEqual([]);
     expect(after.sessionsCache).toEqual([]);
     expect(after.facts).toEqual([]);
+    expect(after.taskState).toBeNull();
   });
 
   it('ветки скрыты: список пуст, бар не виден, activeBranchId обнулён', () => {

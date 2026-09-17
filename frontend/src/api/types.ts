@@ -58,6 +58,30 @@ export interface ChatResponse {
   exchanges: ExchangeInfo[];
   /** События хода работы агента. */
   events: AgentEvent[];
+  /** taskState — FSM состояния задачи; синхронно с Models.kt (ChatResponse.taskState). */
+  taskState?: TaskState | null;
+}
+
+/** Этап задачи (Kotlin: TaskStage); enum в JSON сериализуется строкой. */
+export type TaskStage =
+  | 'PLANNING'
+  | 'EXECUTION'
+  | 'VALIDATION'
+  | 'DONE'
+  | 'PAUSED';
+
+/**
+ * Состояние задачи конечного автомата (Kotlin: TaskState,
+ * Models.kt: ChatResponse.taskState) — синхронизировать вручную.
+ */
+export interface TaskState {
+  stage: TaskStage;
+  /** Текущий шаг (свободный текст, ≤120 символов). */
+  step: string;
+  /** Ожидаемое следующее действие (свободный текст, ≤200 символов). */
+  expectedAction: string;
+  /** Этап, с которого задача поставлена на паузу; null/отсутствует — не на паузе. */
+  prevStage?: TaskStage | null;
 }
 
 /** Один выделенный факт диалога (стратегия «Факты»). */

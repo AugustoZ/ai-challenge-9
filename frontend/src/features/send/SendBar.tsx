@@ -13,6 +13,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { FormEvent } from 'react';
+import type { TaskState } from '../../api/types';
 import styles from './SendBar.module.css';
 
 export interface SendBarProps {
@@ -20,11 +21,23 @@ export interface SendBarProps {
   /** Клавиша «Стоп» видна только при активном запросе (в зеркале его нет —
       script.js L2510–2519: активный activeRequest). */
   stoppable?: boolean;
+  /** Состояние задачи FSM (ChatResponse.taskState): null — клавиша
+      паузы погашена; PAUSED — на клавише «Продолжить». */
+  taskState?: TaskState | null;
+  /** Клик по клавише паузы: POST /api/task/pause|resume (useTaskControl). */
+  onPauseToggle?: () => void;
   onSend: (text: string) => void;
   onStop: () => void;
 }
 
-export default function SendBar({ inFlight, stoppable = true, onSend, onStop }: SendBarProps) {
+export default function SendBar({
+  inFlight,
+  stoppable = true,
+  taskState,
+  onPauseToggle,
+  onSend,
+  onStop,
+}: SendBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const wasInFlightRef = useRef(false);
 
@@ -66,6 +79,15 @@ export default function SendBar({ inFlight, stoppable = true, onSend, onStop }: 
           Стоп
         </button>
       ) : null}
+      <button
+        type="button"
+        className={styles.txBtn}
+        disabled={taskState == null}
+        aria-pressed={taskState?.stage === 'PAUSED'}
+        onClick={onPauseToggle}
+      >
+        {taskState?.stage === 'PAUSED' ? 'Продолжить' : 'Пауза'}
+      </button>
       <button type="submit" className={styles.txBtn} disabled={inFlight}>
         Передать
       </button>

@@ -74,6 +74,8 @@ class AuthInterceptTest {
         Triple("POST", "/api/chat", """{"message":"привет"}"""),
         Triple("POST", "/api/chat/stream", """{"message":"привет"}"""),
         Triple("POST", "/api/cancel", """{"requestId":"r1"}"""),
+        Triple("POST", "/api/task/pause", """{"sessionId":"x"}"""),
+        Triple("POST", "/api/task/resume", """{"sessionId":"x"}"""),
         Triple("GET", "/api/sessions", null),
         Triple("DELETE", "/api/sessions", null),
         Triple("GET", "/api/session/x", null),

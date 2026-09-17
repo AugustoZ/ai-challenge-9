@@ -7,6 +7,8 @@
    приходят через props.
    ============================================================ */
 
+import type { TaskStage } from '../api/types';
+import { useSessionStore } from '../stores/session';
 import Lamp from './Lamp';
 import styles from './StatusLine.module.css';
 
@@ -17,7 +19,22 @@ export interface StatusLineProps {
   text: string;
 }
 
+/* Метки этапов FSM (ChatResponse.taskState, план задач 6). */
+const STAGE_LABELS: Record<TaskStage, string> = {
+  PLANNING: 'Планирование',
+  EXECUTION: 'Исполнение',
+  VALIDATION: 'Проверка',
+  DONE: 'Готово',
+  PAUSED: 'Пауза',
+};
+
 export default function StatusLine({ kind, text }: StatusLineProps) {
+  /* taskState — из стора напрямую, по образцу Facts (s.facts):
+     null — зона задачи пуста, как и до задачи 6. */
+  const taskState = useSessionStore((s) => s.taskState);
+  const stepLine = taskState
+    ? `Шаг: ${taskState.step} · Далее: ${taskState.expectedAction}`
+    : '';
   return (
     <div className={styles.directive} data-kind={kind} aria-live="polite">
       <Lamp
@@ -25,6 +42,14 @@ export default function StatusLine({ kind, text }: StatusLineProps) {
         blinking={kind === 'busy'}
       />
       <span className={styles.text} title={kind === 'fault' ? text : ''}>{text}</span>
+      {taskState ? (
+        <span className={styles.task}>
+          <span className={styles.badge} data-stage={taskState.stage}>
+            {STAGE_LABELS[taskState.stage]}
+          </span>
+          <span className={styles.step} title={stepLine}>{stepLine}</span>
+        </span>
+      ) : null}
     </div>
   );
 }

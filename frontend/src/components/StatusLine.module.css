@@ -25,6 +25,51 @@
 
 .text {
     overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Состояние задачи FSM (ChatResponse.taskState): бейдж этапа + строка
+   шага справа; taskState == null — группа не рендерится вовсе. */
+.task {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    margin-left: auto;
+    padding-left: 9px;
+}
+
+.badge {
+    flex: none;
+    padding: 1px 7px;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.badge[data-stage="PLANNING"],
+.badge[data-stage="EXECUTION"],
+.badge[data-stage="VALIDATION"] {
+    color: var(--amber);
+    border-color: rgba(var(--lamp-warm), 0.5);
+}
+
+.badge[data-stage="DONE"] {
+    color: var(--green);
+    border-color: rgba(var(--lamp-cool), 0.5);
+}
+
+.badge[data-stage="PAUSED"] {
+    color: var(--red);
+    border-color: rgba(var(--lamp-alarm), 0.5);
+}
+
+.step {
+    overflow: hidden;
+    min-width: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
 }

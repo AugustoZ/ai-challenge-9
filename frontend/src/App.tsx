@@ -20,6 +20,7 @@ import MemoryPanel from './features/memory/MemoryPanel';
 import Recorder from './features/maintenance/Recorder';
 import Mirror from './features/mirror/Mirror';
 import SendBar from './features/send/SendBar';
+import { useTaskControl } from './features/send/useTaskControl';
 import { statusKindFor } from './features/send/request';
 import { useChatStream } from './features/send/useChatStream';
 import AuthGate from './features/auth/AuthGate';
@@ -56,6 +57,11 @@ export default function App() {
   const mirrorMode = useSettingsStore((s) => s.mirrorMode);
 
   const { send, stop, inFlight, stoppable, directive, setDirective } = useChatStream();
+
+  /* Состояние задачи FSM (stores/session): бейдж в StatusLine читает стор
+     сам; SendBar получает taskState и обработчик паузы (план задач 6). */
+  const taskState = useSessionStore((s) => s.taskState);
+  const { togglePause } = useTaskControl((message) => setDirective({ kind: 'fault', text: message }));
 
   /* Режим ТО (setMaint, script.js L1242–1248): класс body; директива
      переписывается, только пока состояние — готовность */
@@ -178,7 +184,14 @@ export default function App() {
         {/* Пульт сравнения (ваниль mirrorBlock) — только в режиме сравнения */}
         {mirrorMode && <Mirror />}
         <StatusLine kind={statusKindFor(inFlight, directive)} text={directive.text} />
-        <SendBar inFlight={inFlight} stoppable={stoppable} onSend={(text) => void send(text)} onStop={stop} />
+        <SendBar
+          inFlight={inFlight}
+          stoppable={stoppable}
+          taskState={taskState}
+          onPauseToggle={togglePause}
+          onSend={(text) => void send(text)}
+          onStop={stop}
+        />
       </main>
 
       {/* Панель сессий — третья колонка каркаса (ваниль sessions-panel) */}

@@ -2,6 +2,7 @@ package com.example.aiweb.model
 
 import com.example.aiweb.memory.MemoryEntry
 import com.example.aiweb.memory.WorkingEntry
+import com.example.aiweb.task.TaskState
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
@@ -229,7 +230,9 @@ data class ChatResponse(
     /** Сырые обмены с LLM, совершённые при обработке этого сообщения (для режима ТО). */
     val exchanges: List<ExchangeInfo> = emptyList(),
     /** События хода работы агента. */
-    val events: List<AgentEvent> = emptyList()
+    val events: List<AgentEvent> = emptyList(),
+    /** taskState — FSM состояния задачи; синхронно с frontend/src/api/types.ts. null — задачи нет. */
+    val taskState: TaskState? = null
 )
 
 /** Один выделенный факт диалога (стратегия «Факты»). */
