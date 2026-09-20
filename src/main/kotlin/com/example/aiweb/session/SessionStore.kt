@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.task.TaskState
@@ -96,6 +97,26 @@ interface SessionStore {
     /** Состояние задачи ([Session.taskState]); null — сессия не существует или состояние ещё не ставилось. */
     fun getTaskState(sessionId: String): TaskState?
 
+    /**
+     * Заменяет контрольную точку прерванного паузой прогона ([Session.pausedRun])
+     * на уровне всей сессии. null — очистить (checkpoint потреблён или устарел).
+     * Возвращает обновлённую сессию; null — сессия не существует (вызов no-op).
+     */
+    fun savePausedRun(sessionId: String, run: PausedRun?): Session?
+
+    /** Контрольная точка ([Session.pausedRun]); null — сессия не существует или checkpoint не ставился. */
+    fun getPausedRun(sessionId: String): PausedRun?
+
+    /**
+     * Заменяет список инвариантов сессии ([Session.invariants]) на уровне всей
+     * сессии. Возвращает обновлённую сессию; null — сессия не существует
+     * (вызов no-op).
+     */
+    fun updateInvariants(sessionId: String, invariants: List<StoredInvariant>): Session?
+
+    /** Инварианты сессии ([Session.invariants]); emptyList — сессия не существует или инварианты ещё не ставились. */
+    fun getInvariants(sessionId: String): List<StoredInvariant>
+
     /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
     fun list(): List<Session>
 
@@ -132,6 +153,21 @@ internal fun Session.activeDiverged(): Boolean =
         facts != capturedFacts
 
 /**
+ * Контрольная точка прерванного паузой прогона: дельта агентного цикла
+ * (assistant(tool_calls) и role="tool" сообщения этого прогона, чиненая
+ * [AgentLoop.repairDelta]) плюс цель пользователя. Сохраняется в сессию при
+ * отмене стрима с saveContext=true и однократно потребляется следующим
+ * запросом как resumeContext — модель продолжает с места остановки.
+ */
+@Serializable
+data class PausedRun(
+    /** Цель прерванного прогона (сообщение пользователя, запустившее его); null — не фиксировалась. */
+    val goal: String?,
+    /** Дельта прогона: пары assistant(tool_calls) → role="tool" и прочие сообщения цикла. */
+    val messages: List<OpenAIMessage>
+)
+
+/**
  * Доменная модель сессии диалога. System-сообщения (промт агента, бюджет ответа)
  * в истории не живут — они добавляются к запросу в момент его сборки, поэтому
  * здесь хранятся только ходы диалога: user, assistant и role="tool".
@@ -160,6 +196,20 @@ data class Session(
      * Back-compat: legacy-файлы сессий без этого поля читаются с null.
      */
     val taskState: TaskState? = null,
+    /**
+     * Контрольная точка прерванного паузой прогона ([PausedRun]) на уровне всей
+     * сессии. Back-compat: legacy-файлы сессий без этого поля читаются с null —
+     * дефолт значения на поле снабжает значение.
+     */
+    val pausedRun: PausedRun? = null,
+    /**
+     * Инварианты сессии (непреложные правила) на уровне всей сессии.
+     * Back-compat: legacy-файлы сессий без этого поля читаются с emptyList —
+     * дефолт значения на поле снабжает значение. Rollback-совместимость: свежие
+     * файлы, содержащие поле, старые версии читают без ошибки — ignoreUnknownKeys
+     * пропускает неизвестное поле.
+     */
+    val invariants: List<StoredInvariant> = emptyList(),
     val createdAt: Long,
     val updatedAt: Long,
     /**
@@ -187,7 +237,11 @@ data class Session(
  * хранит её снимок на момент активации («зеркало»).
  *
  * Осознанное ограничение: [Session.taskState] в снимок ветки НЕ входит —
- * состояние задачи общее на сессию и переживает переключение веток.
+ * состояние задачи общее на сессию и переживает переключение веток. То же
+ * относится к [Session.invariants]: инварианты в снимок ветки НЕ входят —
+ * они общие на сессию и переживают переключение веток. И к [Session.pausedRun]:
+ * checkpoint прерванного прогона в снимок ветки НЕ входит — он принадлежит
+ * сессии, а не содержимому ветки.
  */
 @Serializable
 data class Branch(
@@ -258,6 +312,12 @@ class InMemorySessionStore(
 
         @Volatile
         var taskState: TaskState? = null
+
+        @Volatile
+        var pausedRun: PausedRun? = null
+
+        @Volatile
+        var invariants: List<StoredInvariant> = emptyList()
 
         /** Отпечаток захвата активного состояния (см. [Session.capturedMessages]). */
         @Volatile
@@ -416,6 +476,34 @@ class InMemorySessionStore(
         return synchronized(entry) { entry.taskState }
     }
 
+    override fun savePausedRun(sessionId: String, run: PausedRun?): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            entry.pausedRun = run
+            entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
+    override fun getPausedRun(sessionId: String): PausedRun? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) { entry.pausedRun }
+    }
+
+    override fun updateInvariants(sessionId: String, invariants: List<StoredInvariant>): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            entry.invariants = invariants.toList()
+            entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
+    override fun getInvariants(sessionId: String): List<StoredInvariant> {
+        val entry = sessions[sessionId] ?: return emptyList()
+        return synchronized(entry) { entry.invariants.toList() }
+    }
+
     override fun list(): List<Session> =
         sessions.values.map { it.snapshot() }.sortedByDescending { it.updatedAt }
 
@@ -466,6 +554,8 @@ class InMemorySessionStore(
             branchSeq = branchSeq,
             facts = facts,
             taskState = taskState,
+            pausedRun = pausedRun,
+            invariants = invariants,
             createdAt = createdAt,
             updatedAt = updatedAt,
             capturedMessages = capturedMessages,

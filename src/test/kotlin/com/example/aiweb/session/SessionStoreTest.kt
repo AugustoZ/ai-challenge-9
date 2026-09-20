@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.model.OpenAIToolCall
@@ -758,5 +759,128 @@ class SessionStoreTest {
         assertNull(store.updateTaskState("нет-такого", taskState()))
         assertNull(store.getTaskState("нет-такого"))
         assertTrue(store.list().isEmpty())
+    }
+
+    private fun invariant(id: String, text: String) = StoredInvariant(id = id, text = text)
+
+    @Test
+    fun `invariants round-trip — create → updateInvariants → getInvariants → snapshot содержит инварианты`() {
+        val store = newStore()
+        val session = store.create()
+        val invariants = listOf(invariant("inv-1", "Только Kotlin"))
+
+        assertTrue(store.getInvariants(session.id).isEmpty())
+        assertTrue(store.get(session.id)?.invariants?.isEmpty() == true)
+
+        val updated = assertNotNull(store.updateInvariants(session.id, invariants))
+        assertEquals(invariants, updated.invariants)
+        assertEquals(invariants, store.getInvariants(session.id))
+        assertEquals(invariants, assertNotNull(store.get(session.id)).invariants)
+        assertEquals(invariants, store.list().single().invariants)
+    }
+
+    @Test
+    fun `updateInvariants пустым списком сбрасывает инварианты`() {
+        val store = newStore()
+        val session = store.create()
+        store.updateInvariants(session.id, listOf(invariant("inv-1", "Только Kotlin")))
+
+        val cleared = assertNotNull(store.updateInvariants(session.id, emptyList()))
+
+        assertTrue(cleared.invariants.isEmpty())
+        assertTrue(store.getInvariants(session.id).isEmpty())
+    }
+
+    @Test
+    fun `updateInvariants и getInvariants по неизвестному sessionId — no-op без исключения`() {
+        val store = newStore()
+
+        assertNull(store.updateInvariants("нет-такого", listOf(invariant("inv-1", "Только Kotlin"))))
+        assertTrue(store.getInvariants("нет-такого").isEmpty())
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `invariants не входят в снимок ветки — общие на сессию и переживают переключение`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.updateInvariants(session.id, listOf(invariant("inv-1", "Только Kotlin")))
+        store.forkTwin(session.id)
+
+        // Инварианты изменились после форка
+        val after = listOf(invariant("inv-1", "Только Kotlin"), invariant("inv-2", "Без jQuery"))
+        store.updateInvariants(session.id, after)
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        // Снимок ветки не захватил инварианты: сохраняется текущее сессионное значение
+        assertEquals(after, activated.invariants)
+        // Сессия хранит инварианты и после переключения веток
+        assertEquals(after, assertNotNull(store.get(session.id)).invariants)
+    }
+
+    // ── PausedRun: контрольная точка прерванного паузой прогона ──
+
+    private fun pausedRun() = PausedRun(
+        goal = "узнать погоду",
+        messages = listOf(
+            OpenAIMessage(
+                role = "assistant",
+                content = null,
+                toolCalls = listOf(OpenAIToolCall(id = "call-1"))
+            ),
+            OpenAIMessage(role = "tool", content = "результат", toolCallId = "call-1")
+        )
+    )
+
+    @Test
+    fun `pausedRun round-trip — savePausedRun → getPausedRun → snapshot содержит checkpoint`() {
+        val store = newStore()
+        val session = store.create()
+        val run = pausedRun()
+
+        assertNull(store.getPausedRun(session.id))
+        assertNull(store.get(session.id)?.pausedRun)
+
+        val updated = assertNotNull(store.savePausedRun(session.id, run))
+        assertEquals(run, updated.pausedRun)
+        assertEquals(run, store.getPausedRun(session.id))
+        assertEquals(run, assertNotNull(store.get(session.id)).pausedRun)
+        assertEquals(run, store.list().single().pausedRun)
+    }
+
+    @Test
+    fun `savePausedRun null очищает checkpoint`() {
+        val store = newStore()
+        val session = store.create()
+        store.savePausedRun(session.id, pausedRun())
+
+        val cleared = assertNotNull(store.savePausedRun(session.id, null))
+
+        assertNull(cleared.pausedRun)
+        assertNull(store.getPausedRun(session.id))
+    }
+
+    @Test
+    fun `savePausedRun и getPausedRun по неизвестному sessionId — no-op без исключения`() {
+        val store = newStore()
+
+        assertNull(store.savePausedRun("нет-такого", pausedRun()))
+        assertNull(store.getPausedRun("нет-такого"))
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `pausedRun перезаписывается новым прогоном`() {
+        val store = newStore()
+        val session = store.create()
+        store.savePausedRun(session.id, pausedRun())
+        val second = PausedRun(goal = "новая цель", messages = listOf(user("ход")))
+
+        val updated = assertNotNull(store.savePausedRun(session.id, second))
+
+        assertEquals(second, updated.pausedRun)
+        assertEquals(second, store.getPausedRun(session.id))
     }
 }

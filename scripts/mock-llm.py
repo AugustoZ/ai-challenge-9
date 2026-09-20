@@ -14,10 +14,11 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
       stream: true  → SSE: data: {chunk} … финальный chunk с usage … data: [DONE]
     GET  /v1/models — список моделей (для /api/models фронта)
     GET  /control  — состояние стаба: {"mode", "delay_ms", "requests"}
-    POST /control  — частичное управление: {"mode": "plain|planning|execution|"
-      "validation|done|illegal", "delay_ms": <мс>} (FSM-режимы задачи 5 плана
-      task-state-fsm; «illegal» предлагает переход done→execution — сервер
-      должен отклонить; задержка нужна сценарию «пауза в полёте», G2)
+     POST /control  — частичное управление: {"mode": "plain|planning|execution|"
+       "validation|done|illegal|refuse|violate|echo-system", "delay_ms": <мс>}
+       (FSM-режимы задачи 5 плана task-state-fsm; «illegal» предлагает переход
+       done→execution — сервер должен отклонить; инвариант-режимы — задача 5
+       плана assistant-invariants; задержка нужна сценарию «пауза в полёте», G2)
 
 Детерминированные метрики (синхронно с SessionHistory.estimateTokens):
     usage.prompt_tokens     = ceil(сумма_длин_всех_сообщений / 2.5)
@@ -52,6 +53,7 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
 import argparse
 import json
 import math
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,6 +65,11 @@ SUMMARY_MARKER = "Сводка ранее"
 # Маркер запроса на извлечение фактов (согласовано с FactPrompts.FACTS_MARKER,
 # задача 5): system-промпт содержит эту фразу — отвечаем детерминированным KV-JSON.
 FACTS_MARKER = "Извлечение фактов"
+
+# Маркер блока инвариантов (согласовано с InvariantPrompts.INVARIANTS_MARKER,
+# задача 6 плана assistant-invariants): system-промпт содержит эту фразу —
+# режим refuse отказывает, цитируя первый инвариант после заголовка.
+INVARIANTS_MARKER = "НЕПРЕЛОЖНЫЕ ИНВАРИАНТЫ"
 
 # Маркер промт-протокола инструментов (PromptToolTransport.buildToolPrompt):
 # system-сообщение начинается с этой фразы и перечисляет доступные инструменты.
@@ -115,6 +122,24 @@ TASK_MODES = {
     "illegal": ("Прыжок с done на execution", "Должен быть отклонён сервером"),
 }
 
+# Режимы инвариантов (задача 5 плана assistant-invariants):
+# refuse — отказ с цитированием инварианта, ЕСЛИ маркер блока в system
+# (иначе обычный ротационный ответ: детерминированный тест инъекции);
+# violate — фиксированное нарушение (проверка passthrough: сервер не
+# блокирует); echo-system — дамп полученных system-сообщений (инъекция).
+INVARIANT_MODES = {
+    "refuse": "отказ, если маркер блока инвариантов в system-сообщениях",
+    "violate": "фиксированное предложение, нарушающее инвариант",
+    "echo-system": "дамп полученных system-сообщений",
+}
+
+# Фиксированный ответ режима violate: нарушает гипотетический инвариант
+# («не предлагать jQuery») — проверка, что блокировки на сервере нет.
+VIOLATE_REPLY = (
+    "Предлагаю переписать всё на jQuery и разложить состояние в глобальные "
+    "переменные — это быстрее всего."
+)
+
 # Управление режимом (QA-сценарии): {"mode": ..., "delay_ms": ...} через
 # GET/POST /control; задержка нужна сценарию «пауза в полёте» (G2).
 _mode = {"mode": "plain", "delay_ms": 0}
@@ -145,7 +170,7 @@ def _control_update(payload):
         with _lock:
             if "mode" in payload:
                 mode = payload["mode"]
-                if mode == "plain" or mode in TASK_MODES:
+                if mode == "plain" or mode in TASK_MODES or mode in INVARIANT_MODES:
                     _mode["mode"] = mode
                 else:
                     return None
@@ -220,8 +245,45 @@ def _last_user_text(messages):
     return text
 
 
+def _first_invariant(content):
+    """Первый инвариант после заголовка-маркера: первая непустая строка,
+    не заголовок секции («Глобальные:»/«Сессия:»), нумерация списка обрезана.
+    None, если после заголовка инвариантов нет."""
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if INVARIANTS_MARKER in line:
+            for following in lines[i + 1:]:
+                text = following.strip()
+                if not text or text in ("Глобальные:", "Сессия:"):
+                    continue
+                match = re.match(r"^(?:\d+[.)]|[-*])\s*", text)
+                if match:
+                    text = text[match.end():].strip()
+                return text or None
+    return None
+
+
+def _echo_system_reply(messages):
+    """Детерминированный дамп system-сообщений: роль + первые 200 символов
+    каждого, с разделителем-переносом (задача 5 плана assistant-invariants)."""
+    lines = ["SYSTEM MESSAGES:"]
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if content is None:
+            text = ""
+        elif isinstance(content, str):
+            text = content
+        else:
+            text = " ".join(part.get("text", "") for part in content if isinstance(part, dict))
+        lines.append("[%s] %s" % (message.get("role"), text[:200]))
+    return "\n".join(lines)
+
+
 def _pick_reply(messages, mode):
-    """Сводка/факты — фиксированные ответы по маркерам; FSM-режим (задача 5) —
+    """Сводка/факты — фиксированные ответы по маркерам; инвариант-режимы
+    (задача 5 assistant-invariants) — refuse/violate/echo-system; FSM-режим —
     реплика с блоком task-state; tool-протокол памяти — по итерации цикла
     (вызов → финальный текст); иначе — реплика из ротации."""
     for message in messages:
@@ -235,6 +297,28 @@ def _pick_reply(messages, mode):
             return _facts_reply(messages)
         if SUMMARY_MARKER in content:
             return SUMMARY_REPLY
+
+    if mode in INVARIANT_MODES:
+        print("mock-llm: инвариант-режим «%s»" % mode, flush=True)
+        if mode == "refuse":
+            for message in messages:
+                if not isinstance(message, dict) or message.get("role") != "system":
+                    continue
+                content = message.get("content")
+                if isinstance(content, str) and INVARIANTS_MARKER in content:
+                    first = _first_invariant(content)
+                    if first is None:
+                        print("mock-llm: маркер инвариантов без текста — обычный ответ", flush=True)
+                        return _pick_rotation()
+                    return (
+                        "Не могу выполнить: это противоречит инварианту „%s“. "
+                        "Это правило задано как непреодолимое ограничение." % first
+                    )
+            # Блока нет в system — обычный ротационный ответ (тест инъекции).
+            return _pick_rotation()
+        if mode == "violate":
+            return VIOLATE_REPLY
+        return _echo_system_reply(messages)
 
     if mode in TASK_MODES:
         print("mock-llm: FSM-режим «%s» — блок task-state" % mode, flush=True)
@@ -319,7 +403,7 @@ class MockLLMHandler(BaseHTTPRequestHandler):
             state = _control_update(payload) if payload is not None else None
             if state is None:
                 self._send_json(400, {"error": {"message": "Ожидаются mode (plain|%s) и/или delay_ms (int ≥ 0)"
-                                                          % "|".join(sorted(TASK_MODES))}})
+                                                           % "|".join(sorted(set(TASK_MODES) | set(INVARIANT_MODES)))}})
             else:
                 self._send_json(200, state)
             return

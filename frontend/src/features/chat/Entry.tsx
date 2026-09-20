@@ -5,12 +5,14 @@
    (addSystemMessage) и L586–600 (showTyping — запись-заглушка
    с лампами на время потока, волна 5). Презентационная: штампы
    и показания приходят готовыми строками/числами через props.
-   Порядок содержимого записи — как в ваниле: шапка → бейдж
-   сводки → пузырь → трасса агента → заключение судьи.
+    Порядок содержимого записи — как в ваниле: шапка → бейдж
+    сводки → пузырь → трасса агента → заключение судьи; над
+    пузырём добавлен бейдж-предупреждение о нештатном
+    завершении хода (reason ≠ «готово») — расширение.
    ============================================================ */
 
 import { Fragment, useEffect, useMemo, useRef } from 'react';
-import type { AgentEvent, JudgeReport } from '../../api/types';
+import type { AgentEvent, AgentFinal, JudgeReport } from '../../api/types';
 import { fmtElapsed, fmtRate } from '../../lib/format';
 import { highlightCodeBlocks, renderMarkdown } from '../../lib/markdown';
 import { stripTaskStateBlocks } from '../../lib/taskStateFilter';
@@ -139,6 +141,19 @@ export default function Entry({ entry }: { entry: JournalEntry }) {
   const kindClass = entry.kind === 'user' ? styles.user : styles.bot;
   const head = headParts(entry);
 
+  /* Причина нештатного завершения хода: последнее final-событие трассы
+     (AgentLoop::final, reason: готово | лимит шагов | дедлайн |
+     зацикливание). Отказный ответ бывает на десятки килобайт бессвязного
+     текста, поэтому причину выводим бейджем в шапке записи — видно сразу,
+     без раскрытия «Хода работы агента». Обычный ответ (reason «готово»
+     либо final-события нет) — без бейджа. */
+  const lastFinal = entry.events
+    ? entry.events.filter((ev): ev is AgentFinal => ev.type === 'final').pop()
+    : undefined;
+  const abnormalReason = lastFinal && lastFinal.reason !== 'готово'
+    ? lastFinal.reason
+    : null;
+
   return (
     <div className={`${styles.message} ${kindClass}`}>
       <div className={styles.entry}>
@@ -151,6 +166,12 @@ export default function Entry({ entry }: { entry: JournalEntry }) {
             </Fragment>
           ))}
         </div>
+
+        {abnormalReason ? (
+          /* Красная лампа отказа: ход закончился не «готово» — причина
+             видна сразу, не раскрывая блока трейса (см. abnormalReason). */
+          <span className={styles.warningBadge}>{`⚠ ${abnormalReason}`}</span>
+        ) : null}
 
         {entry.meta?.tokenData?.summaryApplied ? (
           <span className={styles.summaryBadge}>Сводка применена</span>

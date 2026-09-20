@@ -7,6 +7,8 @@
 import type {
   AuthTokenResponse,
   AuthUserView,
+  Invariant,
+  InvariantsPayload,
   MemoryEntry,
   MemoryKind,
   MemoryListResponse,
@@ -236,4 +238,58 @@ export async function savePreferences(
   signal?: AbortSignal,
 ): Promise<UserPreferences> {
   return putJson<UserPreferences>('preferences', prefs, signal);
+}
+
+/* ---------- Инварианты: глобальный и сессионный скоупы (Kotlin: InvariantsPayload) ---------- */
+
+/** GET /api/invariants?sessionId=… — оба скоупа одним пейлоадом (400 нет id, 404 неизвестная). */
+export async function fetchInvariants(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<InvariantsPayload> {
+  return getJson<InvariantsPayload>(`invariants?sessionId=${encodeURIComponent(sessionId)}`, signal);
+}
+
+/** POST /api/invariants/global {text} — добавить глобальный инвариант (400 валидация/дубль/кап). */
+export async function addGlobalInvariant(
+  text: string,
+  signal?: AbortSignal,
+): Promise<{ global: Invariant[] }> {
+  return postJson<{ global: Invariant[] }>('invariants/global', { text }, signal);
+}
+
+/** DELETE /api/invariants/global/{id} — убрать глобальный инвариант (404 — такого id нет). */
+export async function deleteGlobalInvariant(
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ global: Invariant[] }> {
+  return deleteJson<{ global: Invariant[] }>(
+    `invariants/global/${encodeURIComponent(id)}`,
+    signal,
+  );
+}
+
+/** POST /api/invariants/session {sessionId, text} — добавить инвариант сессии (400/404). */
+export async function addSessionInvariant(
+  sessionId: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<{ session: Invariant[] }> {
+  return postJson<{ session: Invariant[] }>(
+    'invariants/session',
+    { sessionId, text },
+    signal,
+  );
+}
+
+/** DELETE /api/invariants/session/{sessionId}/{id} — убрать инвариант сессии (404). */
+export async function deleteSessionInvariant(
+  sessionId: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<{ session: Invariant[] }> {
+  return deleteJson<{ session: Invariant[] }>(
+    `invariants/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(id)}`,
+    signal,
+  );
 }

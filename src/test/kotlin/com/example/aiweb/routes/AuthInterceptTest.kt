@@ -76,6 +76,11 @@ class AuthInterceptTest {
         Triple("POST", "/api/cancel", """{"requestId":"r1"}"""),
         Triple("POST", "/api/task/pause", """{"sessionId":"x"}"""),
         Triple("POST", "/api/task/resume", """{"sessionId":"x"}"""),
+        Triple("GET", "/api/invariants?sessionId=x", null),
+        Triple("POST", "/api/invariants/global", """{"text":"правило"}"""),
+        Triple("DELETE", "/api/invariants/global/inv-1", null),
+        Triple("POST", "/api/invariants/session", """{"sessionId":"x","text":"правило"}"""),
+        Triple("DELETE", "/api/invariants/session/x/inv-1", null),
         Triple("GET", "/api/sessions", null),
         Triple("DELETE", "/api/sessions", null),
         Triple("GET", "/api/session/x", null),
@@ -150,7 +155,10 @@ class AuthInterceptTest {
                 Triple("GET", "/api/models", null),
                 Triple("POST", "/api/chat", """{"message":"привет"}"""),
                 Triple("POST", "/api/chat/stream", """{"message":"привет"}"""),
-                Triple("DELETE", "/api/sessions", null)
+                Triple("DELETE", "/api/sessions", null),
+                Triple("GET", "/api/invariants?sessionId=x", null),
+                Triple("POST", "/api/invariants/global", """{"text":"правило"}"""),
+                Triple("DELETE", "/api/invariants/session/x/inv-1", null)
             )) {
                 val garbage = when (method) {
                     "GET" -> client.get("$base$path") { header("X-Auth-Token", "garbage") }

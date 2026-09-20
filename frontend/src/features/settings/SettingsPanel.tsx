@@ -20,6 +20,7 @@ import annunciatorStyles from '../../components/AnnunciatorGroup.module.css';
 import Dial from '../../components/Dial';
 import { DIALS } from '../../components/dialMath';
 import Facts from '../strategy/Facts';
+import InvariantsPanel from '../invariants/InvariantsPanel';
 import type { ContextStrategy } from '../../stores/settings';
 import { useSettingsStore } from '../../stores/settings';
 import PreferencesSection from './PreferencesSection';
@@ -343,6 +344,10 @@ export default function SettingsPanel({ open, maintenance }: { open: boolean; ma
           Выключите, чтобы агент не читал и не сохранял память
         </p>
       </section>
+
+      {/* Секция «Инварианты» (план Task 10): глобальный и сессионный
+          скоупы непреложных правил; чтение — на смену sessionId */}
+      <InvariantsPanel />
 
       {/* Секция «Предпочтения» (план Task 14): табло текущих значений
           опросника и визард правки; чтение — при открытии Drawer'а */}

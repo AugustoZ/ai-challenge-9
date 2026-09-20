@@ -1,5 +1,6 @@
 package com.example.aiweb.model
 
+import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.memory.MemoryEntry
 import com.example.aiweb.memory.WorkingEntry
 import com.example.aiweb.task.TaskState
@@ -232,7 +233,40 @@ data class ChatResponse(
     /** События хода работы агента. */
     val events: List<AgentEvent> = emptyList(),
     /** taskState — FSM состояния задачи; синхронно с frontend/src/api/types.ts. null — задачи нет. */
-    val taskState: TaskState? = null
+    val taskState: TaskState? = null,
+    /**
+     * Эхо обоих скоупов инвариантов ([InvariantsPayload]): глобальный + сессия,
+     * синхронно с frontend/src/api/types.ts (ChatResponse.invariants).
+     * null — когда оба скоупа пусты (encodeDefaults=false — ключ из JSON omitится).
+     */
+    val invariants: InvariantsPayload? = null
+)
+
+/**
+ * Оба скоупа инвариантов одним пейлоадом — эхо [ChatResponse.invariants] и
+ * тело/ответ роутов /api/invariants.
+ *
+ * Зеркало frontend `InvariantsPayload` (frontend/src/api/types.ts) —
+ * синхронизировать вручную, как и остальные DTO этого файла.
+ * [global] — глобальные инварианты (файл-стор, задача 2);
+ * [session] — инварианты сессии (Session.invariants, задача 3).
+ *
+ * Контракт 5 роутов (реализация — задача 8, фронтенд — задача 9); все роуты
+ * за токен-интерцептором — 401 без валидного X-Auth-Token:
+ * - GET    /api/invariants?sessionId=X          → 200 {global, session};
+ *   400 — нет sessionId; 404 — неизвестная сессия
+ * - POST   /api/invariants/global {text}        → 200 {global};
+ *   400 — валидация (пустой/длинный текст), точный дубль, кап 20
+ * - DELETE /api/invariants/global/{id}          → 200 {global}; 404 — такого id нет
+ * - POST   /api/invariants/session {sessionId, text} → 200 {session};
+ *   400 — валидация/дубль/кап; 404 — неизвестная сессия
+ * - DELETE /api/invariants/session/{sessionId}/{id} → 200 {session};
+ *   404 — неизвестная сессия или такого id нет
+ */
+@Serializable
+data class InvariantsPayload(
+    val global: List<StoredInvariant> = emptyList(),
+    val session: List<StoredInvariant> = emptyList()
 )
 
 /** Один выделенный факт диалога (стратегия «Факты»). */

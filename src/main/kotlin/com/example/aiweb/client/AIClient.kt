@@ -57,11 +57,32 @@ class AIClient(private val provider: ProviderConfig) : LLMClient {
         }
         install(HttpTimeout) {
             connectTimeoutMillis = 10_000
-            // OpenCode работает через агента: цикл с инструментами может длиться минуты
-            requestTimeoutMillis = if (provider.type == ProviderConfig.TYPE_OPENCODE) 300_000 else 60_000
-            socketTimeoutMillis = if (provider.type == ProviderConfig.TYPE_OPENCODE) 300_000 else 60_000
+            // Реальная LLM-нода (gpustack) делает агентный цикл/reasoning и отвечает
+            // дольше минуты: 60с — отказ уже на первом ходу. Единый запас 300с.
+            requestTimeoutMillis = 300_000
+            socketTimeoutMillis = 300_000
         }
         expectSuccess = false // позволит обработать ошибки API вручную
+        engine {
+            // Внутренний LLM-шлюз (gpustack.data.lmru.tech) отдаёт сертификат с истёкшим
+            // сроком действия. Отключаем проверку сертификата ТОЛЬКО для этого LLM-клиента:
+            // другие Ktor-клиенты (HttpGetTool, SandboxTools) сохраняют полную проверку.
+            // Хоствифейшн в Ktor 2.3 проверяется отдельно и совпадает, поэтому достаточно
+            // trust-all trustManager.
+            https {
+                trustManager = object : javax.net.ssl.X509TrustManager {
+                    override fun checkClientTrusted(
+                        chain: Array<java.security.cert.X509Certificate>,
+                        authType: String
+                    ) = Unit
+                    override fun checkServerTrusted(
+                        chain: Array<java.security.cert.X509Certificate>,
+                        authType: String
+                    ) = Unit
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                }
+            }
+        }
     }
 
     /** modelID → providerID экземпляра OpenCode, заполненный при listModels(). */

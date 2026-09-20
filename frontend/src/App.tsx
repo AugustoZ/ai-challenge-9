@@ -34,6 +34,10 @@ import { useSessionStore } from './stores/session';
 import { useSettingsStore } from './stores/settings';
 import styles from './App.module.css';
 
+/* Авто-сообщение при «Продолжить» с checkpoint: сервер сам подшьёт контекст
+   прерванного прогона. */
+const CONTINUATION_MESSAGE = 'Продолжай с места остановки';
+
 export default function App() {
   /* Гейт входа: checking — идёт restore(); anon — экран входа;
      authed — бортовая консоль. Селектор до остальных хуков. */
@@ -59,9 +63,18 @@ export default function App() {
   const { send, stop, inFlight, stoppable, directive, setDirective } = useChatStream();
 
   /* Состояние задачи FSM (stores/session): бейдж в StatusLine читает стор
-     сам; SendBar получает taskState и обработчик паузы (план задач 6). */
+     сам; SendBar получает taskState и обработчик паузы (план задач 6).
+     stop передаётся всегда (решение 2026-09-20: «Пауза» в полёте обрывает
+     прогон, как «Стоп»): в простое он сам no-op — guard `if (!active)
+     return` внутри stop(); стабилен (useCallback []), пересозданий нет. */
   const taskState = useSessionStore((s) => s.taskState);
-  const { togglePause } = useTaskControl((message) => setDirective({ kind: 'fault', text: message }));
+  /* Третий аргумент: resume с checkpoint (resumeRun: true) сам отправляет
+     continuation-запрос; send при inFlight — no-op (гвард внутри). */
+  const { togglePause } = useTaskControl(
+    (message) => setDirective({ kind: 'fault', text: message }),
+    stop,
+    () => void send(CONTINUATION_MESSAGE),
+  );
 
   /* Режим ТО (setMaint, script.js L1242–1248): класс body; директива
      переписывается, только пока состояние — готовность */

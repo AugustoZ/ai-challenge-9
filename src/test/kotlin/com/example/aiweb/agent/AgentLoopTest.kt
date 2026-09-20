@@ -13,21 +13,30 @@ import com.example.aiweb.tools.PromptToolTransport
 import com.example.aiweb.tools.Tool
 import com.example.aiweb.tools.ToolRegistry
 import com.example.aiweb.tools.ToolResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlin.math.ceil
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * Проверки агентного цикла на фейковом LLMClient с очередью заготовленных ответов:
- * счастливый путь, падение инструмента, зацикливание, лимит шагов и интеграция
- * с промт-транспортом. Реальных обращений к LLM нет.
+ * счастливый путь, падение инструмента, зацикливание, лимит шагов, интеграция
+ * с промт-транспортом и контрольная точка прерванного паузой прогона
+ * (onCancelled + resumeContext). Реальных обращений к LLM нет.
  */
 class AgentLoopTest {
+
+    /** Уникальная метка resumeContext: по ней дельта отмены проверяется на отсутствие checkpoint. */
+    private val resumeMarker = "resume-marker-system-note"
 
     /**
      * Фейковый LLMClient (паттерн client/FakeLLMClientTest): записывает вызовы и
@@ -158,12 +167,7 @@ class AgentLoopTest {
         val args = "{\"expression\":\"1+1\"}"
         val forcedReply = "Задача не решается: вызовы повторяются без прогресса."
         val fake = FakeLLMClient(
-            listOf(
-                toolCallResult(CalculatorTool.NAME, args),
-                toolCallResult(CalculatorTool.NAME, args),
-                toolCallResult(CalculatorTool.NAME, args),
-                textResult(forcedReply)
-            )
+            (1..6).map { toolCallResult(CalculatorTool.NAME, args) } + textResult(forcedReply)
         )
         val events = mutableListOf<AgentEvent>()
 
@@ -173,15 +177,73 @@ class AgentLoopTest {
         assertEquals("зацикливание", outcome.reason)
         assertEquals(forcedReply, outcome.reply)
         assertEquals(
-            AgentEvent.Final(3, forcedReply, "зацикливание"),
+            AgentEvent.Final(6, forcedReply, "зацикливание"),
             events.last()
         )
-        // Три шага с одинаковыми вызовами, затем финал без инструментов
-        assertEquals(4, fake.calls.size)
+        // 6 одинаковых вызовов (кик после третьего, повтор после кика), затем финал без инструментов
+        assertEquals(7, fake.calls.size)
         assertNull(fake.calls.last().tools)
         assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("Инструменты больше недоступны"))
-        // Третий повтор всё же исполнен — «висячих» assistant tool_calls в контексте нет
-        assertEquals(3, events.count { it is AgentEvent.ToolResult && it.ok })
+        assertEquals(6, events.count { it is AgentEvent.ToolResult && it.ok })
+        // Первый вызов после кика: инструменты ещё доступны, заметка — последнее сообщение
+        val afterKick = fake.calls[3]
+        assertTrue(afterKick.tools != null)
+        assertEquals("system", afterKick.messages.last().role)
+        assertTrue(afterKick.messages.last().content.orEmpty().contains("Стоп: ты повторяешь"))
+        // Кик ровно один: до него заметки нет, после — ровно одна в каждом вызове
+        fake.calls.forEachIndexed { idx, call ->
+            val count = call.messages.count { it.content.orEmpty().contains("Стоп: ты повторяешь") }
+            assertEquals(if (idx < 3) 0 else 1, count, "вызов №${idx + 1}: заметок кика $count")
+        }
+    }
+
+    @Test
+    fun `кик после зацикливания даёт модели шанс исправиться`() = runBlocking {
+        val args = "{\"expression\":\"1+1\"}"
+        val fixedReply = "Вот итог по собранным данным."
+        val fake = FakeLLMClient(
+            (1..3).map { toolCallResult(CalculatorTool.NAME, args) } + textResult(fixedReply)
+        )
+        val events = mutableListOf<AgentEvent>()
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
+            .run(seed(), maxTokens = null, onEvent = { events.add(it) })
+
+        // Кик после третьего одинакового вызова: заметка вместо финала — модель
+        // отвечает текстом на шаге 4, принудительного финала нет
+        assertEquals("готово", outcome.reason)
+        assertEquals(fixedReply, outcome.reply)
+        assertEquals(4, fake.calls.size)
+        assertTrue(fake.calls.last().tools != null)
+        assertEquals("system", fake.calls[3].messages.last().role)
+        assertTrue(fake.calls[3].messages.last().content.orEmpty().contains("Стоп: ты повторяешь"))
+        assertEquals(AgentEvent.Final(4, fixedReply, "готово"), events.last())
+    }
+
+    @Test
+    fun `кик после падений инструмента даёт шанс сменить путь`() = runBlocking {
+        val flaky = object : Tool {
+            override val name = "flaky"
+            override val description = "Всегда падает"
+            override val parametersJsonSchema: JsonElement = buildJsonObject { }
+            override suspend fun execute(argsJson: String) = ToolResult(ok = false, content = "упс")
+        }
+        val fake = FakeLLMClient(
+            (1..3).map { toolCallResult("flaky", "{\"q\":\"$it\"}") } +
+                textResult("Сменил подход, вот результат.")
+        )
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry(linkedMapOf("flaky" to flaky)))
+            .run(seed(), maxTokens = null, onEvent = {})
+
+        // Три падения одного инструмента — кик, а не финал: модель сменила путь
+        // и ответила сама
+        assertEquals("готово", outcome.reason)
+        assertEquals("Сменил подход, вот результат.", outcome.reply)
+        assertEquals(4, fake.calls.size)
+        assertTrue(fake.calls[3].tools != null)
+        assertEquals("system", fake.calls[3].messages.last().role)
+        assertTrue(fake.calls[3].messages.last().content.orEmpty().contains("Стоп: ты повторяешь"))
     }
 
     @Test
@@ -326,12 +388,7 @@ class AgentLoopTest {
             override suspend fun execute(argsJson: String) = ToolResult(ok = false, content = "упс")
         }
         val fake = FakeLLMClient(
-            listOf(
-                toolCallResult("flaky", "{\"q\":\"1\"}"),
-                toolCallResult("flaky", "{\"q\":\"2\"}"),
-                toolCallResult("flaky", "{\"q\":\"3\"}"),
-                textResult("Собрал что смог")
-            )
+            (1..6).map { toolCallResult("flaky", "{\"q\":\"$it\"}") } + textResult("Собрал что смог")
         )
 
         val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry(linkedMapOf("flaky" to flaky)))
@@ -340,7 +397,13 @@ class AgentLoopTest {
         // Аргументы у вызовов разные — гвард одинаковых подписей молчит;
         // серию падений одного инструмента ловит отдельный гвард
         assertEquals("зацикливание", outcome.reason)
-        assertEquals(4, fake.calls.size)
+        // 6 падений: кик после третьего, повтор после кика, затем принудительный финал
+        assertEquals(7, fake.calls.size)
+        assertNull(fake.calls.last().tools)
+        assertTrue(fake.calls.last().messages.last().content.orEmpty().contains("Инструменты больше недоступны"))
+        // Первый вызов после кика: заметка — последнее сообщение, инструменты ещё доступны
+        assertTrue(fake.calls[3].tools != null)
+        assertTrue(fake.calls[3].messages.last().content.orEmpty().contains("Стоп: ты повторяешь"))
     }
 
     @Test
@@ -411,5 +474,141 @@ class AgentLoopTest {
         assertEquals(5, outcome.completionTokens)
         // Промт-транспорт добавил описание инструментов system-сообщением
         assertTrue(fake.calls.first().messages.last().content.orEmpty().contains("calculator"))
+    }
+
+    // ── Контрольная точка прерванного паузой прогона: onCancelled / resumeContext ──
+
+    /** Ответ модели с ДВУМЯ вызовами инструментов: обрыв между их результатами оставляет висячий tool_call. */
+    private fun twoToolCallsResult() = ChatResult(
+        reply = "",
+        promptTokens = 10,
+        completionTokens = 3,
+        totalTokens = 13,
+        elapsedMs = 0L,
+        toolCalls = listOf(
+            OpenAIToolCall(
+                id = "call-a",
+                type = "function",
+                function = OpenAIToolCallFunction(CalculatorTool.NAME, "{\"expression\":\"2+2\"}")
+            ),
+            OpenAIToolCall(
+                id = "call-b",
+                type = "function",
+                function = OpenAIToolCallFunction(CalculatorTool.NAME, "{\"expression\":\"3+3\"}")
+            )
+        )
+    )
+
+    @Test
+    fun `отмена прогона отдаёт чиненую дельту в onCancelled, resumeContext в дельту не входит`() = runBlocking {
+        val fake = FakeLLMClient(listOf(twoToolCallsResult()))
+        val loopJob = Job()
+        var callbackCount = 0
+        var delta: List<OpenAIMessage>? = null
+        val runner = launch(loopJob) {
+            try {
+                AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns()).run(
+                    seed(),
+                    maxTokens = null,
+                    onEvent = { event ->
+                        // Обрыв между tool-результатами: «3+3» — второй вызов, его
+                        // результат ещё не в контексте — ремонт обязан дописать его
+                        if (event is AgentEvent.ToolCalled && event.arguments == "{\"expression\":\"3+3\"}") {
+                            loopJob.cancel()
+                        }
+                        yield()
+                    },
+                    onCancelled = { repaired ->
+                        callbackCount++
+                        delta = repaired
+                    },
+                    resumeContext = listOf(OpenAIMessage(role = "system", content = resumeMarker))
+                )
+            } catch (_: CancellationException) {
+                // ожидаемое завершение отменённого прогона
+            }
+        }
+        runner.join()
+
+        assertEquals(1, callbackCount, "onCancelled вызывается ровно один раз")
+        val repaired = assertNotNull(delta)
+        // Дельта — сообщения прогона: assistant с двумя вызовами, выполненный tool
+        // и синтетический результат для висячего вызова
+        assertEquals(3, repaired.size)
+        assertEquals("assistant", repaired[0].role)
+        assertEquals(listOf("call-a", "call-b"), repaired[0].toolCalls?.map { it.id })
+        assertEquals("tool", repaired[1].role)
+        assertEquals("call-a", repaired[1].toolCallId)
+        assertEquals("4", repaired[1].content, "выполненная пара сохраняется как есть")
+        assertEquals("tool", repaired[2].role)
+        assertEquals("call-b", repaired[2].toolCallId)
+        assertEquals("Прервано паузой пользователя", repaired[2].content)
+        assertTrue(
+            repaired.none { it.content == resumeMarker },
+            "resumeContext не входит в дельту отмены"
+        )
+    }
+
+    @Test
+    fun `отмена во время вызова модели — дельта пустая, ремонт no-op`() = runBlocking {
+        val loopJob = Job()
+        val fake = object : LLMClient {
+            override suspend fun ask(call: LLMCall): ChatResult {
+                loopJob.cancel()
+                yield()
+                error("недостижимо после отмены")
+            }
+        }
+        var callbackCount = 0
+        var delta: List<OpenAIMessage>? = null
+        val runner = launch(loopJob) {
+            try {
+                AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns()).run(
+                    seed(),
+                    maxTokens = null,
+                    onEvent = {},
+                    onCancelled = { repaired ->
+                        callbackCount++
+                        delta = repaired
+                    }
+                )
+            } catch (_: CancellationException) {
+                // ожидаемое завершение отменённого прогона
+            }
+        }
+        runner.join()
+
+        // Новый assistant ещё не добавлен — дельта валидна без ремонта
+        assertEquals(1, callbackCount)
+        assertEquals(emptyList(), assertNotNull(delta))
+    }
+
+    @Test
+    fun `resumeContext добавляется сразу после seed-сообщений`() = runBlocking {
+        val fake = FakeLLMClient(listOf(textResult("Продолжаю с места остановки")))
+        val resume = listOf(
+            OpenAIMessage(
+                role = "assistant",
+                content = null,
+                toolCalls = listOf(OpenAIToolCall(id = "call-1"))
+            ),
+            OpenAIMessage(role = "tool", content = "4", toolCallId = "call-1"),
+            OpenAIMessage(role = "system", content = "Продолжай с места остановки")
+        )
+        val seed = listOf(
+            OpenAIMessage(role = "user", content = "старая история"),
+            OpenAIMessage(role = "user", content = "задача")
+        )
+
+        val outcome = AgentLoop(fake, NativeToolTransport(), ToolRegistry.withBuiltIns())
+            .run(seed, maxTokens = null, onEvent = {}, resumeContext = resume)
+
+        assertEquals("Продолжаю с места остановки", outcome.reply)
+        val messages = fake.calls.single().messages
+        assertEquals("system", messages.first().role, "system-промт — первым")
+        // Порядок: system-промт → seed → resumeContext (без перестановок)
+        assertEquals(seed, messages.drop(1).take(seed.size))
+        assertEquals(resume, messages.drop(1 + seed.size).take(resume.size))
+        assertEquals("system", messages.last().role, "заметка возобновления — последним сообщением")
     }
 }

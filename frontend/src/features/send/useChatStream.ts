@@ -94,16 +94,19 @@ export function useChatStream() {
     active.controller.abort();
   }, []);
 
-  /* ---------- Клавиша «Стоп» (script.js L2521–2536) ---------- */
+  /* ---------- Клавиша «Стоп» (script.js L2521–2536) ----------
+     saveContext=true — отмена вызвана паузой: сервер сохранит контекст
+     прогона для продолжения после паузы (контракт /api/cancel).
+     false (дефолт) — обычная отмена «Стопом», контекст не сохраняется. */
 
-  const stop = useCallback(() => {
+  const stop = useCallback((saveContext: boolean = false) => {
     const active = activeRef.current;
     if (!active) return;
     activeRef.current = null;
     /* Обрываем чтение потока и отдельно просим сервер убить вызов LLM.
        Ответ /api/cancel не важен — ошибки игнорируем (L2527–2532). */
     active.controller.abort();
-    postJson('cancel', { requestId: active.requestId }).catch(() => {});
+    postJson('cancel', { requestId: active.requestId, saveContext }).catch(() => {});
     /* hideTyping (L2533) + «Остановлено пользователем» (L2534) +
        директива отказа (L2535). inFlight не трогаем: клавиша «Стоп»
        и блокировка ввода снимутся в finally передачи, как в ваниле. */
@@ -344,6 +347,10 @@ export function useChatStream() {
         /* Состояние задачи FSM (ChatResponse.taskState) — в статусную строку,
            безусловно каждый ход, по образцу facts выше; null — задачи нет */
         useSessionStore.getState().setTaskState(data.taskState ?? null);
+        /* Инварианты обоих скоупов (ChatResponse.invariants — эхо команд и
+           обычных ответов) — безусловно каждый ход, по образцу facts/taskState
+           выше; null — оба скоупа пусты (панель затирается) */
+        useSessionStore.getState().setInvariants(data.invariants ?? null);
         /* Ветки: могла смениться активная. Отзыв по стратегии, а не только
            по branchId — под «Ветками» счётчики чипов пересчитываются каждым
            ходом (L2551–2558); панель сессий устарела (L2560–2562). */
@@ -378,6 +385,19 @@ export function useChatStream() {
         switch (event.type) {
           case 'status':
             setStreamStatus(typeof event.text === 'string' ? event.text : '');
+            /* Ранний кадр «задача заведена» (StreamEvents.kt) несёт taskState
+               на старте хода — кладём в стор сразу, чтобы «Пауза» была доступна
+               ВО ВРЕМЯ генерации, а не только после final. Поле есть только у
+               этого кадра: штатные статусы («Судья проверяет ответ…») стор
+               не трогают, final остаётся их источником. */
+            if ('taskState' in event) {
+              useSessionStore.getState().setTaskState(event.taskState ?? null);
+            }
+            /* id сессии раннего кадра: на первом ходе клиент ещё не знает id
+               (ставится из final) — без него клик паузы в полёт ушёл бы в 400. */
+            if (event.sessionId) {
+              useSessionStore.getState().setSessionId(event.sessionId);
+            }
             break;
           case 'agent':
             if (event.event) {

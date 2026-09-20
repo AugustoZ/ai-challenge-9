@@ -3,6 +3,9 @@
    L1250–1357 (.tx-row/.tx-input/.tx-btn/.tx-stop) и ≤600px
    L2826–2828. Значения не менять: дизайн заморожен. Цвета —
    только токены (ламповая формула клавиш — через --lamp-*).
+   Поле — многострочная textarea: формула .tx-input сохранена,
+   многострочность — по образцу колодцев OnboardingWizard
+   (.textarea): line-height, resize: none, max-height + прокрутка.
    ============================================================ */
 
 .txRow {
@@ -13,28 +16,37 @@
     border-top: 1px solid var(--bezel);
 }
 
-.txInput {
+.txTextarea {
     flex: 1;
     min-width: 0;
+    height: auto;
+    max-height: 160px; /* ~5–6 строк, дальше прокрутка */
     padding: 12px 14px;
     font-family: var(--sans);
     font-size: 15px;
+    line-height: 1.45;
     color: var(--ink);
     background: var(--well);
     border: 1px solid var(--bezel);
     border-radius: var(--radius);
     caret-color: var(--amber);
+    resize: none;
+    overflow-y: auto;
     transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap);
 }
 
-.txInput::placeholder {
+.txTextarea::placeholder {
     color: var(--ink-faint);
 }
 
-.txInput:focus {
+.txTextarea:focus {
     outline: none;
     border-color: var(--amber);
     box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.txTextarea:disabled {
+    opacity: 0.55;
 }
 
 /* Клавиша «Передать»: лампа горит всегда — Штурман готов принять запрос.

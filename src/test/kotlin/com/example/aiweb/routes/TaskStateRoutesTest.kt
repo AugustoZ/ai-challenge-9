@@ -121,6 +121,9 @@ class TaskStateRoutesTest {
             elapsedMs = 42L
         )
 
+    private fun plainReply(text: String): ChatResult =
+        ChatResult(reply = text, promptTokens = 1, completionTokens = 2, totalTokens = 3, elapsedMs = 42L)
+
     private suspend fun chat(
         client: HttpClient,
         base: String,
@@ -540,6 +543,161 @@ class TaskStateRoutesTest {
                     "инъекция не должна попадать в Session.messages"
                 )
             }
+            client.close()
+        }
+    }
+
+    // --- Авто-FSM: фолбэк без блока task-state ---
+
+    @Test
+    fun `многошаговый запрос без блока создаёт PLANNING и пауза доступна`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = plainReply("Приступаю к работе.")
+            val created = chat(client, base, "Сделай план, выполни и проверь", sid)
+            assertEquals(TaskStage.PLANNING, created.taskState?.stage, "фолбэк создал задачу без блока")
+            assertEquals("Сделай план, выполни и проверь", created.taskState?.step)
+
+            val paused = taskAction(client, base, "pause", sid)
+            assertEquals(200, paused.status.value)
+            assertEquals(
+                "PAUSED",
+                Json.parseToJsonElement(paused.bodyAsText()).jsonObject["taskState"]!!
+                    .jsonObject["stage"]!!.jsonPrimitive.content
+            )
+            client.close()
+        }
+    }
+
+    @Test
+    fun `лестница без блока доходит до done`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            // Создание фолбэком (null → PLANNING): с null-состояния ответ с
+            // код-фенсом шага не даёт (одна ступень за ход), лестница стартует отсюда
+            fake.next = plainReply("Приступаю к работе.")
+            val planning = chat(client, base, "Сделай план, выполни и проверь", sid)
+            assertEquals(TaskStage.PLANNING, planning.taskState?.stage)
+
+            fake.next = plainReply("Вот код:\n```\nfun f() {}\n```")
+            val execution = chat(client, base, "выполняй", sid)
+            assertEquals(TaskStage.EXECUTION, execution.taskState?.stage)
+
+            fake.next = plainReply("проверил, ошибок нет")
+            val validation = chat(client, base, "работаем", sid)
+            assertEquals(TaskStage.VALIDATION, validation.taskState?.stage)
+
+            fake.next = plainReply("Все тесты зелёные. Готово.")
+            val done = chat(client, base, "заканчиваем", sid)
+            assertEquals(TaskStage.DONE, done.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `блок побеждает эвристику`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = plainReply("Приступаю к работе.")
+            chat(client, base, "Сделай план, выполни и проверь", sid)
+
+            fake.next = ChatResult(
+                reply = "Вот код:\n```\nfun f() {}\n```\n\n```task-state\n" +
+                    "{\"stage\": \"EXECUTION\", \"step\": \"Из блока\", \"expected_action\": \"Действие\"}\n" +
+                    "```",
+                promptTokens = 1,
+                completionTokens = 2,
+                totalTokens = 3,
+                elapsedMs = 42L
+            )
+            val response = chat(client, base, "работаем", sid)
+
+            assertEquals(TaskStage.EXECUTION, response.taskState?.stage)
+            assertEquals("Из блока", response.taskState?.step, "применён блок, а не эвристика")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `отказ модели не отменяет пре-создание - задача уже заведена по интенту`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            // Создание переехало на старт хода (ensureForRequest, до LLM): сигнал —
+            // только интент пользователя, отказ модели в ответе уже не может его
+            // отменить. infer в finalize видит current=PLANNING и не продвигает
+            fake.next = plainReply("извините, я не могу")
+            val response = chat(client, base, "напиши и затем проверь", sid)
+
+            assertEquals(TaskStage.PLANNING, response.taskState?.stage, "задача пре-создана по интенту")
+            assertEquals("напиши и затем проверь", response.taskState?.step)
+            client.close()
+        }
+    }
+
+    // --- Пре-создание на старте хода: ранний кадр статуса в стриме ---
+
+    @Test
+    fun `ранний кадр статуса несёт taskState до событий агента`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = plainReply("Приступаю к работе.")
+            val stream = client.post("$base/api/chat/stream") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "Сделай план, выполни и проверь", sessionId = sid))
+            }.bodyAsText()
+
+            val frames = stream.split("\n\n").filter { it.startsWith("data: ") }
+                .map { Json.parseToJsonElement(it.removePrefix("data: ")).jsonObject }
+            assertTrue(frames.isNotEmpty(), "стрим не пуст")
+
+            val first = frames.first()
+            assertEquals("status", first["type"]!!.jsonPrimitive.content, "первый кадр — ранний статус")
+            assertEquals("Задача заведена: планирование", first["text"]!!.jsonPrimitive.content)
+            assertEquals(
+                "PLANNING",
+                first["taskState"]!!.jsonObject["stage"]!!.jsonPrimitive.content,
+                "taskState придёт до agent-кадров — кнопка «Пауза» активна во время генерации"
+            )
+            assertEquals(
+                sid,
+                first["sessionId"]!!.jsonPrimitive.content,
+                "sessionId в раннем кадре — клик паузы первого полёта не уйдёт в 400"
+            )
+
+            val stored = client.get("$base/api/session/$sid").body<Session>()
+            assertEquals(TaskStage.PLANNING, stored.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `без намерения раннего статус-кадра с taskState нет`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = plainReply("Просто ответ.")
+            val stream = client.post("$base/api/chat/stream") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "Привет", sessionId = sid))
+            }.bodyAsText()
+
+            val frames = stream.split("\n\n").filter { it.startsWith("data: ") }
+                .map { Json.parseToJsonElement(it.removePrefix("data: ")).jsonObject }
+            assertTrue(
+                frames.none { it.containsKey("taskState") },
+                "без многошагового намерения задача не заводится — раннего кадра нет"
+            )
             client.close()
         }
     }

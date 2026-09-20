@@ -10,6 +10,9 @@ import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.tools.ToolRegistry
 import com.example.aiweb.tools.ToolResult
 import com.example.aiweb.tools.ToolTransport
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * Итог агентного прогона: финальный ответ, причина завершения и суммарные токены
@@ -50,14 +53,24 @@ data class AgentRunResult(
      *    [SAME_TOOL_FAIL_THRESHOLD] падениям одного инструмента подряд (перебор
      *    аргументов), обрыв генерации по лимиту токенов (finishReason == "length") —
      *    текст усечён и не годится в финальный ответ;
- *    по любому гварду — принудительный финал: один вызов клиента без инструментов
- *    с бюджетом [maxTokens] и системной заметкой
- *    «собери ответ из уже собранного».
+     *    первое срабатывание гварда зацикливания — не финал, а кик: системная заметка
+     *    [LOOP_KICK_NOTE] и свежие счётчики ([LOOP_KICK_LIMIT] кик за прогон);
+     *    повторное срабатывание — принудительный финал;
+     *    по прочим гвардам — принудительный финал: один вызов клиента без инструментов
+     *    с бюджетом [maxTokens] и системной заметкой
+     *    «собери ответ из уже собранного».
  *
  * Системный промт агента принадлежит этому пакету ([SYSTEM_PROMPT]); из ReasoningPrompts
  * берётся только общий для всех режимов текст указания лимита ([ReasoningPrompts.budgetNote]) —
  * сам объект не меняется. В [seed] Routes передаёт обрезанную историю сессии и цель пользователя
  * ([OpenAIMessage] role="user"); system-промт цикл добавляет сам.
+ *
+ * Контрольная точка прерванного паузой прогона (checkpoint «Продолжить»): при отмене
+ * Job (POST /api/cancel с saveContext=true) отмена ловится как [CancellationException],
+ * дельта прогона чинится ([repairDelta]) и однократно отдаётся в [run]'s onCancelled —
+ * вызывающий сохраняет её в сессию (PausedRun). При возобновлении [run]'s resumeContext
+ * подставляется в контекст сразу после [system]+seed — модель продолжает с места
+ * остановки, не повторяя уже выполненные вызовы; resumeContext в дельту не входит.
  *
  * @param client     обращение к LLM (нативный вызов используется только принудительным финалом)
  * @param transport  способ доставки инструментов — нативный или промт-протокол, по supportsTools
@@ -78,6 +91,13 @@ class AgentLoop(
      * @param onEvent sink событий хода работы; вызывается по порядку, suspend — заготовка SSE
      * @param model   модель из запроса (как в остальных режимах); null — модель провайдера
      * @param temperature / topP / stop / thinkingEnabled — параметры из ChatRequest
+     * @param onCancelled вызывается ОДИН раз при отмене прогона (CancellationException)
+     *                    с чиненой дельтой прогона (conversation без [system]+seed и без
+     *                    [resumeContext]); вызывается под NonCancellable, затем исключение
+     *                    перебрасывается — checkpoint паузы сохраняется, запрос всё равно отменяется
+     * @param resumeContext сообщения, добавляемые в контекст СРАЗУ после [system]+seed
+     *                      (до старта цикла) — продолжение прерванного паузой прогона;
+     *                      null/пусто — обычный прогон с нуля
      * @return финальный ответ, причина завершения и суммарные токены всех обращений
      */
     suspend fun run(
@@ -88,7 +108,9 @@ class AgentLoop(
         temperature: Double? = null,
         topP: Double? = null,
         stop: String? = null,
-        thinkingEnabled: Boolean? = null
+        thinkingEnabled: Boolean? = null,
+        onCancelled: ((List<OpenAIMessage>) -> Unit)? = null,
+        resumeContext: List<OpenAIMessage>? = null
     ): AgentRunResult {
         val deadlineAt = System.currentTimeMillis() + AGENT_DEADLINE_MS
         val sums = TokenSums()
@@ -99,11 +121,18 @@ class AgentLoop(
             ?: SYSTEM_PROMPT
         var conversation: List<OpenAIMessage> =
             listOf(OpenAIMessage(role = "system", content = systemPrompt)) + seed
+        // resumeContext — контекст ПРОШЛОГО прогона: в дельту onCancelled не входит,
+        // поэтому граница дельты фиксируется после его добавления
+        if (!resumeContext.isNullOrEmpty()) {
+            conversation = conversation + resumeContext
+        }
+        val deltaStart = conversation.size
         var lastAssistantText = ""
         var lastSignature: String? = null
         var repeatCount = 0
         var lastFailedTool: String? = null
         var failedToolRun = 0
+        var loopKicks = 0
         var step = 0
 
         /**
@@ -135,117 +164,131 @@ class AgentLoop(
             return AgentRunResult(result.reply, reason, sums.prompt, sums.completion, sums.total)
         }
 
-        while (true) {
-            step++
+        // Отмена прогона (POST /api/cancel → job.cancel()) всплывает из suspend-точек
+        // цикла как CancellationException: в catch чиним дельту и однократно отдаём её
+        // в onCancelled под NonCancellable (checkpoint паузы), затем перебрасываем —
+        // запрос всё равно отменяется, а собранное не теряется.
+        try {
+            while (true) {
+                step++
 
-            // Дедлайн проверяется до начала шага: 8 шагов по 60 с провайдера
-            // не должны показывать спиннер минутами. Промежуточный текст модели —
-            // лучший доступный ответ.
-            if (System.currentTimeMillis() > deadlineAt) {
-                val reply = lastAssistantText
-                onEvent(AgentEvent.Final(step, reply, REASON_DEADLINE))
-                return AgentRunResult(reply, REASON_DEADLINE, sums.prompt, sums.completion, sums.total)
-            }
-
-            // Лимит шагов: все шаги ушли на вызовы инструментов — их результаты уже
-            // в контексте, дальше спрашиваем финальный ответ без инструментов.
-            if (step > MAX_STEPS) {
-                return forcedFinal(REASON_STEP_LIMIT)
-            }
-
-            onEvent(AgentEvent.StepStarted(step))
-            val result = transport.ask(
-                LLMCall(
-                    messages = trimContext(conversation),
-                    model = model,
-                    maxTokens = maxTokens,
-                    temperature = temperature,
-                    topP = topP,
-                    stop = stop,
-                    thinkingEnabled = thinkingEnabled
-                ),
-                client,
-                registry
-            )
-            sums.add(result)
-
-            // Обычный текст без вызовов — модель закончила работу. Но обрыв по лимиту
-            // токенов (finishReason == "length") финалом не считается: текст усечён
-            // посреди мысли, пользователю уходит принудительный финал с полным бюджетом.
-            if (result.toolCalls.isEmpty()) {
-                if (result.finishReason == FINISH_LENGTH) {
-                    return forcedFinal(REASON_LENGTH)
+                // Дедлайн проверяется до начала шага: 8 шагов по 60 с провайдера
+                // не должны показывать спиннер минутами. Промежуточный текст модели —
+                // лучший доступный ответ.
+                if (System.currentTimeMillis() > deadlineAt) {
+                    val reply = lastAssistantText
+                    onEvent(AgentEvent.Final(step, reply, REASON_DEADLINE))
+                    return AgentRunResult(reply, REASON_DEADLINE, sums.prompt, sums.completion, sums.total)
                 }
-                onEvent(AgentEvent.Final(step, result.reply, REASON_DONE))
-                return AgentRunResult(result.reply, REASON_DONE, sums.prompt, sums.completion, sums.total)
-            }
 
-            if (result.reply.isNotBlank()) {
-                lastAssistantText = result.reply
-                onEvent(AgentEvent.AssistantMessage(step, result.reply))
-            }
-            // Assistant-сообщение обязано нести toolCalls: иначе пары
-            // assistant(tool_calls) → role="tool" разорвутся в контексте
-            conversation += OpenAIMessage(
-                role = "assistant",
-                content = result.reply.ifBlank { null },
-                toolCalls = result.toolCalls
-            )
+                // Лимит шагов: все шаги ушли на вызовы инструментов — их результаты уже
+                // в контексте, дальше спрашиваем финальный ответ без инструментов.
+                if (step > MAX_STEPS) {
+                    return forcedFinal(REASON_STEP_LIMIT)
+                }
 
-            // Детект зацикливания: подпись шага — все пары (tool, args) этого ответа;
-            // считаем только подряд идущие одинаковые
-            val signature = result.toolCalls.joinToString(SIGNATURE_SEPARATOR) { toolCall ->
-                (toolCall.function?.name ?: "") + SIGNATURE_SEPARATOR + (toolCall.function?.arguments ?: "")
-            }
-            repeatCount = if (signature == lastSignature) repeatCount + 1 else 1
-            lastSignature = signature
+                onEvent(AgentEvent.StepStarted(step))
+                val result = transport.ask(
+                    LLMCall(
+                        messages = trimContext(conversation),
+                        model = model,
+                        maxTokens = maxTokens,
+                        temperature = temperature,
+                        topP = topP,
+                        stop = stop,
+                        thinkingEnabled = thinkingEnabled
+                    ),
+                    client,
+                    registry
+                )
+                sums.add(result)
 
-            for (toolCall in result.toolCalls) {
-                val name = toolCall.function?.name.orEmpty()
-                val args = toolCall.function?.arguments.orEmpty()
-                onEvent(AgentEvent.ToolCalled(step, name, args))
-                val tool = registry.get(name)
-                val outcome = if (tool == null) {
-                    ToolResult(ok = false, content = "Неизвестный инструмент: $name")
-                } else {
-                    runCatching { tool.execute(args) }.fold(
-                        onSuccess = { it },
-                        onFailure = { error ->
-                            ToolResult(ok = false, content = "Инструмент упал: ${error.message}")
-                        }
+                // Обычный текст без вызовов — модель закончила работу. Но обрыв по лимиту
+                // токенов (finishReason == "length") финалом не считается: текст усечён
+                // посреди мысли, пользователю уходит принудительный финал с полным бюджетом.
+                if (result.toolCalls.isEmpty()) {
+                    if (result.finishReason == FINISH_LENGTH) {
+                        return forcedFinal(REASON_LENGTH)
+                    }
+                    onEvent(AgentEvent.Final(step, result.reply, REASON_DONE))
+                    return AgentRunResult(result.reply, REASON_DONE, sums.prompt, sums.completion, sums.total)
+                }
+
+                if (result.reply.isNotBlank()) {
+                    lastAssistantText = result.reply
+                    onEvent(AgentEvent.AssistantMessage(step, result.reply))
+                }
+                // Assistant-сообщение обязано нести toolCalls: иначе пары
+                // assistant(tool_calls) → role="tool" разорвутся в контексте
+                conversation += OpenAIMessage(
+                    role = "assistant",
+                    content = result.reply.ifBlank { null },
+                    toolCalls = result.toolCalls
+                )
+
+                // Детект зацикливания: подпись шага — все пары (tool, args) этого ответа;
+                // считаем только подряд идущие одинаковые
+                val signature = result.toolCalls.joinToString(SIGNATURE_SEPARATOR) { toolCall ->
+                    (toolCall.function?.name ?: "") + SIGNATURE_SEPARATOR + (toolCall.function?.arguments ?: "")
+                }
+                repeatCount = if (signature == lastSignature) repeatCount + 1 else 1
+                lastSignature = signature
+
+                for (toolCall in result.toolCalls) {
+                    val name = toolCall.function?.name.orEmpty()
+                    val args = toolCall.function?.arguments.orEmpty()
+                    onEvent(AgentEvent.ToolCalled(step, name, args))
+                    val tool = registry.get(name)
+                    val outcome = if (tool == null) {
+                        ToolResult(ok = false, content = "Неизвестный инструмент: $name")
+                    } else {
+                        runCatching { tool.execute(args) }.fold(
+                            onSuccess = { it },
+                            onFailure = { error ->
+                                ToolResult(ok = false, content = "Инструмент упал: ${error.message}")
+                            }
+                        )
+                    }
+                    onEvent(AgentEvent.ToolResult(step, name, outcome.ok, outcome.content.take(EVENT_CONTENT_LIMIT)))
+                    // Гвард падений: успех сбрасывает серию, падение того же инструмента — наращивает
+                    if (outcome.ok) {
+                        failedToolRun = 0
+                        lastFailedTool = null
+                    } else if (name == lastFailedTool) {
+                        failedToolRun++
+                    } else {
+                        failedToolRun = 1
+                        lastFailedTool = name
+                    }
+                    // В контекст цикла результат входит ограниченно (TOOL_CONTENT_LIMIT):
+                    // страница или дамп на мегабайты иначе переотправлялись бы на каждом шаге
+                    conversation += OpenAIMessage(
+                        role = "tool",
+                        content = capToolContent(outcome.content),
+                        toolCallId = toolCall.id
                     )
                 }
-                onEvent(AgentEvent.ToolResult(step, name, outcome.ok, outcome.content.take(EVENT_CONTENT_LIMIT)))
-                // Гвард падений: успех сбрасывает серию, падение того же инструмента — наращивает
-                if (outcome.ok) {
-                    failedToolRun = 0
-                    lastFailedTool = null
-                } else if (name == lastFailedTool) {
-                    failedToolRun++
-                } else {
-                    failedToolRun = 1
-                    lastFailedTool = name
+
+                // Гвард зацикливания: первый раз — кик (системная заметка «смени подход», счётчики
+                // сброшены, инструменты остаются доступны); повторное срабатывание — принудительный финал.
+                // Вызов кикнутого шага уже исполнен — контекст валиден (нет «висячих» tool_calls).
+                if (repeatCount >= LOOP_THRESHOLD || failedToolRun >= SAME_TOOL_FAIL_THRESHOLD) {
+                    if (loopKicks < LOOP_KICK_LIMIT) {
+                        loopKicks++
+                        repeatCount = 0
+                        lastSignature = null
+                        failedToolRun = 0
+                        lastFailedTool = null
+                        conversation += OpenAIMessage(role = "system", content = LOOP_KICK_NOTE)
+                        continue
+                    }
+                    return forcedFinal(REASON_LOOP)
                 }
-                // В контекст цикла результат входит ограниченно (TOOL_CONTENT_LIMIT):
-                // страница или дамп на мегабайты иначе переотправлялись бы на каждом шаге
-                conversation += OpenAIMessage(
-                    role = "tool",
-                    content = capToolContent(outcome.content),
-                    toolCallId = toolCall.id
-                )
             }
-
-            // Третий одинаковый вызов подряд — принудительный финал; вызов исполнен,
-            // поэтому контекст остаётся валидным (нет «висячих» assistant tool_calls)
-            if (repeatCount >= LOOP_THRESHOLD) {
-                return forcedFinal(REASON_LOOP)
-            }
-
-            // Три падения одного инструмента подряд — перебор аргументов на сломанном
-            // пути; собираем ответ из уже добытых данных, не тратя оставшиеся шаги
-            if (failedToolRun >= SAME_TOOL_FAIL_THRESHOLD) {
-                return forcedFinal(REASON_LOOP)
-            }
+        } catch (e: CancellationException) {
+            val repaired = repairDelta(conversation.drop(deltaStart))
+            withContext(NonCancellable) { onCancelled?.invoke(repaired) }
+            throw e
         }
     }
 
@@ -300,6 +343,39 @@ class AgentLoop(
             for (i in questionIdx + 1 until groups.size) if (!fits(groups[i])) break
         }
         return leading + kept.flatten()
+    }
+
+    /**
+     * Чинит дельту прерванного паузой прогона: последний assistant с tool_calls может
+     * остаться без части результатов (отмена случилась во время исполнения инструментов).
+     * Для каждого id вызова без следующего tool-сообщения дописывается синтетический
+     * результат [INTERRUPTED_TOOL_NOTE] — пары assistant(tool_calls) → role="tool"
+     * остаются валидными для провайдера при возобновлении. Отмена во время
+     * transport.ask (новый assistant ещё не добавлен) — дельта уже валидна, ремонт no-op.
+     */
+    private fun repairDelta(delta: List<OpenAIMessage>): List<OpenAIMessage> {
+        val repaired = delta.toMutableList()
+        // Проход с конца: в цикле пары строгие (все результаты шага добавлены до
+        // следующего transport.ask), «висячим» может быть только последний assistant —
+        // для предыдущих проверка сведётся к no-op
+        for (index in repaired.indices.reversed()) {
+            val message = repaired[index]
+            if (message.role != "assistant") continue
+            val calls = message.toolCalls ?: continue
+            val served = repaired.drop(index + 1)
+                .filter { it.role == "tool" }
+                .mapNotNull { it.toolCallId }
+                .toSet()
+            for (call in calls) {
+                val id = call.id
+                if (id.isNotEmpty() && id !in served) {
+                    repaired.add(
+                        OpenAIMessage(role = "tool", content = INTERRUPTED_TOOL_NOTE, toolCallId = id)
+                    )
+                }
+            }
+        }
+        return repaired
     }
 
     /**
@@ -368,6 +444,13 @@ class AgentLoop(
          */
         const val SAME_TOOL_FAIL_THRESHOLD = 3
 
+        /**
+         * Максимум киков за прогон: первое срабатывание гварда зацикливания не завершает
+         * прогон, а даёт модели ещё один шанс (системная заметка [LOOP_KICK_NOTE] и свежие
+         * счётчики); повторное срабатывание — принудительный финал.
+         */
+        const val LOOP_KICK_LIMIT = 1
+
         /** Системный промт агента: живёт в agent/, ReasoningPrompts не затрагивается. */
         private val SYSTEM_PROMPT = """
             Ты — бортовой агент «Штурмана»: решаешь задачу шагами с помощью инструментов.
@@ -386,7 +469,15 @@ class AgentLoop(
          * «Топливе» дополняется текстом [ReasoningPrompts.budgetNote] с полным бюджетом.
          */
         private const val FORCED_FINAL_NOTE =
-            "Инструменты больше недоступны — дай финальный ответ на основе собранной информации. Ответ дай по-русски."
+            "Инструменты больше недоступны — дай финальный ответ на основе собранной информации, прямо сейчас: без описания будущих шагов и обещаний что-то сделать потом. Если данных не хватает, дай лучший доступный ответ и честно скажи, чего не хватило. Ответ дай по-русски."
+
+        /**
+         * Системная заметка-кик при первом срабатывании гварда зацикливания: требование
+         * прекратить повторяющийся путь, сменить подход или сразу дать финальный ответ.
+         * Модель получает ещё один шанс до принудительного финала.
+         */
+        private const val LOOP_KICK_NOTE =
+            "Стоп: ты повторяешь одни и те же действия и не продвигаешься (одинаковые вызовы инструментов или повторные падения одного инструмента). Прекрати этот путь. Опираясь на уже полученные результаты, измени подход — или, если данных достаточно, сразу дай финальный ответ пользователю по-русски."
 
         /** Причина завершения: модель дала финальный ответ сама. */
         private const val REASON_DONE = "готово"
@@ -405,6 +496,12 @@ class AgentLoop(
 
         /** Причина завершения генерации OpenAI-протокола: ответ усечён лимитом токенов. */
         private const val FINISH_LENGTH = "length"
+
+        /**
+         * Синтетический tool-результат, дописываемый в дельту прерванного паузой
+         * прогона ([repairDelta]): закрывает висячие tool_calls для провайдера.
+         */
+        private const val INTERRUPTED_TOOL_NOTE = "Прервано паузой пользователя"
 
         /** Разделитель подписи зацикливания; \u0000 не встречается в текстах моделей. */
         private const val SIGNATURE_SEPARATOR = "\u0000"

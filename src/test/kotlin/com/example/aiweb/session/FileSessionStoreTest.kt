@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
@@ -721,5 +722,119 @@ class FileSessionStoreTest {
         assertNull(loaded.taskState)
         assertEquals(1, loaded.messages.size)
         assertEquals("старый вопрос", loaded.messages.single().content)
+    }
+
+    private fun invariant(id: String, text: String) = StoredInvariant(id = id, text = text)
+
+    @Test
+    fun `сессия с invariants переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        val invariants = listOf(invariant("inv-1", "Только Kotlin"))
+
+        val updated = assertNotNull(store.updateInvariants(session.id, invariants))
+        assertEquals(invariants, updated.invariants)
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(invariants, reloaded.invariants)
+        assertTrue(
+            File(dir, "sessions/${session.id}.json").readText().contains("invariants"),
+            "Файл должен содержать invariants"
+        )
+    }
+
+    @Test
+    fun `updateInvariants и getInvariants по неизвестному sessionId — no-op без исключения`() {
+        val dir = newDir()
+        val store = newStore(dir)
+
+        assertNull(store.updateInvariants("нет-такого", listOf(invariant("inv-1", "Только Kotlin"))))
+        assertTrue(store.getInvariants("нет-такого").isEmpty())
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `старый json-файл сессии без invariants читается с emptyList`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-legacy-invariants.json").writeText(
+            """{"id":"old-legacy-invariants","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val loaded = assertNotNull(newStore(dir).get("old-legacy-invariants"))
+
+        assertTrue(loaded.invariants.isEmpty())
+        assertEquals(1, loaded.messages.size)
+        assertEquals("старый вопрос", loaded.messages.single().content)
+    }
+
+    // ── PausedRun: контрольная точка прерванного паузой прогона ──
+
+    @Test
+    fun `сессия с pausedRun переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        val run = PausedRun(
+            goal = "узнать погоду",
+            messages = listOf(
+                OpenAIMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(OpenAIToolCall(id = "call-1"))
+                ),
+                OpenAIMessage(role = "tool", content = "результат", toolCallId = "call-1")
+            )
+        )
+
+        val updated = assertNotNull(store.savePausedRun(session.id, run))
+        assertEquals(run, updated.pausedRun)
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(run, reloaded.pausedRun)
+        assertEquals(run, assertNotNull(newStore(dir).getPausedRun(session.id)))
+        assertTrue(
+            File(dir, "sessions/${session.id}.json").readText().contains("pausedRun"),
+            "Файл должен содержать pausedRun"
+        )
+    }
+
+    @Test
+    fun `старый json-файл сессии без pausedRun читается с pausedRun null`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-legacy-pausedrun.json").writeText(
+            """{"id":"old-legacy-pausedrun","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val store = newStore(dir)
+        val loaded = assertNotNull(store.get("old-legacy-pausedrun"))
+
+        assertNull(loaded.pausedRun)
+        assertNull(store.getPausedRun("old-legacy-pausedrun"))
+        assertEquals(1, loaded.messages.size)
+        assertEquals("старый вопрос", loaded.messages.single().content)
+    }
+
+    @Test
+    fun `invariants не входят в снимок ветки — общие на сессию и переживают пересоздание`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.updateInvariants(session.id, listOf(invariant("inv-1", "Только Kotlin")))
+        store.forkTwin(session.id)
+
+        // Инварианты изменились после форка
+        val after = listOf(invariant("inv-1", "Только Kotlin"), invariant("inv-2", "Без jQuery"))
+        store.updateInvariants(session.id, after)
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        // Снимок ветки не захватил инварианты: сохраняется текущее сессионное значение
+        assertEquals(after, activated.invariants)
+        // Значение персистится на диск и переживает пересоздание
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(after, reloaded.invariants)
     }
 }

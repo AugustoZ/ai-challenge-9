@@ -16,6 +16,9 @@ import com.example.aiweb.client.OpenAIFactExtractor
 import com.example.aiweb.client.OpenAIHistorySummarizer
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
+import com.example.aiweb.invariants.GlobalInvariantStore
+import com.example.aiweb.invariants.StoredInvariant
+import com.example.aiweb.invariants.renderInvariantBlock
 import com.example.aiweb.model.ActivateBranchRequest
 import com.example.aiweb.model.AgentEvent
 import com.example.aiweb.model.AuthErrorResponse
@@ -28,6 +31,7 @@ import com.example.aiweb.model.ChatResponse
 import com.example.aiweb.model.ContextStrategy
 import com.example.aiweb.model.CreateUserRequest
 import com.example.aiweb.model.ExchangeLogResponse
+import com.example.aiweb.model.InvariantsPayload
 import com.example.aiweb.model.JudgeReport
 import com.example.aiweb.model.LoginRequest
 import com.example.aiweb.model.MemoryCreateRequest
@@ -66,6 +70,7 @@ import com.example.aiweb.prefs.renderPromptBlock
 import com.example.aiweb.session.HistoryCompressor
 import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.MergeResult
+import com.example.aiweb.session.PausedRun
 import com.example.aiweb.session.Session
 import com.example.aiweb.session.SessionHistory
 import com.example.aiweb.session.SessionStore
@@ -73,6 +78,7 @@ import com.example.aiweb.session.sessionStoreFor
 import com.example.aiweb.session.view
 import com.example.aiweb.task.TaskStage
 import com.example.aiweb.task.TaskState
+import com.example.aiweb.task.TaskStateHeuristic
 import com.example.aiweb.task.TaskStateMachine
 import com.example.aiweb.task.TaskStateJson
 import com.example.aiweb.task.renderTaskStateBlock
@@ -95,9 +101,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
@@ -107,6 +117,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Определяет HTTP-маршруты приложения. Каждый настроенный провайдер LLM получает
@@ -193,6 +204,14 @@ fun Route.aiRoutes(
     // (задача 12) берёт предпочтения отсюда — preferences.get(userId)
     val preferences = PreferencesStore(memoryBaseDir)
 
+    // Инварианты (задача 6 плана assistant-invariants): один файл-стор на весь
+    // деплой — <dir>/invariants.json в том же каталоге данных (memoryBaseDir /
+    // AI_DATA_DIR), что и остальные сторы. Единственный экземпляр на процесс:
+    // инъекция блока в seed (handleAgent, 4-й хвостовой слот) и эхо
+    // ChatResponse.invariants (finalizeResponse) читают отсюда; chat-команды и
+    // API-роуты инвариантов (задачи 7-8) переиспользуют этот же экземпляр
+    val invariantStore = GlobalInvariantStore(memoryBaseDir)
+
     // ЦЕНТРАЛЬНАЯ защита роутов (choke point, задача 6): единый intercept для
     // всей поверхности /api*. Токен НЕ проверяется вручную ни в одном
     // route-блоке. Открытые роуты (whitelist, зеркально specs/user-auth/spec.md):
@@ -233,6 +252,11 @@ fun Route.aiRoutes(
     // | 24 | /api/preferences                  | PUT    | user-scoped (свои предпочтения)     |
     // | 25 | /api/task/pause                   | POST   | user-scoped (своя сессия)           |
     // | 26 | /api/task/resume                  | POST   | user-scoped (своя сессия)           |
+    // | 27 | /api/invariants                   | GET    | user-scoped (своя сессия)           |
+    // | 28 | /api/invariants/global            | POST   | protected (общий справочник)        |
+    // | 29 | /api/invariants/global/{id}       | DELETE | protected                           |
+    // | 30 | /api/invariants/session           | POST   | user-scoped (своя сессия)           |
+    // | 31 | /api/invariants/session/{sessionId}/{id} | DELETE | user-scoped (своя сессия)    |
     // | +  | /api/auth/users/{id}              | DELETE | protected (нужен валидный токен)    |
     //
     // user-scoped означает: ресурс адресуется только в границах своего userId
@@ -444,23 +468,49 @@ fun Route.aiRoutes(
 
         // Точные команды «пауза»/«продолжить» перехватываются ДО вызова LLM (Q8):
         // мутация состояния + системный ответ; всё остальное — обычный путь
-        handleTaskCommand(chat.session, sessions, body.message, startedAt)?.let { commandReply ->
+        handleTaskCommand(chat.session, sessions, invariantStore, body.message, startedAt)?.let { commandReply ->
             call.respond(commandReply)
             return@post
+        }
+
+        // Chat-команды инвариантов (задача 7) — тоже до LLM: список/добавление/
+        // удаление сессионных инвариантов системным ответом с echo обоих скоупов
+        handleInvariantCommand(chat.session, sessions, invariantStore, body.message, startedAt)?.let { commandReply ->
+            call.respond(commandReply)
+            return@post
+        }
+
+        // Пре-создание задачи (пауза во время первого полёта): интент пользователя —
+        // авторитетный сигнал, ответ модели не нужен; PAUSED не трогаем. Дальнейшее
+        // продвижение — как раньше, в finalizeResponse (paused-wins guard сохранён)
+        chat.session?.let { s ->
+            val ensured = TaskStateHeuristic.ensureForRequest(body.message, sessions.getTaskState(s.id))
+            if (ensured != null) {
+                sessions.updateTaskState(s.id, ensured)
+            }
+            // Checkpoint прерванного паузой прогона: блокирующий fallback-путь НЕ
+            // инъектирует resumeContext (не раздуваем одиночный вызов парами прерванного
+            // прогона) — checkpoint здесь только потребляется. Правила те же, что у
+            // стрима: ensured != null (новая задача по интенту) — устаревший checkpoint
+            // выбрасывается; checkpoint при PAUSED не трогается (переждёт до «Продолжить»).
+            if (sessions.getTaskState(s.id)?.stage != TaskStage.PAUSED) {
+                consumePausedRunCheckpoint(sessions, s, ensured, inject = false)
+            }
         }
 
         try {
             val response = withContext(ExchangeLog.userContext(userId)) {
                 handleAgent(
                     chat.aiClient, body, chat.provider, chat.session,
-                    sessions, config, compressors.getValue(chat.provider), registry, memory, preferences, userId
+                    sessions, config, compressors.getValue(chat.provider), registry, memory,
+                    preferences, invariantStore, userId
                 )
             }
 
             call.respond(
                 withContext(ExchangeLog.userContext(userId)) {
                     finalizeResponse(
-                        chat.aiClient, body, response, chat.session, sessions, startedAt,
+                        chat.aiClient, body, response, chat.session, sessions, invariantStore, startedAt,
                         hooks = contextHooks(chat.provider, body)
                     )
                 }
@@ -490,7 +540,7 @@ fun Route.aiRoutes(
 
         // Точные команды «пауза»/«продолжить» — до LLM; системный ответ уходит
         // одним кадром Final того же SSE-протокола (без processor/activeRequests)
-        handleTaskCommand(chat.session, sessions, body.message, startedAt)?.let { commandReply ->
+        handleTaskCommand(chat.session, sessions, invariantStore, body.message, startedAt)?.let { commandReply ->
             call.response.header(HttpHeaders.CacheControl, "no-cache")
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 write(encodeFrame(StreamEvent.Final(commandReply)))
@@ -499,12 +549,55 @@ fun Route.aiRoutes(
             return@post
         }
 
+        // Chat-команды инвариантов (задача 7) — до LLM; тот же SSE-кадр Final,
+        // что у паузы/продолжения
+        handleInvariantCommand(chat.session, sessions, invariantStore, body.message, startedAt)?.let { commandReply ->
+            call.response.header(HttpHeaders.CacheControl, "no-cache")
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                write(encodeFrame(StreamEvent.Final(commandReply)))
+                flush()
+            }
+            return@post
+        }
+
+        // Пре-создание задачи (пауза во время первого полёта): интент пользователя —
+        // авторитетный сигнал, ответ модели не нужен; PAUSED не трогаем. Дальнейшее
+        // продвижение — как раньше, в finalizeResponse (paused-wins guard сохранён)
+        val ensuredTaskState = chat.session?.let { s ->
+            TaskStateHeuristic.ensureForRequest(body.message, sessions.getTaskState(s.id))?.also { ensured ->
+                sessions.updateTaskState(s.id, ensured)
+            }
+        }
+        // id сессии для раннего кадра: на первом ходе клиент ещё не знает id —
+        // без него клик паузы в полёте ушёл бы в 400
+        val ensuredSessionId = chat.session?.id
+
+        // Инъекция checkpoint прерванного паузой прогона (PausedRun): ensured != null —
+        // по интенту заведена НОВАЯ задача, устаревший checkpoint выбрасывается; иначе
+        // checkpoint с ненулевой дельтой потребляется однократно как resumeContext
+        // (не на паузе — на PAUSED checkpoint пережидает до «Продолжить»)
+        val resumeContext: List<OpenAIMessage>? = chat.session
+            ?.takeIf { sessions.getTaskState(it.id)?.stage != TaskStage.PAUSED }
+            ?.let { s -> consumePausedRunCheckpoint(sessions, s, ensuredTaskState, inject = true) }
+
         val requestId = body.requestId?.trim().orEmpty()
         val frames = Channel<StreamEvent>(Channel.UNLIMITED)
+        // Флаг «отмена вызвана паузой»: /api/cancel с saveContext=true выставляет его
+        // ДО отмены Job, onCancelled агента читает и сохраняет checkpoint
+        val saveOnCancel = AtomicBoolean(false)
 
         try {
             if (requestId.isNotEmpty()) {
-                activeRequests.register(requestId, currentCoroutineContext().job)
+                activeRequests.register(requestId, currentCoroutineContext().job, saveOnCancel)
+            }
+
+            // Ранний кадр несёт taskState и sessionId до первого события агента —
+            // фронтенд включает «Паузу» на время генерации и узнаёт id сессии уже
+            // при первом ходе (клик паузы без id ушёл бы в 400). Кадр уходит в канал
+            // до запуска processor (канал UNLIMITED) — порядок кадров сохранится:
+            // ранний статус → agent-кадры → final
+            ensuredTaskState?.let {
+                frames.trySend(StreamEvent.Status("Задача заведена: планирование", it, ensuredSessionId))
             }
 
             // Обработка запроса идёт в дочерней корутине и наполняет канал кадрами;
@@ -514,14 +607,31 @@ fun Route.aiRoutes(
                     val response = withContext(ExchangeLog.userContext(userId)) {
                         handleAgent(
                             chat.aiClient, body, chat.provider, chat.session,
-                            sessions, config, compressors.getValue(chat.provider), registry, memory, preferences, userId
-                        ) { event ->
-                            frames.trySend(StreamEvent.Agent(event))
-                        }
+                            sessions, config, compressors.getValue(chat.provider), registry, memory,
+                            preferences, invariantStore, userId,
+                            onEvent = { event ->
+                                frames.trySend(StreamEvent.Agent(event))
+                            },
+                            onCancelled = { delta ->
+                                // Отмена прогона с паузой: checkpoint дельты в сессию.
+                                // Callback зовётся из coroutine-цикла (внутри NonCancellable),
+                                // sessions потокобезопасен. Дельта без сессии не бывает
+                                // (цикл есть только у сессии), но guard не мешает
+                                if (saveOnCancel.get()) {
+                                    ensuredSessionId?.let { sid ->
+                                        sessions.savePausedRun(
+                                            sid,
+                                            PausedRun(goal = body.message, messages = delta)
+                                        )
+                                    }
+                                }
+                            },
+                            resumeContext = resumeContext
+                        )
                     }
                     val finalized = withContext(ExchangeLog.userContext(userId)) {
                         finalizeResponse(
-                            chat.aiClient, body, response, chat.session, sessions, startedAt,
+                            chat.aiClient, body, response, chat.session, sessions, invariantStore, startedAt,
                             hooks = contextHooks(chat.provider, body)
                         ) { status ->
                             frames.trySend(StreamEvent.Status(status))
@@ -568,26 +678,32 @@ fun Route.aiRoutes(
     }
 
     // POST /api/cancel — отмена активного стрима по клиентскому requestId:
-    // {"requestId": "..."} → {"cancelled": true|false}; неизвестный или уже
+    // {"requestId": "...", "saveContext": false} → {"cancelled": true|false};
+    // saveContext опционален (default false): true присылает фронтенд, когда отмена
+    // вызвана ПАУЗОЙ (не «Стоп») — флаг выставляется до отмены Job и checkpoint
+    // дельты прогона сохранится в onCancelled агента. Неизвестный или уже
     // завершённый идентификатор — {"cancelled": false}
     post("/api/cancel") {
-        val requestId = try {
-            call.receive<JsonObject>()["requestId"]?.jsonPrimitive?.contentOrNull
+        val payload = try {
+            call.receive<JsonObject>()
         } catch (e: Exception) {
             println("Ошибка десериализации запроса: ${e.message}")
             null
         }
+        val requestId = payload?.get("requestId")?.jsonPrimitive?.contentOrNull
+        val saveContext = payload?.get("saveContext")?.jsonPrimitive?.booleanOrNull ?: false
 
         if (requestId == null) {
             call.respond(HttpStatusCode.BadRequest, buildJsonObject { put("cancelled", false) })
             return@post
         }
 
-        call.respond(buildJsonObject { put("cancelled", activeRequests.cancel(requestId)) })
+        call.respond(buildJsonObject { put("cancelled", activeRequests.cancel(requestId, saveContext)) })
     }
 
     // POST /api/task/pause — пауза задачи сессии (FSM, задача 5): {"sessionId": "..."}
-    // → {"taskState": <состояние|null>}. Неизвестная или чужая сессия — 404.
+    // → {"taskState": <состояние|null>, "resumeRun": <true|false>}.
+    // Неизвестная или чужая сессия — 404.
     // Идемпотентно: пауза при null-состоянии и повторная пауза — no-op без ошибки,
     // состояние не портится; ответ — актуальное состояние (null, если задачи нет)
     post("/api/task/pause") {
@@ -599,11 +715,12 @@ fun Route.aiRoutes(
         }
         val next = taskStateMachine.pause(sessions.getTaskState(sessionId))
         if (next != null) sessions.updateTaskState(sessionId, next)
-        call.respond(taskStateResponse(sessions.getTaskState(sessionId)))
+        call.respond(taskStateResponse(sessions.getTaskState(sessionId), sessions.getPausedRun(sessionId) != null))
     }
 
     // POST /api/task/resume — продолжение задачи после паузы: {"sessionId": "..."}
-    // → {"taskState": <состояние|null>}. Неизвестная или чужая сессия — 404.
+    // → {"taskState": <состояние|null>, "resumeRun": <true|false>}.
+    // Неизвестная или чужая сессия — 404.
     // Идемпотентно: resume не на паузе (включая null-состояние) — no-op без ошибки
     post("/api/task/resume") {
         val sessionId = call.receiveSessionId() ?: return@post
@@ -614,7 +731,127 @@ fun Route.aiRoutes(
         }
         val next = taskStateMachine.resume(sessions.getTaskState(sessionId))
         if (next != null) sessions.updateTaskState(sessionId, next)
-        call.respond(taskStateResponse(sessions.getTaskState(sessionId)))
+        call.respond(taskStateResponse(sessions.getTaskState(sessionId), sessions.getPausedRun(sessionId) != null))
+    }
+
+    // === Инварианты (задача 8 плана assistant-invariants). Контракт — KDoc
+    // InvariantsPayload (Models.kt) и вызовы frontend/src/api/client.ts:
+    // все пять роутов за токен-интерцептом, ошибки единым {"error": "…"}
+    // (AuthErrorResponse), ответы собираются явно — серверный Json с
+    // encodeDefaults=false omitил бы пустые списки, а фронтенд читает
+    // global/session как обязательные ключи.
+
+    // GET /api/invariants?sessionId=X — оба скоупа одним пейлоадом. Без
+    // sessionId — 400; неизвестная/чужая сессия — 404; валидная сессия —
+    // 200 с обоими ключами (пустые списки — тоже)
+    get("/api/invariants") {
+        val sessionId = call.request.queryParameters["sessionId"]?.takeIf { it.isNotBlank() }
+        if (sessionId == null) {
+            call.respond(HttpStatusCode.BadRequest, AuthErrorResponse("Укажите sessionId сессии."))
+            return@get
+        }
+        val userId = currentUserId(call)
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(userId)) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Сессия не найдена."))
+            return@get
+        }
+        call.respond(
+            buildJsonObject {
+                put("global", invariantListJson(invariantStore.list()))
+                put("session", invariantListJson(session.invariants))
+            }
+        )
+    }
+
+    // POST /api/invariants/global — {"text": "…"}: добавить глобальный
+    // инвариант. Пустой/длинный текст, точный дубль и кап 20 —
+    // IllegalArgumentException стора → 400 с русским сообщением;
+    // успех — 200 {global: обновлённый список}
+    post("/api/invariants/global") {
+        val text = call.receiveInvariantText() ?: return@post
+        val updated = try {
+            invariantStore.add(text)
+            invariantStore.list()
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                AuthErrorResponse(e.message ?: "Некорректный текст инварианта.")
+            )
+            return@post
+        }
+        call.respond(buildJsonObject { put("global", invariantListJson(updated)) })
+    }
+
+    // DELETE /api/invariants/global/{id} — убрать глобальный инвариант.
+    // Неизвестный или unsafe (traversal) id — 404, чужие данные не
+    // раскрываются; успех — 200 {global} (конвенция /api/memory/{id})
+    delete("/api/invariants/global/{id}") {
+        val id = call.parameters["id"] ?: ""
+        if (!isSafeInvariantSegment(id) || !invariantStore.remove(id)) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Инвариант не найден."))
+            return@delete
+        }
+        call.respond(buildJsonObject { put("global", invariantListJson(invariantStore.list())) })
+    }
+
+    // POST /api/invariants/session — {"sessionId": "…", "text": "…"}: добавить
+    // инвариант сессии. Неизвестная/чужая сессия — 404; валидация/дубль/кап —
+    // 400 (сообщения клонированы из GlobalInvariantStore.add, без DRY-сливания
+    // с глобальным стором); успех — 200 {session: обновлённый список}
+    post("/api/invariants/session") {
+        val (sessionId, text) = call.receiveInvariantSessionBody() ?: return@post
+        val userId = currentUserId(call)
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(userId)) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Сессия не найдена."))
+            return@post
+        }
+        val updated = try {
+            val trimmed = StoredInvariant.normalizeAndValidate(text)
+            val current = session.invariants
+            require(current.none { it.text == trimmed }) {
+                "Инвариант: инвариант с таким текстом уже существует"
+            }
+            require(current.size < StoredInvariant.MAX_COUNT) {
+                "Инвариант: нельзя добавить больше ${StoredInvariant.MAX_COUNT}"
+            }
+            (current + StoredInvariant.create(trimmed)).also {
+                sessions.updateInvariants(sessionId, it)
+            }
+        } catch (e: IllegalArgumentException) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                AuthErrorResponse(e.message ?: "Некорректный текст инварианта.")
+            )
+            return@post
+        }
+        call.respond(buildJsonObject { put("session", invariantListJson(updated)) })
+    }
+
+    // DELETE /api/invariants/session/{sessionId}/{id} — убрать инвариант
+    // сессии. Неизвестная/чужая сессия, неизвестный или unsafe id — 404;
+    // успех — 200 {session}
+    delete("/api/invariants/session/{sessionId}/{id}") {
+        val sessionId = call.parameters["sessionId"] ?: ""
+        val id = call.parameters["id"] ?: ""
+        if (!isSafeInvariantSegment(sessionId) || !isSafeInvariantSegment(id)) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Инвариант не найден."))
+            return@delete
+        }
+        val userId = currentUserId(call)
+        val session = sessions.get(sessionId)
+        if (session == null || session.foreignTo(userId)) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Сессия не найдена."))
+            return@delete
+        }
+        val updated = session.invariants.filterNot { it.id == id }
+        if (updated.size == session.invariants.size) {
+            call.respond(HttpStatusCode.NotFound, AuthErrorResponse("Инвариант не найден."))
+            return@delete
+        }
+        sessions.updateInvariants(sessionId, updated)
+        call.respond(buildJsonObject { put("session", invariantListJson(updated)) })
     }
 
     // GET /api/sessions — список сессий ТЕКУЩЕГО пользователя для панели справа,
@@ -1335,6 +1572,7 @@ private suspend fun finalizeResponse(
     response: ChatResponse,
     session: Session?,
     sessions: SessionStore,
+    invariantStore: GlobalInvariantStore,
     startedAt: Long,
     hooks: ContextHooks? = null,
     onStatus: suspend (String) -> Unit = {}
@@ -1378,6 +1616,7 @@ private suspend fun finalizeResponse(
         val fresh = sessions.get(session.id)
         if (fresh != null) {
             val proposed = TaskStateJson.parse(rawReply, fresh.taskState)
+                ?: TaskStateHeuristic.infer(body.message, cleanReply, fresh.taskState)
             if (proposed != null && fresh.taskState?.stage != TaskStage.PAUSED) {
                 val next = taskStateMachine.apply(fresh.taskState, proposed)
                 if (next != null) {
@@ -1426,6 +1665,13 @@ private suspend fun finalizeResponse(
     // FSM (задача 5, Q5): echo актуального состояния задачи каждый ход —
     // читается из store ПОСЛЕ возможного updateTaskState выше
     val echoTaskState = session?.let { sessions.getTaskState(it.id) }
+    // Инварианты (задача 6 плана assistant-invariants): echo обоих скоупов
+    // каждый ход — глобальный читается из store на свежем списке, сессионный —
+    // из снимка [session]; null, когда оба пусты (ключ omitится из JSON)
+    val echoInvariants = InvariantsPayload(
+        global = invariantStore.list(),
+        session = session?.invariants ?: emptyList()
+    ).takeIf { it.global.isNotEmpty() || it.session.isNotEmpty() }
     return if (body.judgeEnabled == true) {
         onStatus("Судья проверяет ответ…")
         response.copy(
@@ -1433,30 +1679,97 @@ private suspend fun finalizeResponse(
             elapsedMs = elapsedMs,
             judge = runJudge(aiClient, body, response.copy(reply = cleanReply), elapsedMs),
             facts = currentFacts,
-            taskState = echoTaskState
+            taskState = echoTaskState,
+            invariants = echoInvariants
         )
     } else {
-        response.copy(reply = cleanReply, elapsedMs = elapsedMs, facts = currentFacts, taskState = echoTaskState)
+        response.copy(
+            reply = cleanReply,
+            elapsedMs = elapsedMs,
+            facts = currentFacts,
+            taskState = echoTaskState,
+            invariants = echoInvariants
+        )
     }
 }
 
 /** Единственный экземпляр автомата: чистый класс без состояния (FSM always-on, без конфиг-шва). */
 private val taskStateMachine = TaskStateMachine()
 
+/**
+ * Системная заметка при инъекции checkpoint прерванного паузой прогона: модель
+ * продолжает с места остановки, не повторяя уже выполненные вызовы.
+ */
+private const val RESUME_NOTE =
+    "Задача была прервана паузой. Выше — вызовы инструментов и их результаты из прерванного прогона. " +
+        "Продолжай с места остановки: не повторяй уже выполненные вызовы, опирайся на полученные данные. " +
+        "Если данных достаточно — дай финальный ответ по-русски."
+
+/**
+ * Потребление checkpoint прерванного паузой прогона ([PausedRun]) на входе хода
+ * (общее для /api/chat и /api/chat/stream, после ensureForRequest):
+ *  - [ensured] != null — по интенту пользователя создана НОВАЯ задача: устаревший
+ *    checkpoint выбрасывается, НЕ инъектируется (null);
+ *  - checkpoint есть — потребляется однократно (savePausedRun(null)): при [inject] true
+ *    возвращаются его сообщения + [RESUME_NOTE] (resumeContext для AgentLoop.run),
+ *    при false (блокирующий /api/chat) — только очистка, без инъекции: fallback-путь
+ *    не раздувается парами прерванного прогона;
+ *  - checkpoint на PAUSED не должен доходить сюда: вызывающие гвардят stage
+ *    (на паузе checkpoint пережидает до «Продолжить»), при попадании вернёт null
+ *    без мутаций — checkpoint не потеряется.
+ */
+private fun consumePausedRunCheckpoint(
+    sessions: SessionStore,
+    session: Session,
+    ensured: TaskState?,
+    inject: Boolean
+): List<OpenAIMessage>? {
+    val pausedRun = sessions.getPausedRun(session.id)
+    return when {
+        ensured != null -> {
+            sessions.savePausedRun(session.id, null)
+            null
+        }
+        pausedRun != null -> {
+            sessions.savePausedRun(session.id, null)
+            if (inject) pausedRun.messages + OpenAIMessage(role = "system", content = RESUME_NOTE) else null
+        }
+        else -> null
+    }
+}
+
 /** Точные chat-команды паузы/продолжения (trim+lowercase); «сделай паузу» командой НЕ является (E8). */
 private val TASK_PAUSE_COMMANDS = setOf("пауза", "/пауза")
 private val TASK_RESUME_COMMANDS = setOf("продолжить", "/продолжить")
+
+/**
+ * Chat-команды инвариантов (задача 7 плана assistant-invariants): список —
+ * ТОЧНОЕ совпадение после trim+lowercase (проверяется первым, чтобы не
+ * глотаться add-префиксом); добавление/удаление — префиксы с пробелом.
+ * Командой считается только сообщение, НАЧИНАЮЩЕЕСЯ с команды; глобальные
+ * инварианты командами не управляются (только панель настроек / API).
+ */
+private val INVARIANT_LIST_COMMANDS = setOf("инварианты", "/инварианты")
+private val INVARIANT_ADD_PREFIXES = listOf("инвариант ", "/инвариант ")
+private val INVARIANT_REMOVE_PREFIXES = listOf("убери инвариант ", "/убери инвариант ")
+
+/** Префиксное сравнение без учёта регистра (по исходному тексту — сохраняет длину для substring). */
+private fun String.startsWithIgnoreCase(prefix: String): Boolean =
+    length >= prefix.length && regionMatches(0, prefix, 0, prefix.length, ignoreCase = true)
 
 /**
  * Точная chat-команда паузы/продолжения (задача 5): «пауза», «/пауза»,
  * «продолжить», «/продолжить» — точное совпадение после trim+lowercase.
  * Выполняется ДО вызова LLM: мутация состояния автоматом + системный ответ
  * (LLM не вызывается, Q8). Всё остальное — null (обычный путь через AgentLoop).
- * Ответ всегда эхоит актуальное состояние; история командой не пополняется.
+ * Ответ всегда эхоит актуальное состояние (и инварианты — задача 7: фронт
+ * принимает эхо безусловно, без него панель затирается); история командой
+ * не пополняется.
  */
 private suspend fun handleTaskCommand(
     session: Session?,
     sessions: SessionStore,
+    invariantStore: GlobalInvariantStore,
     message: String,
     startedAt: Long
 ): ChatResponse? {
@@ -1481,8 +1794,166 @@ private suspend fun handleTaskCommand(
         reply = reply,
         elapsedMs = System.currentTimeMillis() - startedAt,
         sessionId = session?.id,
-        taskState = session?.let { sessions.getTaskState(it.id) }
+        taskState = session?.let { sessions.getTaskState(it.id) },
+        invariants = invariantsEcho(invariantStore, session?.invariants ?: emptyList())
     )
+}
+
+/**
+ * Chat-команды инвариантов (задача 7 плана assistant-invariants) — зеркало
+ * [handleTaskCommand]: выполняется ДО вызова LLM, историю не пополняет,
+ * всё не-командное — null (обычный путь через AgentLoop).
+ *
+ * Грамматика: exact «инварианты»/«/инварианты» (проверяется ПЕРВЫМ) —
+ * нумерованный список сессии + отдельная строка глобальных; префиксы
+ * «инвариант »/«/инвариант » — добавить (валидация [StoredInvariant.normalizeAndValidate],
+ * дубль и кап — системный ответ с причиной, не исключение); префиксы
+ * «убери инвариант »/«/убери инвариант » — удалить по номеру 1-based
+ * (не число/вне диапазона — мягкая подсказка, 200). Глобальные инварианты
+ * командами не управляются. Каждый ответ эхоит [InvariantsPayload] обоих
+ * скоупов (null, когда оба пусты), как finalizeResponse.
+ */
+private suspend fun handleInvariantCommand(
+    session: Session?,
+    sessions: SessionStore,
+    invariantStore: GlobalInvariantStore,
+    message: String,
+    startedAt: Long
+): ChatResponse? {
+    val trimmed = message.trim()
+    val normalized = trimmed.lowercase()
+
+    if (normalized in INVARIANT_LIST_COMMANDS) {
+        return invariantCommandResponse(
+            sessions, invariantStore, startedAt, session,
+            session?.invariants ?: emptyList(),
+            invariantListReply(invariantStore, session)
+        )
+    }
+
+    if (normalized == "инвариант" || normalized == "/инвариант") {
+        return invariantCommandResponse(
+            sessions, invariantStore, startedAt, session,
+            session?.invariants ?: emptyList(),
+            "Укажите текст инварианта. Пример: «инвариант Только Kotlin»."
+        )
+    }
+
+    val removePrefix = INVARIANT_REMOVE_PREFIXES.firstOrNull { trimmed.startsWithIgnoreCase(it) }
+    if (removePrefix != null) {
+        if (session == null) {
+            return invariantCommandResponse(
+                sessions, invariantStore, startedAt, null, emptyList(),
+                "Нет активной сессии: инварианты сессии недоступны."
+            )
+        }
+        val current = session.invariants
+        val argument = trimmed.substring(removePrefix.length).trim()
+        val index = argument.toIntOrNull()
+        if (index == null || index !in current.indices.map { it + 1 }) {
+            val hint = if (current.isEmpty()) {
+                "Сессионных инвариантов нет. Пример: «инвариант Только Kotlin»."
+            } else {
+                "Инварианта с номером «$argument» нет — в сессии ${current.size}. Пример: «убери инвариант 1»."
+            }
+            return invariantCommandResponse(sessions, invariantStore, startedAt, session, current, hint)
+        }
+        val removed = current[index - 1]
+        val updated = current.filterIndexed { position, _ -> position != index - 1 }
+        sessions.updateInvariants(session.id, updated)
+        return invariantCommandResponse(
+            sessions, invariantStore, startedAt, session,
+            sessions.getInvariants(session.id),
+            "Инвариант удалён: ${removed.text}"
+        )
+    }
+
+    val addPrefix = INVARIANT_ADD_PREFIXES.firstOrNull { trimmed.startsWithIgnoreCase(it) }
+    if (addPrefix != null) {
+        if (session == null) {
+            return invariantCommandResponse(
+                sessions, invariantStore, startedAt, null, emptyList(),
+                "Нет активной сессии: инварианты сессии недоступны."
+            )
+        }
+        val current = session.invariants
+        val validated = try {
+            StoredInvariant.normalizeAndValidate(trimmed.substring(addPrefix.length))
+        } catch (e: IllegalArgumentException) {
+            return invariantCommandResponse(
+                sessions, invariantStore, startedAt, session, current,
+                "Инвариант не добавлен: ${e.message}. Пример: «инвариант Только Kotlin»."
+            )
+        }
+        if (current.any { it.text.trim() == validated } || invariantStore.list().any { it.text.trim() == validated }) {
+            return invariantCommandResponse(
+                sessions, invariantStore, startedAt, session, current,
+                "Такой инвариант уже есть."
+            )
+        }
+        if (current.size >= StoredInvariant.MAX_COUNT) {
+            return invariantCommandResponse(
+                sessions, invariantStore, startedAt, session, current,
+                "Лимит: не больше ${StoredInvariant.MAX_COUNT} сессионных инвариантов."
+            )
+        }
+        sessions.updateInvariants(session.id, current + StoredInvariant.create(validated))
+        return invariantCommandResponse(
+            sessions, invariantStore, startedAt, session,
+            sessions.getInvariants(session.id),
+            "Инвариант добавлен: $validated"
+        )
+    }
+
+    return null
+}
+
+/**
+ * Echo обоих скоупов инвариантов для command-ответов — то же выражение, что
+ * в finalizeResponse: null, когда оба скоупа пусты (ключ omitится из JSON).
+ */
+private fun invariantsEcho(
+    invariantStore: GlobalInvariantStore,
+    sessionInvariants: List<StoredInvariant>
+): InvariantsPayload? = InvariantsPayload(
+    global = invariantStore.list(),
+    session = sessionInvariants
+).takeIf { it.global.isNotEmpty() || it.session.isNotEmpty() }
+
+/** Системный ответ инвариант-команды: зеркало паузы — эхо taskState + обоих скоупов инвариантов. */
+private suspend fun invariantCommandResponse(
+    sessions: SessionStore,
+    invariantStore: GlobalInvariantStore,
+    startedAt: Long,
+    session: Session?,
+    sessionInvariants: List<StoredInvariant>,
+    reply: String
+): ChatResponse = ChatResponse(
+    reply = reply,
+    elapsedMs = System.currentTimeMillis() - startedAt,
+    sessionId = session?.id,
+    taskState = session?.let { sessions.getTaskState(it.id) },
+    invariants = invariantsEcho(invariantStore, sessionInvariants)
+)
+
+/** Текст ответа exact-команды «инварианты»: нумерованный список сессии + глобальные без номеров. */
+private fun invariantListReply(invariantStore: GlobalInvariantStore, session: Session?): String {
+    val sessionList = session?.invariants ?: emptyList()
+    val sessionPart = if (sessionList.isEmpty()) {
+        "Сессионных инвариантов нет. Добавьте: „инвариант <текст>“."
+    } else {
+        "Сессионные инварианты:\n" +
+            sessionList.mapIndexed { position, invariant -> "${position + 1}. ${invariant.text}" }
+                .joinToString("\n")
+    }
+    val globals = invariantStore.list()
+    val globalPart = if (globals.isEmpty()) {
+        "Глобальных инвариантов: 0 (управляются через панель настроек)."
+    } else {
+        "Глобальные инварианты (управляются через панель настроек):\n" +
+            globals.joinToString("\n") { "- ${it.text}" }
+    }
+    return "$sessionPart\n\n$globalPart"
 }
 
 /** Название этапа для системных ответов; на паузе показывается приостановленный этап. */
@@ -1493,9 +1964,15 @@ private fun stageLabel(state: TaskState): String =
 /** Формат кодирования TaskState в ответ паузы/продолжения. */
 private val taskStateJsonFormat = Json { ignoreUnknownKeys = true }
 
-/** Ответ паузы/продолжения по контракту задачи 5: {"taskState": <состояние|null>}. */
-private fun taskStateResponse(state: TaskState?): JsonObject = buildJsonObject {
+/**
+ * Ответ паузы/продолжения по контракту задачи 5: {"taskState": <состояние|null>}.
+ *
+ * @param resumeRun true — в сессии есть checkpoint прерванного паузой прогона;
+ *        фронт по нему на resume сам отправляет continuation-запрос.
+ */
+private fun taskStateResponse(state: TaskState?, resumeRun: Boolean): JsonObject = buildJsonObject {
     put("taskState", state?.let { taskStateJsonFormat.encodeToJsonElement(it) } ?: JsonNull)
+    put("resumeRun", JsonPrimitive(resumeRun))
 }
 
 /**
@@ -1516,6 +1993,69 @@ private suspend fun ApplicationCall.receiveSessionId(): String? {
     }
     return sessionId
 }
+
+/**
+ * Гвард path-traversal для {id}/{sessionId} в путях DELETE-роутов инвариантов
+ * (образец — isSafeId из PreferencesStore): сегмент пути не должен содержать
+ * разделителей пути и родительских ссылок; нарушение отвечает 404.
+ */
+private fun isSafeInvariantSegment(segment: String): Boolean =
+    segment.isNotBlank() &&
+        !segment.contains('/') &&
+        !segment.contains('\\') &&
+        !segment.contains("..") &&
+        !segment.contains('\u0000')
+
+/**
+ * Читает {"text": "…"} из тела POST-роутов инвариантов. Возвращает null, если
+ * ответ уже отправлен: некорректный JSON или отсутствующий text → 400.
+ */
+private suspend fun ApplicationCall.receiveInvariantText(): String? {
+    val text = try {
+        receive<JsonObject>()["text"]?.jsonPrimitive?.contentOrNull
+    } catch (e: Exception) {
+        println("Ошибка десериализации запроса: ${e.message}")
+        null
+    }
+    if (text == null) {
+        respond(HttpStatusCode.BadRequest, AuthErrorResponse("Укажите текст инварианта."))
+        return null
+    }
+    return text
+}
+
+/**
+ * Читает {"sessionId": "…", "text": "…"} из тела POST /api/invariants/session.
+ * Возвращает null, если ответ уже отправлен: некорректный JSON, пустой
+ * sessionId или отсутствующий text → 400 (строгость receiveSessionId).
+ */
+private suspend fun ApplicationCall.receiveInvariantSessionBody(): Pair<String, String>? {
+    val body = try {
+        receive<JsonObject>()
+    } catch (e: Exception) {
+        println("Ошибка десериализации запроса: ${e.message}")
+        null
+    }
+    val sessionId = body?.get("sessionId")?.jsonPrimitive?.contentOrNull
+    val text = body?.get("text")?.jsonPrimitive?.contentOrNull
+    if (sessionId.isNullOrBlank() || text == null) {
+        respond(
+            HttpStatusCode.BadRequest,
+            AuthErrorResponse("Укажите sessionId сессии и текст инварианта.")
+        )
+        return null
+    }
+    return sessionId to text
+}
+
+/**
+ * Список StoredInvariant как JSON-массив для тел роутов инвариантов. Явная
+ * сборка вместо InvariantsPayload через ContentNegotiation: серверный Json с
+ * encodeDefaults=false omitил бы пустые списки, а фронтенд читает global и
+ * session как обязательные ключи.
+ */
+private fun invariantListJson(list: List<StoredInvariant>): JsonElement =
+    Json.encodeToJsonElement(ListSerializer(StoredInvariant.serializer()), list)
 
 /**
  * Агентная обработка запроса: AgentLoop итерирует модель с инструментами до финального ответа.
@@ -1550,6 +2090,11 @@ private suspend fun ApplicationCall.receiveSessionId(): String? {
  *    флаттененный prompt как «Системная инструкция: …» — флаттенинг не чинится;
  *  - токены суммаризатора в TokenSums агента не входят: они уходят отдельно в
  *    ChatResponse.summaryTokens, токены самого агента цикл суммирует как раньше.
+ *
+ * Checkpoint прерванного паузой прогона (PausedRun): [onCancelled] и [resumeContext]
+ * — прозрачные швы в AgentLoop.run — стрим-обработчик сохраняет дельту прогона при
+ * отмене с saveContext=true и подставляет потреблённый checkpoint в контекст при
+ * продолжении; сам handleAgent их только прокидывает.
  */
 private suspend fun handleAgent(
     aiClient: LLMClient,
@@ -1562,8 +2107,11 @@ private suspend fun handleAgent(
     registry: ToolRegistry,
     memory: AgentMemory,
     preferences: PreferencesStore,
+    invariantStore: GlobalInvariantStore,
     userId: String,
-    onEvent: suspend (AgentEvent) -> Unit = {}
+    onEvent: suspend (AgentEvent) -> Unit = {},
+    onCancelled: ((List<OpenAIMessage>) -> Unit)? = null,
+    resumeContext: List<OpenAIMessage>? = null
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
@@ -1639,9 +2187,11 @@ private suspend fun handleAgent(
         }
 
     // Слот предпочтений (задача 12): тот же хвостовой слот, что и у памяти,
-    // порядок по плану — сначала предпочтения, затем память; безусловная
-    // инъекция (нет файла — блок дефолтов). Саб-вызовы (экстрактор, сводка,
-    // судья) блок не получают: их промпты строятся вне seed.
+    // порядок по плану — предпочтения → состояние → инварианты → память;
+    // безусловная инъекция (нет файла — блок дефолтов). Саб-вызовы (экстрактор,
+    // сводка, судья) блоки не получают: их промпты строятся вне seed
+    // (инварианты саб-вызовам тоже не передаются — задача 6 плана
+    // assistant-invariants).
     val preferencesMessage = OpenAIMessage(
         role = "system",
         content = renderPromptBlock(preferences.get(userId))
@@ -1649,7 +2199,7 @@ private suspend fun handleAgent(
 
     // Слот состояния задачи (FSM, задача 5 плана task-state-fsm): тот же
     // хвостовой слот, что у предпочтений и памяти — между ними (порядок:
-    // предпочтения → состояние → память). Эфемерная system-строка: в
+    // предпочтения → состояние → инварианты → память). Эфемерная system-строка: в
     // Session.messages не пишется (G5), trim её не режет (инъекция после trim).
     // Снимок [session] достаточен: пауза в полёте перехватывается в
     // finalizeResponse на свежем перечитании (G2)
@@ -1657,7 +2207,18 @@ private suspend fun handleAgent(
         role = "system",
         content = renderTaskStateBlock(session?.taskState)
     )
-    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, memoryMessage)
+
+    // Слот инвариантов (задача 6 плана assistant-invariants): 4-й хвостовой
+    // слот — между состоянием задачи и памятью. Guard пустоты: оба скоупа
+    // пусты → null, пустой блок не инъектируется. Эфемерная system-строка:
+    // в Session.messages не пишется, trim её не режет (инъекция после trim).
+    // Глобальный скоуп читается с диска на каждый ход (стор без кэша),
+    // сессионный — из снимка [session]
+    val invariantsMessage = renderInvariantBlock(
+        invariantStore.list(),
+        session?.invariants ?: emptyList()
+    )?.let { OpenAIMessage(role = "system", content = it) }
+    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, invariantsMessage, memoryMessage)
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(
@@ -1671,7 +2232,9 @@ private suspend fun handleAgent(
         temperature = body.temperature,
         topP = body.topP,
         stop = body.stop,
-        thinkingEnabled = body.thinkingEnabled
+        thinkingEnabled = body.thinkingEnabled,
+        onCancelled = onCancelled,
+        resumeContext = resumeContext
     )
 
     return ChatResponse(

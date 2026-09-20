@@ -60,6 +60,12 @@ export interface ChatResponse {
   events: AgentEvent[];
   /** taskState — FSM состояния задачи; синхронно с Models.kt (ChatResponse.taskState). */
   taskState?: TaskState | null;
+  /**
+   * Эхо обоих скоупов инвариантов (Kotlin: InvariantsPayload,
+   * Models.kt: ChatResponse.invariants) — синхронизировать вручную.
+   * null/отсутствует — когда оба скоупа пусты (encodeDefaults=false).
+   */
+  invariants?: InvariantsPayload | null;
 }
 
 /** Этап задачи (Kotlin: TaskStage); enum в JSON сериализуется строкой. */
@@ -82,6 +88,31 @@ export interface TaskState {
   expectedAction: string;
   /** Этап, с которого задача поставлена на паузу; null/отсутствует — не на паузе. */
   prevStage?: TaskStage | null;
+}
+
+/**
+ * Ответ POST /api/task/pause|resume (Kotlin: TaskStateEnvelope) — синхронизировать вручную.
+ */
+export interface TaskStateEnvelope {
+  taskState: TaskState | null;
+  /** true — в сессии есть checkpoint прерванного паузой прогона; по нему на resume отправляется continuation-запрос. */
+  resumeRun?: boolean;
+}
+
+/** Один инвариант — непреложное правило (Kotlin: StoredInvariant, пакет invariants). */
+export interface Invariant {
+  id: string;
+  text: string;
+}
+
+/**
+ * Оба скоупа инвариантов одним пейлоадом: global — файл-стор, session — сессия
+ * (Kotlin: InvariantsPayload, Models.kt) — синхронизировать вручную.
+ * Тело/ответ роутов /api/invariants и эхо ChatResponse.invariants.
+ */
+export interface InvariantsPayload {
+  global: Invariant[];
+  session: Invariant[];
 }
 
 /** Один выделенный факт диалога (стратегия «Факты»). */
@@ -193,7 +224,13 @@ export interface AgentFinal {
  */
 export type StreamEvent =
   | { type: 'agent'; event: AgentEvent }
-  | { type: 'status'; text: string }
+  /* Ранний кадр «задача заведена» (StreamEvents.kt): taskState — состояние
+     задачи на старте хода, шлётся ПЕРЕД первым agent-кадром; absent/null —
+     состояние не менялось (штатные статусы «Судья проверяет ответ…» поле
+     не несут). sessionId — id сессии на первом ходе, когда клиент ещё не
+     знает id (клик паузы в полёт без id ушёл бы в 400); absent/null — id
+     не менялся. */
+  | { type: 'status'; text: string; taskState?: TaskState | null; sessionId?: string | null }
   | { type: 'final'; response: ChatResponse }
   | { type: 'cancelled'; requestId: string }
   | { type: 'error'; message: string };

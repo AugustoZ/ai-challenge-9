@@ -316,3 +316,27 @@
     padding: 2px 7px;
     text-shadow: var(--lamp-label-shadow);
 }
+
+/* ---------- Бейдж нештатного завершения хода ---------- */
+
+/* Красная лампа отказа: ход закончился не «готово» (зацикливание,
+   лимит шагов, дедлайн) — ответ при этом бывает на десятки килобайт,
+   поэтому причина выведена бейджем над пузырём и видна сразу, без
+   раскрытия «Хода работы агента». Механика та же, что у янтарной
+   пластины «Сводка применена», только с лампой отказа. */
+.warningBadge {
+    display: inline-flex;
+    align-self: flex-start;
+    max-width: 100%;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--lamp-red);
+    background: rgba(var(--lamp-alarm), 0.16);
+    border: 1px solid rgba(var(--lamp-alarm), 0.45);
+    border-radius: var(--radius);
+    padding: 2px 7px;
+    text-shadow: 0 0 1px rgba(var(--lamp-alarm), 0.9);
+}

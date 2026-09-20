@@ -1,5 +1,6 @@
 package com.example.aiweb.session
 
+import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.model.Fact
 import com.example.aiweb.model.OpenAIMessage
 import com.example.aiweb.task.TaskState
@@ -204,6 +205,36 @@ class FileSessionStore(
     override fun getTaskState(sessionId: String): TaskState? {
         val current = sessions[sessionId] ?: return null
         return current.taskState
+    }
+
+    @Synchronized
+    override fun savePausedRun(sessionId: String, run: PausedRun?): Session? {
+        val current = sessions[sessionId] ?: return null
+        val updated = current.copy(pausedRun = run, updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
+    override fun getPausedRun(sessionId: String): PausedRun? {
+        val current = sessions[sessionId] ?: return null
+        return current.pausedRun
+    }
+
+    @Synchronized
+    override fun updateInvariants(sessionId: String, invariants: List<StoredInvariant>): Session? {
+        val current = sessions[sessionId] ?: return null
+        val updated = current.copy(invariants = invariants.toList(), updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
+    override fun getInvariants(sessionId: String): List<StoredInvariant> {
+        val current = sessions[sessionId] ?: return emptyList()
+        return current.invariants
     }
 
     @Synchronized
