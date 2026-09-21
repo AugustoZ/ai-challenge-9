@@ -33,6 +33,8 @@ export interface SessionStateData {
   facts: Fact[];
   /** Состояние задачи FSM (ChatResponse.taskState); null — задачи нет. */
   taskState: TaskState | null;
+  /** Отказ последнего перехода задачи (ChatResponse.taskRejected); null — отказов нет. */
+  taskRejected: string | null;
   /** Оба скоупа инвариантов (эхо ChatResponse.invariants / GET /api/invariants); null — не получены. */
   invariants: InvariantsPayload | null;
   /** Бортовой журнал: записи дописываются, обновляются по id. */
@@ -53,6 +55,8 @@ export interface SessionStateData {
   setFacts: (facts: Fact[]) => void;
   /** Состояние задачи последнего ответа (ChatResponse.taskState, безусловно каждый ход). */
   setTaskState: (taskState: TaskState | null) => void;
+  /** Отказ перехода последнего ответа (ChatResponse.taskRejected, безусловно каждый ход); null — отказов нет. */
+  setTaskRejected: (taskRejected: string | null) => void;
   /** Инварианты последнего ответа (ChatResponse.invariants, безусловно каждый ход); null — оба скоупа пусты. */
   setInvariants: (payload: InvariantsPayload | null) => void;
   /**
@@ -86,6 +90,7 @@ export const useSessionStore = create<SessionStateData>()((set) => ({
   sessionsCache: [],
   facts: [],
   taskState: null,
+  taskRejected: null,
   invariants: null,
   entries: [],
   setSessionId: (sessionId) => set({ sessionId }),
@@ -113,6 +118,7 @@ export const useSessionStore = create<SessionStateData>()((set) => ({
   setSessionsCache: (sessionsCache) => set({ sessionsCache }),
   setFacts: (facts) => set({ facts }),
   setTaskState: (taskState) => set({ taskState }),
+  setTaskRejected: (taskRejected) => set({ taskRejected }),
   setInvariants: (payload) => set({ invariants: payload }),
   appendEntry: (entry) => {
     const id = nextEntryId();

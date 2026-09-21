@@ -347,6 +347,9 @@ export function useChatStream() {
         /* Состояние задачи FSM (ChatResponse.taskState) — в статусную строку,
            безусловно каждый ход, по образцу facts выше; null — задачи нет */
         useSessionStore.getState().setTaskState(data.taskState ?? null);
+        /* Отказ перехода задачи (ChatResponse.taskRejected) — в статусную строку,
+           безусловно каждый ход, по образцу taskState выше; null — отказов нет */
+        useSessionStore.getState().setTaskRejected(data.taskRejected ?? null);
         /* Инварианты обоих скоупов (ChatResponse.invariants — эхо команд и
            обычных ответов) — безусловно каждый ход, по образцу facts/taskState
            выше; null — оба скоупа пусты (панель затирается) */

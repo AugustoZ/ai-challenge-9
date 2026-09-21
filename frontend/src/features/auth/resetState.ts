@@ -43,6 +43,7 @@ export interface SessionResetOps {
   setSessionsCache: (sessions: SessionSummary[]) => void;
   setFacts: (facts: Fact[]) => void;
   setTaskState: (taskState: TaskState | null) => void;
+  setTaskRejected: (taskRejected: string | null) => void;
 }
 
 export interface BranchResetOps {
@@ -73,6 +74,7 @@ export function clearUserState(stores: UserStateStores): void {
   stores.session.setSessionsCache([]);
   stores.session.setFacts([]);
   stores.session.setTaskState(null);
+  stores.session.setTaskRejected(null);
   stores.branches.hideBranches();
   stores.memory.resetMemory();
   stores.twins.clear();

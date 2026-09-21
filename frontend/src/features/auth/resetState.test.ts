@@ -31,6 +31,8 @@ describe('clearUserState (чистая логика на инъекции)', () 
         setSessionsCache: (sessions) => calls.push(`cache:${sessions.length}`),
         setFacts: (facts) => calls.push(`facts:${facts.length}`),
         setTaskState: (taskState) => calls.push(`taskState:${taskState === null ? 'null' : 'set'}`),
+        setTaskRejected: (taskRejected) =>
+          calls.push(`taskRejected:${taskRejected === null ? 'null' : 'set'}`),
       },
       branches: { hideBranches: () => calls.push('branches') },
       memory: { resetMemory: () => calls.push('memory') },
@@ -46,6 +48,7 @@ describe('clearUserState (чистая логика на инъекции)', () 
       'cache:0',
       'facts:0',
       'taskState:null',
+      'taskRejected:null',
       'branches',
       'memory',
       'twins',
@@ -69,6 +72,7 @@ describe('resetUserState (реальные сторы приложения)', ()
     session.setSessionsCache(dirtState());
     session.setFacts([{ key: 'борт', value: 'Шумахер' }]);
     session.setTaskState({ stage: 'EXECUTION', step: 'шаг', expectedAction: 'действие' });
+    session.setTaskRejected('Переход PLANNING → PLAN_APPROVED отклонён');
 
     resetUserState();
 
@@ -80,6 +84,7 @@ describe('resetUserState (реальные сторы приложения)', ()
     expect(after.sessionsCache).toEqual([]);
     expect(after.facts).toEqual([]);
     expect(after.taskState).toBeNull();
+    expect(after.taskRejected).toBeNull();
   });
 
   it('ветки скрыты: список пуст, бар не виден, activeBranchId обнулён', () => {

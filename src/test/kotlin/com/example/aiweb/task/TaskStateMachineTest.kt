@@ -21,11 +21,14 @@ class TaskStateMachineTest {
     ) = TaskState(stage, step, action, prevStage)
 
     @Test
-    fun `legal chain - null to planning to execution to validation to done to planning`() {
+    fun `legal chain - null to planning to plan approved to execution to validation to execution to validation to done to planning`() {
         var current: TaskState? = null
 
         current = fsm.apply(current, state(TaskStage.PLANNING, "анализ целей", "написать план"))!!
         assertEquals(TaskStage.PLANNING, current.stage)
+
+        current = fsm.apply(current, state(TaskStage.PLAN_APPROVED, "план утверждён", "начать сборку"))!!
+        assertEquals(TaskStage.PLAN_APPROVED, current.stage)
 
         current = fsm.apply(current, state(TaskStage.EXECUTION, "сборка", "запустить сборку"))!!
         assertEquals(TaskStage.EXECUTION, current.stage)
@@ -33,11 +36,35 @@ class TaskStateMachineTest {
         current = fsm.apply(current, state(TaskStage.VALIDATION, "тесты", "починить падение"))!!
         assertEquals(TaskStage.VALIDATION, current.stage)
 
+        current = fsm.apply(current, state(TaskStage.EXECUTION, "ещё код", "дописать фикс"))!!
+        assertEquals(TaskStage.EXECUTION, current.stage)
+
+        current = fsm.apply(current, state(TaskStage.VALIDATION, "повторный прогон", "проверить фикс"))!!
+        assertEquals(TaskStage.VALIDATION, current.stage)
+
         current = fsm.apply(current, state(TaskStage.DONE, "готово", "отчитаться"))!!
         assertEquals(TaskStage.DONE, current.stage)
 
         current = fsm.apply(current, state(TaskStage.PLANNING, "новая задача", "анализ"))!!
         assertEquals(TaskStage.PLANNING, current.stage)
+    }
+
+    @Test
+    fun `illegal - ten forbidden transitions are all null no-op`() {
+        // Гейт PLAN_APPROVED: EXECUTION достижим только через утверждённый план.
+        assertNull(fsm.apply(state(TaskStage.PLANNING), state(TaskStage.EXECUTION)), "PLANNING→EXECUTION: гейт, нужен PLAN_APPROVED")
+        assertNull(fsm.apply(state(TaskStage.PLANNING), state(TaskStage.VALIDATION)), "PLANNING→VALIDATION")
+        assertNull(fsm.apply(state(TaskStage.PLANNING), state(TaskStage.DONE)), "PLANNING→DONE")
+        assertNull(fsm.apply(state(TaskStage.PLAN_APPROVED), state(TaskStage.VALIDATION)), "PLAN_APPROVED→VALIDATION")
+        assertNull(fsm.apply(state(TaskStage.PLAN_APPROVED), state(TaskStage.DONE)), "PLAN_APPROVED→DONE")
+        assertNull(fsm.apply(state(TaskStage.EXECUTION), state(TaskStage.DONE)), "EXECUTION→DONE: финал только после валидации")
+        assertNull(fsm.apply(state(TaskStage.EXECUTION), state(TaskStage.PLANNING)), "EXECUTION→PLANNING")
+        assertNull(fsm.apply(state(TaskStage.DONE), state(TaskStage.EXECUTION)), "DONE→EXECUTION: только через новую задачу")
+        assertNull(fsm.apply(null, state(TaskStage.EXECUTION)), "null→EXECUTION")
+        assertNull(
+            fsm.apply(state(TaskStage.PAUSED, prevStage = TaskStage.EXECUTION), state(TaskStage.EXECUTION)),
+            "PAUSED→EXECUTION напрямую: только resume()"
+        )
     }
 
     @Test
@@ -78,6 +105,21 @@ class TaskStateMachineTest {
             assertEquals("шаг", paused.step, "step сохраняется на паузе: $stage")
             assertEquals("действие", paused.expectedAction, "expectedAction сохраняется на паузе: $stage")
         }
+    }
+
+    @Test
+    fun `pause - from plan approved, prevStage is plan approved, resume back`() {
+        val paused = fsm.pause(state(TaskStage.PLAN_APPROVED, "план утверждён", "начать сборку"))!!
+
+        assertEquals(TaskStage.PAUSED, paused.stage)
+        assertEquals(TaskStage.PLAN_APPROVED, paused.prevStage)
+
+        val resumed = fsm.resume(paused)!!
+
+        assertEquals(TaskStage.PLAN_APPROVED, resumed.stage)
+        assertNull(resumed.prevStage)
+        assertEquals("план утверждён", resumed.step)
+        assertEquals("начать сборку", resumed.expectedAction)
     }
 
     @Test
@@ -139,6 +181,18 @@ class TaskStateMachineTest {
         assertEquals(TaskStage.PLANNING, next.stage)
         assertEquals("новый шаг", next.step)
         assertEquals("новое действие", next.expectedAction)
+    }
+
+    @Test
+    fun `same stage - plan approved refreshes step without leaving the gate`() {
+        val approved = state(TaskStage.PLAN_APPROVED, "план v1", "ждать правок")
+
+        val next = fsm.apply(approved, state(TaskStage.PLAN_APPROVED, "план v2 утверждён", "начать сборку"))!!
+
+        assertEquals(TaskStage.PLAN_APPROVED, next.stage)
+        assertEquals("план v2 утверждён", next.step)
+        assertEquals("начать сборку", next.expectedAction)
+        assertNull(next.prevStage)
     }
 
     @Test

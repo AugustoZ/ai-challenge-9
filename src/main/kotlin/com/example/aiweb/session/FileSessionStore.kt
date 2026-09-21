@@ -238,6 +238,21 @@ class FileSessionStore(
     }
 
     @Synchronized
+    override fun updateTaskRejection(sessionId: String, rejected: String?): Session? {
+        val current = sessions[sessionId] ?: return null
+        val updated = current.copy(lastRejectedTransition = rejected, updatedAt = now())
+        sessions[sessionId] = updated
+        persist(updated)
+        return updated
+    }
+
+    @Synchronized
+    override fun getTaskRejection(sessionId: String): String? {
+        val current = sessions[sessionId] ?: return null
+        return current.lastRejectedTransition
+    }
+
+    @Synchronized
     override fun list(): List<Session> =
         sessions.values.sortedByDescending { it.updatedAt }
 

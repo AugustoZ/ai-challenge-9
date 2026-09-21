@@ -79,6 +79,32 @@ class TaskStateJsonTest {
     }
 
     @Test
+    fun `parse - pin two task-state blocks in one answer, last wins`() {
+        // ПИН: поведение при двух блоках, не менять молча. Парсер берёт
+        // ПОСЛЕДНИЙ блок (TaskStateJson.lastBlock через lastIndexOf): если
+        // в одном ответе модель издала два блока task-state, побеждает
+        // последний. Изменение на «первый блок побеждает» — только
+        // осознанно, вместе с правкой этого теста и KDoc парсера.
+        // Второй блок здесь — plan_approved в lowercase: заодно пинует
+        // нормализацию stage через trim/uppercase.
+        val text = """
+            ```task-state
+            {"stage":"planning","step":"первый блок","expected_action":"первое действие"}
+            ```
+            Затем модель поправила себя:
+            ```task-state
+            {"stage":"plan_approved","step":"второй блок","expected_action":"второе действие"}
+            ```
+        """.trimIndent()
+
+        val parsed = TaskStateJson.parse(text, null)!!
+
+        assertEquals(TaskStage.PLAN_APPROVED, parsed.stage)
+        assertEquals("второй блок", parsed.step)
+        assertEquals("второе действие", parsed.expectedAction)
+    }
+
+    @Test
     fun `parse - unknown or missing stage, null`() {
         assertNull(TaskStateJson.parse("```task-state\n{\"stage\":\"flying\",\"step\":\"s\"}\n```", null))
         assertNull(TaskStateJson.parse("```task-state\n{\"step\":\"s\",\"expected_action\":\"a\"}\n```", null))

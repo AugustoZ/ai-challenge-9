@@ -837,4 +837,52 @@ class FileSessionStoreTest {
         val reloaded = assertNotNull(newStore(dir).get(session.id))
         assertEquals(after, reloaded.invariants)
     }
+
+    // ── lastRejectedTransition: описание отклонённого перехода задачи ──
+
+    @Test
+    fun `сессия с lastRejectedTransition переживает пересоздание хранилища`() {
+        val dir = newDir()
+        val store = newStore(dir)
+        val session = store.create()
+        val rejected = "execution отклонён: из planning разрешено plan_approved"
+
+        val updated = assertNotNull(store.updateTaskRejection(session.id, rejected))
+        assertEquals(rejected, updated.lastRejectedTransition)
+
+        val reloaded = assertNotNull(newStore(dir).get(session.id))
+        assertEquals(rejected, reloaded.lastRejectedTransition)
+        assertEquals(rejected, assertNotNull(newStore(dir).getTaskRejection(session.id)))
+        assertTrue(
+            File(dir, "sessions/${session.id}.json").readText().contains("lastRejectedTransition"),
+            "Файл должен содержать lastRejectedTransition"
+        )
+    }
+
+    @Test
+    fun `старый json-файл сессии без lastRejectedTransition читается с null`() {
+        val dir = newDir()
+        val sessionsDir = File(dir, "sessions").apply { mkdirs() }
+        File(sessionsDir, "old-legacy-rejection.json").writeText(
+            """{"id":"old-legacy-rejection","messages":[{"role":"user","content":"старый вопрос"}],"createdAt":1,"updatedAt":2}"""
+        )
+
+        val store = newStore(dir)
+        val loaded = assertNotNull(store.get("old-legacy-rejection"))
+
+        assertNull(loaded.lastRejectedTransition)
+        assertNull(store.getTaskRejection("old-legacy-rejection"))
+        assertEquals(1, loaded.messages.size)
+        assertEquals("старый вопрос", loaded.messages.single().content)
+    }
+
+    @Test
+    fun `updateTaskRejection и getTaskRejection по неизвестному sessionId — no-op без исключения`() {
+        val dir = newDir()
+        val store = newStore(dir)
+
+        assertNull(store.updateTaskRejection("нет-такого", "execution отклонён"))
+        assertNull(store.getTaskRejection("нет-такого"))
+        assertTrue(store.list().isEmpty())
+    }
 }

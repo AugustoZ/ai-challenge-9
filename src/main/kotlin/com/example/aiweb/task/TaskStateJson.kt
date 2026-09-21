@@ -16,6 +16,8 @@ object TaskStateJson {
 
     private const val MARKER = "```task-state"
 
+    private const val FENCE = "```"
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -71,6 +73,45 @@ object TaskStateJson {
             idx = result.indexOf(MARKER, idx)
         }
         return result
+    }
+
+    /**
+     * Число код-фенсов "```" в тексте: цикл indexOf, O(n) по длине без regex —
+     * ответ модели может достигать 150 КБ. Маркер "```task-state" начинается
+     * с "```" и тоже считается, поэтому вызывать имеет смысл для уже
+     * стрипнутого текста (см. [strip]).
+     */
+    fun countCodeFences(markdown: String): Int {
+        var count = 0
+        var idx = markdown.indexOf(FENCE)
+        while (idx >= 0) {
+            count++
+            idx = markdown.indexOf(FENCE, idx + FENCE.length)
+        }
+        return count
+    }
+
+    /**
+     * Контент-гейт (план bypass-fixes, задача 3): превышает ли ответ порог
+     * «выглядит как реализация, а не план». Число блоков =
+     * (fences + fences % 2) / 2 — нечётный хвост считается незакрытым блоком
+     * (+1). Порог: blocks >= 2, ИЛИ единственный блок длиннее 10 строк
+     * (строки содержимого между фенсами; у незакрытого блока содержимое —
+     * от первого фенса до конца текста).
+     */
+    fun codeBlocksExceedThreshold(markdown: String): Boolean {
+        val fences = countCodeFences(markdown)
+        val blocks = (fences + fences % 2) / 2
+        if (blocks == 0) return false
+        if (blocks >= 2) return true
+
+        val contentStart = markdown.indexOf(FENCE) + FENCE.length
+        val content = if (fences % 2 == 1) {
+            markdown.substring(contentStart)
+        } else {
+            markdown.substring(contentStart, markdown.indexOf(FENCE, contentStart))
+        }
+        return content.split('\n').size > 10
     }
 
     /**

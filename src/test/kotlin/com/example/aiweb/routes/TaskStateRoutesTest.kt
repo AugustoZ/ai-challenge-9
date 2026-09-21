@@ -13,6 +13,7 @@ import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.Session
 import com.example.aiweb.session.SummarizeResult
 import com.example.aiweb.task.TaskStage
+import com.example.aiweb.task.TaskStateJson
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -37,6 +38,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -167,6 +169,10 @@ class TaskStateRoutesTest {
             assertEquals(TaskStage.PLANNING, planning.taskState?.stage)
             assertEquals("Составление плана", planning.taskState?.step)
 
+            fake.next = replyWithBlock("PLAN_APPROVED", "План утверждён")
+            val approved = chat(client, base, "утверждаем план", sid)
+            assertEquals(TaskStage.PLAN_APPROVED, approved.taskState?.stage)
+
             fake.next = replyWithBlock("EXECUTION", "Исполнение по плану")
             val execution = chat(client, base, "работаем", sid)
             assertEquals(TaskStage.EXECUTION, execution.taskState?.stage)
@@ -184,7 +190,7 @@ class TaskStateRoutesTest {
             val client = testHttpClient()
             val sid = assertNotNull(chat(client, base, "начало").sessionId)
 
-            for (stage in listOf("PLANNING", "EXECUTION", "VALIDATION", "DONE")) {
+            for (stage in listOf("PLANNING", "PLAN_APPROVED", "EXECUTION", "VALIDATION", "DONE")) {
                 fake.next = replyWithBlock(stage)
                 chat(client, base, "ход $stage", sid)
             }
@@ -364,6 +370,8 @@ class TaskStateRoutesTest {
 
             fake.next = replyWithBlock("PLANNING")
             chat(client, base, "планируем", sid)
+            fake.next = replyWithBlock("PLAN_APPROVED")
+            chat(client, base, "утверждаем план", sid)
             fake.next = replyWithBlock("EXECUTION")
             chat(client, base, "работаем", sid)
 
@@ -572,17 +580,22 @@ class TaskStateRoutesTest {
     }
 
     @Test
-    fun `лестница без блока доходит до done`() {
+    fun `лестница доходит до done - утверждение блоком, продвижение маркерами`() {
         withApp { base, fake, _ ->
             val client = testHttpClient()
             val sid = assertNotNull(chat(client, base, "начало").sessionId)
 
-            // Создание фолбэком (null → PLANNING): с null-состояния ответ с
-            // код-фенсом шага не даёт (одна ступень за ход), лестница стартует отсюда
+            // Создание фолбэком (null → PLANNING); из PLANNING фолбэк вперёд не
+            // идёт — план утверждает LLM-блок по реплике пользователя
             fake.next = plainReply("Приступаю к работе.")
             val planning = chat(client, base, "Сделай план, выполни и проверь", sid)
             assertEquals(TaskStage.PLANNING, planning.taskState?.stage)
 
+            fake.next = replyWithBlock("PLAN_APPROVED", "План утверждён")
+            val approved = chat(client, base, "утверждаем план", sid)
+            assertEquals(TaskStage.PLAN_APPROVED, approved.taskState?.stage)
+
+            // Дальше эвристическая лестница по маркерам, без блоков
             fake.next = plainReply("Вот код:\n```\nfun f() {}\n```")
             val execution = chat(client, base, "выполняй", sid)
             assertEquals(TaskStage.EXECUTION, execution.taskState?.stage)
@@ -606,6 +619,17 @@ class TaskStateRoutesTest {
 
             fake.next = plainReply("Приступаю к работе.")
             chat(client, base, "Сделай план, выполни и проверь", sid)
+
+            fake.next = ChatResult(
+                reply = "План утверждён.\n\n```task-state\n" +
+                    "{\"stage\": \"PLAN_APPROVED\", \"step\": \"Шаг из блока\", \"expected_action\": \"Действие\"}\n" +
+                    "```",
+                promptTokens = 1,
+                completionTokens = 2,
+                totalTokens = 3,
+                elapsedMs = 42L
+            )
+            chat(client, base, "утверждаем", sid)
 
             fake.next = ChatResult(
                 reply = "Вот код:\n```\nfun f() {}\n```\n\n```task-state\n" +
@@ -680,6 +704,168 @@ class TaskStateRoutesTest {
         }
     }
 
+    // --- Отклонённый LLM-блок (задача 6 плана task-lifecycle-gates) ---
+
+    @Test
+    fun `нелегальный блок - taskRejected заполнен, stage не меняется`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            val planning = chat(client, base, "планируем", sid)
+            assertEquals(TaskStage.PLANNING, planning.taskState?.stage)
+            assertNull(planning.taskRejected, "до нелегального блока отказа нет")
+
+            fake.next = replyWithBlock("EXECUTION", "Прыжок через план")
+            val response = chat(client, base, "работаем", sid)
+            assertNotNull(response.taskRejected, "нелегальный блок фиксирует отказ")
+            assertTrue(response.taskRejected!!.contains("PLANNING → EXECUTION"), response.taskRejected)
+            assertEquals(TaskStage.PLANNING, response.taskState?.stage, "нелегальный переход не применился")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `нелегальный блок - seed следующего хода содержит блок отклонённого перехода`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+            fake.next = replyWithBlock("EXECUTION", "Прыжок через план")
+            chat(client, base, "работаем", sid)
+
+            fake.next = plainReply("обычный ответ")
+            chat(client, base, "следующий ход", sid)
+
+            val rejected = fake.calls.last().messages.lastOrNull {
+                it.role == "system" && it.content.orEmpty().contains("ПОСЛЕДНИЙ ПРЕДЛОЖЕННЫЙ ПЕРЕХОД ОТКЛОНЁН")
+            }
+            assertNotNull(rejected, "блок отклонённого перехода должен быть в seed")
+            assertTrue(rejected!!.content!!.contains("PLANNING → EXECUTION"), rejected.content)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `легальный блок - taskRejected очищен`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+            fake.next = replyWithBlock("EXECUTION", "Прыжок через план")
+            val rejected = chat(client, base, "работаем", sid)
+            assertNotNull(rejected.taskRejected, "отказ зафиксирован")
+
+            fake.next = replyWithBlock("PLAN_APPROVED", "План утверждён")
+            val approved = chat(client, base, "утверждаем план", sid)
+            assertNull(approved.taskRejected, "легальный переход очищает отказ")
+            assertEquals(TaskStage.PLAN_APPROVED, approved.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `ход без блока - taskRejected очищен`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+            fake.next = replyWithBlock("EXECUTION", "Прыжок через план")
+            val rejected = chat(client, base, "работаем", sid)
+            assertNotNull(rejected.taskRejected, "отказ зафиксирован")
+
+            fake.next = plainReply("обычный ответ без блока")
+            val response = chat(client, base, "обычный вопрос", sid)
+            assertNull(response.taskRejected, "ход без блока снимает отказ")
+            assertEquals(TaskStage.PLANNING, response.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `блок из EXECUTION в VALIDATION - легальный, отказа нет`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            for (stage in listOf("PLANNING", "PLAN_APPROVED", "EXECUTION")) {
+                fake.next = replyWithBlock(stage)
+                chat(client, base, "ход $stage", sid)
+            }
+
+            fake.next = replyWithBlock("VALIDATION", "Проверка результата")
+            val response = chat(client, base, "проверяем", sid)
+            assertNull(response.taskRejected, "EXECUTION→VALIDATION легален")
+            assertEquals(TaskStage.VALIDATION, response.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `нелегальный блок при DONE - taskRejected с описанием и без чекпоинта в seed`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            for (stage in listOf("PLANNING", "PLAN_APPROVED", "EXECUTION", "VALIDATION", "DONE")) {
+                fake.next = replyWithBlock(stage)
+                chat(client, base, "ход $stage", sid)
+            }
+
+            fake.next = replyWithBlock("EXECUTION", "Прыжок с done")
+            val response = chat(client, base, "прыжок с готового", sid)
+            assertNotNull(response.taskRejected, "нелегальный блок при DONE фиксирует отказ")
+            assertTrue(response.taskRejected!!.contains("DONE → EXECUTION"), response.taskRejected)
+            assertEquals(TaskStage.DONE, response.taskState?.stage, "нелегальный переход не применился")
+
+            fake.next = plainReply("обычный ответ")
+            chat(client, base, "следующий ход", sid)
+            val doneBlock = assertNotNull(
+                fake.calls.last().messages.lastOrNull {
+                    it.role == "system" && it.content.orEmpty().contains("ТЕКУЩЕЕ СОСТОЯНИЕ ЗАДАЧИ")
+                },
+                "активный блок состояния есть и при DONE"
+            )
+            assertTrue(doneBlock.content!!.contains("этап=done"), doneBlock.content)
+            assertFalse(
+                doneBlock.content!!.contains("ОБЯЗАТЕЛЬНО заверши ответ вопросом"),
+                "на DONE чекпоинт не инжектится"
+            )
+            client.close()
+        }
+    }
+
+    @Test
+    fun `чекпоинт-инструкция в seed активной задачи`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана полёта")
+            chat(client, base, "планируем", sid)
+
+            fake.next = plainReply("обычный ответ")
+            chat(client, base, "следующий ход", sid)
+
+            val block = assertNotNull(
+                fake.calls.last().messages.lastOrNull {
+                    it.role == "system" && it.content.orEmpty().contains("ТЕКУЩЕЕ СОСТОЯНИЕ ЗАДАЧИ")
+                },
+                "активная задача: блок состояния должен быть в seed"
+            )
+            assertTrue(block.content!!.contains("ОБЯЗАТЕЛЬНО заверши ответ вопросом"), block.content)
+            assertTrue(block.content.contains("Не переходи к следующему этапу до явного ответа"), block.content)
+            client.close()
+        }
+    }
+
     @Test
     fun `без намерения раннего статус-кадра с taskState нет`() {
         withApp { base, fake, _ ->
@@ -700,5 +886,299 @@ class TaskStateRoutesTest {
             )
             client.close()
         }
+    }
+
+    // --- Контент-гейт (план bypass-fixes, задача 3) ---
+
+    /** Ответ-код-дамп: несколько фенсированных блоков, БЕЗ блока task-state. */
+    private fun codeDumpReply(blocks: Int = 3, linesPerBlock: Int = 4): ChatResult {
+        val sb = StringBuilder("Вот реализация:\n")
+        repeat(blocks) { b ->
+            sb.append("\n```python\n")
+            repeat(linesPerBlock) { l -> sb.append("строка $l блока ${b + 1}\n") }
+            sb.append("```")
+        }
+        return plainReply(sb.toString())
+    }
+
+    private fun singleBigBlockReply(lines: Int = 12): ChatResult {
+        val sb = StringBuilder("```python\n")
+        repeat(lines) { l -> sb.append("строка кода $l\n") }
+        sb.append("```")
+        return plainReply(sb.toString())
+    }
+
+    private fun replyWithCodeAndTaskState(stage: String, codeBlocks: Int = 3): ChatResult {
+        val dump = codeDumpReply(codeBlocks)
+        return ChatResult(
+            reply = dump.reply + "\n```task-state\n" +
+                "{\"stage\": \"$stage\", \"step\": \"Шаг $stage\", \"expected_action\": \"Действие $stage\"}\n" +
+                "```",
+            promptTokens = 1,
+            completionTokens = 2,
+            totalTokens = 3,
+            elapsedMs = 42L
+        )
+    }
+
+    @Test
+    fun `гейт 1 - code-dump на PLANNING без блока ставит отказ, стадия держится, контент не тронут`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+
+            val dump = codeDumpReply(blocks = 3)
+            fake.next = dump
+            val response = chat(client, base, "давай сразу код", sid)
+
+            val rejection = assertNotNull(response.taskRejected, "гейт должен зафиксировать отказ")
+            assertTrue(rejection.contains("Реализация на стадии PLANNING"), rejection)
+            assertEquals(TaskStage.PLANNING, response.taskState?.stage, "стадия держится")
+
+            val stored = client.get("$base/api/session/$sid").body<Session>()
+            val assistant = stored.messages.last { it.role == "assistant" }
+            assertEquals(dump.reply, assistant.content, "тело ответа в истории не модифицируется")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 2 - один блок длиннее 10 строк на PLAN_APPROVED отклоняется`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+            fake.next = replyWithBlock("PLAN_APPROVED", "План утверждён")
+            val approved = chat(client, base, "утверждаем план", sid)
+            assertEquals(TaskStage.PLAN_APPROVED, approved.taskState?.stage)
+
+            fake.next = singleBigBlockReply(lines = 12)
+            val response = chat(client, base, "пиши код", sid)
+
+            val rejection = assertNotNull(response.taskRejected, "один длинный блок тоже превышает порог")
+            assertTrue(rejection.contains("PLAN_APPROVED"), rejection)
+            assertEquals(
+                TaskStage.PLAN_APPROVED,
+                response.taskState?.stage,
+                "эвристическое продвижение в EXECUTION отброшено"
+            )
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 3 - на PAUSED фенсы не дают отказа, clear-поведение сохранено`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+            val paused = chat(client, base, "пауза", sid)
+            assertEquals(TaskStage.PAUSED, paused.taskState?.stage)
+
+            fake.next = codeDumpReply(blocks = 3)
+            val response = chat(client, base, "работаю дальше", sid)
+
+            assertNull(response.taskRejected, "на PAUSED гейт не срабатывает")
+            assertEquals(TaskStage.PAUSED, response.taskState?.stage)
+            assertTrue(response.reply.contains("```"), "контент доставляется без вырезания")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 4 - без задачи фенсы не дают отказа`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = codeDumpReply(blocks = 3)
+            val response = chat(client, base, "привет", sid)
+
+            assertNull(response.taskState, "задача не создана")
+            assertNull(response.taskRejected, "гейт не срабатывает без задачи")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 5 - легальный блок вместе с фенсами проходит без гейт-отказа`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+
+            fake.next = replyWithCodeAndTaskState("PLAN_APPROVED", codeBlocks = 3)
+            val response = chat(client, base, "утверждаем план", sid)
+
+            assertEquals(TaskStage.PLAN_APPROVED, response.taskState?.stage)
+            assertNull(response.taskRejected, "объявленный переход — гейт не срабатывает")
+            assertFalse(response.reply.contains("task-state"), "клиенту уходит стрипнутый reply")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 6 - нелегальный блок с фенсами даёт старый текст о переходе, не гейт-текст`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+
+            fake.next = replyWithCodeAndTaskState("EXECUTION", codeBlocks = 3)
+            val response = chat(client, base, "работаем", sid)
+
+            val rejection = assertNotNull(response.taskRejected, "нелегальный блок фиксирует отказ как раньше")
+            assertTrue(rejection.contains("PLANNING → EXECUTION"), rejection)
+            assertFalse(
+                rejection.contains("Реализация на стадии"),
+                "приоритет у отказа о нелегальном переходе, не у гейт-текста"
+            )
+            assertEquals(TaskStage.PLANNING, response.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 7 - текст отказа содержит стадию и число блоков`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+
+            fake.next = codeDumpReply(blocks = 3)
+            val response = chat(client, base, "код давай", sid)
+
+            val rejection = assertNotNull(response.taskRejected)
+            assertTrue(rejection.contains("PLANNING"), rejection)
+            assertTrue(rejection.contains("3 код-блоков"), rejection)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 8 - следующий чистый ход очищает отказ, на входе которого отказ ещё виден модели`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+
+            fake.next = codeDumpReply(blocks = 3)
+            val gated = chat(client, base, "код давай", sid)
+            assertNotNull(gated.taskRejected)
+
+            fake.next = plainReply("план составлен, жду утверждения")
+            val clean = chat(client, base, "как продвигается план", sid)
+
+            assertNull(clean.taskRejected, "чистый ход без фенсов снимает отказ clear-веткой")
+            assertEquals(TaskStage.PLANNING, clean.taskState?.stage)
+
+            // Свойственная семантика инъекции: текст гейт-отказа виден модели
+            // ровно на СЛЕДУЮЩИЙ ход (в seed хода, очищающего отказ)
+            val rejectedInSeed = fake.calls.last().messages.lastOrNull {
+                it.role == "system" && it.content.orEmpty().contains("ПОСЛЕДНИЙ ПРЕДЛОЖЕННЫЙ ПЕРЕХОД ОТКЛОНЁН")
+            }
+            assertNotNull(rejectedInSeed, "гейт-отказ должен попасть в seed следующего хода")
+            assertTrue(rejectedInSeed!!.content!!.contains("Реализация на стадии PLANNING"), rejectedInSeed.content)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 9 - два гейт-хода подряд - отказ один и перезаписан`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+
+            fake.next = codeDumpReply(blocks = 3)
+            val first = chat(client, base, "код давай", sid)
+            assertNotNull(first.taskRejected, "первый гейт-ход фиксирует отказ")
+
+            fake.next = codeDumpReply(blocks = 2)
+            val second = chat(client, base, "ещё код", sid)
+
+            val rejection = assertNotNull(second.taskRejected, "второй гейт-ход снова фиксирует отказ")
+            assertTrue(rejection.contains("2 код-блоков"), "свежий отказ перезаписал старый: $rejection")
+            assertFalse(rejection.contains("3 код-блоков"), "старого счётчика быть не должно")
+            assertEquals(TaskStage.PLANNING, second.taskState?.stage)
+            client.close()
+        }
+    }
+
+    @Test
+    fun `гейт 10 - на PLAN_APPROVED фенсы бьют эвристику EXEC_MARKERS - стадия держится`() {
+        withApp { base, fake, _ ->
+            val client = testHttpClient()
+            val sid = assertNotNull(chat(client, base, "начало").sessionId)
+
+            fake.next = replyWithBlock("PLANNING", "Составление плана")
+            chat(client, base, "планируем", sid)
+            fake.next = replyWithBlock("PLAN_APPROVED", "План утверждён")
+            chat(client, base, "утверждаем план", sid)
+
+            // Два крошечных блока: порог blocks >= 2, при этом эвристика по ```
+            // продвинула бы PLAN_APPROVED → EXECUTION без гейта
+            fake.next = codeDumpReply(blocks = 2, linesPerBlock = 4)
+            val response = chat(client, base, "начинай реализацию", sid)
+
+            val rejection = assertNotNull(response.taskRejected, "гейт перекрывает эвристическое продвижение")
+            assertTrue(rejection.contains("PLAN_APPROVED"), rejection)
+            assertEquals(TaskStage.PLAN_APPROVED, response.taskState?.stage, "стадия не ушла в EXECUTION")
+            client.close()
+        }
+    }
+
+    // --- Юнит-тесты счётчика фенсов/блоков (TaskStateJson) ---
+
+    @Test
+    fun `счётчик 1 - один маленький блок до 10 строк - порог не превышен`() {
+        val text = "```kotlin\nfun f() {}\n```"
+        assertEquals(2, TaskStateJson.countCodeFences(text))
+        assertFalse(TaskStateJson.codeBlocksExceedThreshold(text))
+    }
+
+    @Test
+    fun `счётчик 2 - два крошечных блока - порог превышен`() {
+        val text = "```\nа\n```\n```\nб\n```"
+        assertEquals(4, TaskStateJson.countCodeFences(text))
+        assertTrue(TaskStateJson.codeBlocksExceedThreshold(text))
+    }
+
+    @Test
+    fun `счётчик 3 - один блок 11 и больше строк - порог превышен`() {
+        val text = "```python\n" + (1..12).joinToString("\n") { "строка $it" } + "\n```"
+        assertEquals(2, TaskStateJson.countCodeFences(text))
+        assertTrue(TaskStateJson.codeBlocksExceedThreshold(text))
+    }
+
+    @Test
+    fun `счётчик 4 - нечётные фенсы - незакрытый хвост считается блоком`() {
+        val closed = "```\nзакрытый блок\n```"
+        val tail = "\nтекст между\n```python\n" + (1..12).joinToString("\n") { "строка $it" }
+        val text = closed + tail
+        assertEquals(3, TaskStateJson.countCodeFences(text))
+        assertTrue(TaskStateJson.codeBlocksExceedThreshold(text), "нечётный хвост = +1 незакрытый блок")
+
+        // Одиночный незакрытый фенс с длинным содержимым — тоже блок
+        val unclosed = "```python\n" + (1..12).joinToString("\n") { "строка $it" }
+        assertEquals(1, TaskStateJson.countCodeFences(unclosed))
+        assertTrue(TaskStateJson.codeBlocksExceedThreshold(unclosed))
     }
 }

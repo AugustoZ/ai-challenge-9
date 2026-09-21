@@ -3,6 +3,7 @@ package com.example.aiweb.task
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Проверка серверного авто-FSM [TaskStateHeuristic]: создание задачи по
@@ -144,12 +145,59 @@ class TaskStateHeuristicTest {
     // --- Продвижение по лестнице ---
 
     @Test
-    fun `продвижение - код-фенс из PLANNING даёт EXECUTION`() {
-        val result = h.infer("сделай", "Вот код:\n```\nfun f() {}\n```", state(TaskStage.PLANNING))
+    fun `продвижение - код-фенс из PLANNING не продвигает null`() {
+        // Асимметричное зеркало: фолбэк никогда не покидает PLANNING вперёд —
+        // план утверждает только LLM-блок по реплике пользователя
+        assertNull(h.infer("сделай", "Вот код:\n```\nfun f() {}\n```", state(TaskStage.PLANNING)))
+    }
 
-        assertEquals(TaskStage.EXECUTION, result?.stage)
-        assertEquals("шаг", result?.step, "шаг сохраняется при продвижении")
-        assertEquals("действие", result?.expectedAction)
+    @Test
+    fun `продвижение - все маркеры исполнения из PLANNING дают null`() {
+        assertNull(h.infer("сделай", "```", state(TaskStage.PLANNING)))
+        assertNull(h.infer("сделай", "вот код", state(TaskStage.PLANNING)))
+        assertNull(h.infer("сделай", "реализация", state(TaskStage.PLANNING)))
+    }
+
+    @Test
+    fun `продвижение - маркеры валидации и завершения из PLANNING дают null`() {
+        assertNull(h.infer("сделай", "проверил, тесты прошли", state(TaskStage.PLANNING)))
+        assertNull(h.infer("сделай", "всё готово", state(TaskStage.PLANNING)))
+    }
+
+    @Test
+    fun `продвижение - маркеры исполнения из PLAN_APPROVED дают EXECUTION`() {
+        val result = h.infer("сделай", "Вот код:\n```\nfun f() {}\n```", state(TaskStage.PLAN_APPROVED))
+
+        assertEquals(TaskStage.EXECUTION, result?.stage, "после утверждения фолбэк открывает реализацию")
+        assertEquals("шаг", result?.step, "шаг унаследован")
+        assertEquals("действие", result?.expectedAction, "действие унаследовано")
+    }
+
+    @Test
+    fun `фолбэк - никогда не возвращает нелегальное предложение`() {
+        // PLAN_APPROVED и PAUSED фолбэку недостижимы: только легальные ступени или null
+        val replies = listOf(
+            "```", "вот код", "реализация",
+            "проверил", "тесты прошли", "ошибок нет",
+            "готово", "задача выполнена"
+        )
+        val currents = listOf(
+            null,
+            state(TaskStage.PLANNING),
+            state(TaskStage.PLAN_APPROVED),
+            state(TaskStage.EXECUTION),
+            state(TaskStage.VALIDATION),
+            state(TaskStage.DONE)
+        )
+        val legal = setOf(TaskStage.PLANNING, TaskStage.EXECUTION, TaskStage.VALIDATION, TaskStage.DONE)
+        for (current in currents) {
+            for (reply in replies) {
+                val result = h.infer("сделай и проверь", reply, current)
+                if (result != null) {
+                    assertTrue(result.stage in legal, "фолбэк не выдаёт ${result.stage} из ${current?.stage ?: "null"}")
+                }
+            }
+        }
     }
 
     @Test
@@ -319,5 +367,67 @@ class TaskStateHeuristicTest {
 
         assertEquals(TaskStage.PLANNING, result?.stage)
         assertEquals("Сделай план, выполни и проверь", result?.step)
+    }
+
+    // --- Task 2: расширение триггера намерения (WORD_VERBS «пиши» + отказ от плана) ---
+
+    @Test
+    fun `task2 - инцидент «План не нужен, сразу пиши код…» создаёт PLANNING даже при коде в ответе`() {
+        val message = "План не нужен, сразу пиши код крупного приложения для интеграции с несколькими платформами: VK, Telegram, Max"
+        val reply = "Сразу код. Вот:\n```\nfun main() { }\n```"
+        val result = h.infer(message, reply, null)
+
+        assertEquals(TaskStage.PLANNING, result?.stage)
+        assertEquals(message.take(MAX_STEP_LENGTH), result?.step)
+        assertEquals("", result?.expectedAction)
+        assertNull(result?.prevStage)
+    }
+
+    @Test
+    fun `task2 - «Без плана, сразу код» создаёт PLANNING`() {
+        val result = h.ensureForRequest("Без плана, сразу код", null)
+
+        assertEquals(TaskStage.PLANNING, result?.stage)
+    }
+
+    @Test
+    fun `task2 - «пиши код для парсера» создаёт PLANNING`() {
+        val result = h.ensureForRequest("пиши код для парсера", null)
+
+        assertEquals(TaskStage.PLANNING, result?.stage)
+    }
+
+    @Test
+    fun `task2 - «Пиши код» с заглавной создаёт PLANNING`() {
+        val result = h.ensureForRequest("Пиши код", null)
+
+        assertEquals(TaskStage.PLANNING, result?.stage)
+    }
+
+    @Test
+    fun `task2 - «План не нужен, сделать приложение без него» создаёт PLANNING`() {
+        val result = h.ensureForRequest("План не нужен, сделать приложение без него", null)
+
+        assertEquals(TaskStage.PLANNING, result?.stage)
+    }
+
+    @Test
+    fun `task2 - «запиши заметку в журнал» не создаёт null`() {
+        assertNull(h.ensureForRequest("запиши заметку в журнал", null))
+    }
+
+    @Test
+    fun `task2 - «пропиши настройки» не создаёт null`() {
+        assertNull(h.ensureForRequest("пропиши настройки", null))
+    }
+
+    @Test
+    fun `task2 - вопрос «почему план не нужен?» без код-слова null`() {
+        assertNull(h.ensureForRequest("почему план не нужен?", null))
+    }
+
+    @Test
+    fun `task2 - вопрос «Как написать парсер?» null`() {
+        assertNull(h.ensureForRequest("Как написать парсер?", null))
     }
 }

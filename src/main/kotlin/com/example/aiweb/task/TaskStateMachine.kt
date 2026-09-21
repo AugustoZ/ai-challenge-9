@@ -7,7 +7,8 @@ package com.example.aiweb.task
  *
  * Таблица рёбер (текущий этап → допустимые следующие):
  * - null → PLANNING
- * - PLANNING → EXECUTION
+ * - PLANNING → PLAN_APPROVED
+ * - PLAN_APPROVED → EXECUTION
  * - EXECUTION → VALIDATION
  * - VALIDATION → EXECUTION, DONE
  * - DONE → PLANNING
@@ -18,11 +19,16 @@ package com.example.aiweb.task
  *
  * Остаться на том же этапе легально: этап не меняется, но step/
  * expectedAction обновляются. Всё прочее — нелегально → null.
+ *
+ * EXECUTION достижим только через PLAN_APPROVED: утверждение плана —
+ * прерогатива пользователя (диалоговый чекпоинт), сервер утверждения
+ * сам не детектирует.
  */
 class TaskStateMachine {
 
     private val edges: Map<TaskStage, Set<TaskStage>> = mapOf(
-        TaskStage.PLANNING to setOf(TaskStage.EXECUTION),
+        TaskStage.PLANNING to setOf(TaskStage.PLAN_APPROVED),
+        TaskStage.PLAN_APPROVED to setOf(TaskStage.EXECUTION),
         TaskStage.EXECUTION to setOf(TaskStage.VALIDATION),
         TaskStage.VALIDATION to setOf(TaskStage.EXECUTION, TaskStage.DONE),
         TaskStage.DONE to setOf(TaskStage.PLANNING)

@@ -14,19 +14,47 @@ package com.example.aiweb.task
  * - переходы — ровно по таблице рёбер автомата, «одна ступень за ход»
  *   (DONE-цель из EXECUTION даёт VALIDATION, а не прыжок в DONE).
  *
+ * Асимметричное зеркало: PLANNING для фолбэка непроходим вперёд — переход в
+ * PLAN_APPROVED делает только модель по утверждению пользователя (LLM-блок);
+ * из PLAN_APPROVED фолбэк умеет PLAN_APPROVED→EXECUTION по маркерам кода
+ * (после утверждения реализацию открывает ответ модели). Нелегальное
+ * предложение фолбэка — тихий no-op без записи отказа (запись отказа —
+ * только для LLM-блоков в finalizeResponse).
+ *
  * Никогда не возвращает этап PAUSED: null означает «no-op, состояние не трогаем».
  */
 object TaskStateHeuristic {
 
     /** Глаголы намерения в сообщении пользователя (стволы без окончаний, регистр не важен).
-     * Пополнено по реальным пропускам (см. TaskStateHeuristicTest). */
+     * Пополнено по реальным пропускам (см. TaskStateHeuristicTest).
+     * «опиши» вынесено в [WORD_VERBS]: как подстрока оно ложно совпадает внутри
+     * «пропиши», а граница слова этого не допускает. */
     private val INTENT_VERBS = setOf(
         "сделай", "напиши", "реализуй", "создай", "составь", "подготовь",
         "проверь", "исправь", "перепиши", "переделай", "добавь", "настрой", "найди",
-        "придумай", "продумай", "проведи", "разработай", "спланируй", "опиши",
+        "придумай", "продумай", "проведи", "разработай", "спланируй",
         "перечисли", "объясни", "рассчитай", "сравни", "проанализируй",
         "протестируй", "организуй", "построй"
     )
+
+    /** Глаголы с границей слова (отдельно от подстрочных [INTENT_VERBS]): считаются
+     * только самостоятельным словом — «запиши/пропиши/распиши» содержат «пиши»
+     * подстрокой, но это другие слова; «опиши» внутри «пропиши» — ложная подстрока. */
+    private val PISHI = Regex("(^|[^а-яё])пиши")
+    private val OPISHI = Regex("(^|[^а-яё])опиши")
+    private val WORD_VERBS = listOf(PISHI, OPISHI)
+
+    /** Явное отклонение планирования в сообщении пользователя. */
+    private val PLAN_REJECTION = setOf("без плана", "план не нужен", "план не требуется")
+
+    /** Действующее слово: вместе с отказом от плана — недвусмысленное намерение
+     * («Без плана, сразу код»). Морфология: «сдела» — сделай/сделайте/сделать;
+     * «пиш» — пиши/напиши/напишите; «интегр» — интеграция/интегрировать. */
+    private val ACTION_WORDS = Regex("(код|реализац|пиш|сдела|интегр)")
+
+    /** Код-слово: вместе с глаголом «пиши» словом — прямое намерение написать код
+     * («пиши код»). «пиш» сюда не входит: оно уже несёт глагол-триггер. */
+    private val CODE_WORDS = Regex("(код|реализац|интегр)")
 
     /** Словесные перечислители многошаговости; нумерованный список считается отдельно.
      * Пополнено по реальным пропускам (см. TaskStateHeuristicTest). */
@@ -165,11 +193,19 @@ object TaskStateHeuristic {
      */
     private fun hasIntent(message: String?): Boolean {
         if (message.isNullOrBlank()) return false
-        val lower = message.lowercase()
-        val verbs = INTENT_VERBS.count { lower.contains(it) }
+        // NBSP (из веб-клипборда) не пробел: без замены «Без\u00A0плана» терялось бы
+        // и PLAN_REJECTION, и токенизация [hasTaskNoun].
+        val lower = message.lowercase().replace('\u00A0', ' ')
+        val wordVerbs = WORD_VERBS.count { it.containsMatchIn(lower) }
+        val verbs = INTENT_VERBS.count { lower.contains(it) } + wordVerbs
         val numbered = NUMBERED_ITEM.findAll(lower).count()
         val enumerators = INTENT_ENUMERATORS.count { lower.contains(it) } + numbered
-        return verbs >= 2 || (verbs >= 1 && enumerators >= 1) || numbered >= 2 ||
+        // Недвусмысленное намерение вне счётчиков: (а) отказ от плана + действующее
+        // слово; (б) глагол «пиши» словом + код-слово.
+        val explicitIntent =
+            (PLAN_REJECTION.any { lower.contains(it) } && ACTION_WORDS.containsMatchIn(lower)) ||
+            (PISHI.containsMatchIn(lower) && CODE_WORDS.containsMatchIn(lower))
+        return explicitIntent || verbs >= 2 || (verbs >= 1 && enumerators >= 1) || numbered >= 2 ||
             (verbs >= 1 && hasTaskNoun(lower))
     }
 
@@ -192,7 +228,10 @@ object TaskStateHeuristic {
      */
     private fun stepToward(from: TaskStage?, target: TaskStage): TaskStage? = when (from) {
         null -> if (target == TaskStage.PLANNING) TaskStage.PLANNING else null
-        TaskStage.PLANNING -> if (target == TaskStage.EXECUTION) TaskStage.EXECUTION else null
+        // Фолбэк никогда не утверждает план: PLANNING→PLAN_APPROVED делает только
+        // LLM-блок по реплике пользователя. Маркеры продвижения из PLANNING — no-op.
+        TaskStage.PLANNING -> null
+        TaskStage.PLAN_APPROVED -> if (target == TaskStage.EXECUTION) TaskStage.EXECUTION else null
         TaskStage.EXECUTION -> when (target) {
             TaskStage.VALIDATION -> TaskStage.VALIDATION
             TaskStage.DONE -> TaskStage.VALIDATION

@@ -61,6 +61,12 @@ export interface ChatResponse {
   /** taskState — FSM состояния задачи; синхронно с Models.kt (ChatResponse.taskState). */
   taskState?: TaskState | null;
   /**
+   * Человекочитаемое описание последнего отклонённого перехода задачи;
+   * echo каждый ход, пока есть; null когда отказов нет/очищен
+   * (Kotlin: Models.kt: ChatResponse.taskRejected) — синхронизировать вручную.
+   */
+  taskRejected?: string | null;
+  /**
    * Эхо обоих скоупов инвариантов (Kotlin: InvariantsPayload,
    * Models.kt: ChatResponse.invariants) — синхронизировать вручную.
    * null/отсутствует — когда оба скоупа пусты (encodeDefaults=false).
@@ -71,6 +77,7 @@ export interface ChatResponse {
 /** Этап задачи (Kotlin: TaskStage); enum в JSON сериализуется строкой. */
 export type TaskStage =
   | 'PLANNING'
+  | 'PLAN_APPROVED'
   | 'EXECUTION'
   | 'VALIDATION'
   | 'DONE'

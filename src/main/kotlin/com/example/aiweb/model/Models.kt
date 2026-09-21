@@ -235,6 +235,12 @@ data class ChatResponse(
     /** taskState — FSM состояния задачи; синхронно с frontend/src/api/types.ts. null — задачи нет. */
     val taskState: TaskState? = null,
     /**
+     * Человекочитаемое описание последнего отклонённого перехода задачи;
+     * echo каждый ход, пока есть; null когда отказов нет/очищен.
+     * Синхронно с frontend/src/api/types.ts
+     */
+    val taskRejected: String? = null,
+    /**
      * Эхо обоих скоупов инвариантов ([InvariantsPayload]): глобальный + сессия,
      * синхронно с frontend/src/api/types.ts (ChatResponse.invariants).
      * null — когда оба скоупа пусты (encodeDefaults=false — ключ из JSON omitится).

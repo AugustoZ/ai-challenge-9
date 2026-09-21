@@ -820,6 +820,63 @@ class SessionStoreTest {
         assertEquals(after, assertNotNull(store.get(session.id)).invariants)
     }
 
+    // ── lastRejectedTransition: описание отклонённого перехода задачи ──
+
+    @Test
+    fun `lastRejectedTransition round-trip — create → updateTaskRejection → getTaskRejection → snapshot содержит отказ`() {
+        val store = newStore()
+        val session = store.create()
+        val rejected = "execution отклонён: из planning разрешено plan_approved"
+
+        assertNull(store.getTaskRejection(session.id))
+        assertNull(store.get(session.id)?.lastRejectedTransition)
+
+        val updated = assertNotNull(store.updateTaskRejection(session.id, rejected))
+        assertEquals(rejected, updated.lastRejectedTransition)
+        assertEquals(rejected, store.getTaskRejection(session.id))
+        assertEquals(rejected, assertNotNull(store.get(session.id)).lastRejectedTransition)
+        assertEquals(rejected, store.list().single().lastRejectedTransition)
+    }
+
+    @Test
+    fun `updateTaskRejection null очищает описание отклонённого перехода`() {
+        val store = newStore()
+        val session = store.create()
+        store.updateTaskRejection(session.id, "execution отклонён")
+
+        val cleared = assertNotNull(store.updateTaskRejection(session.id, null))
+
+        assertNull(cleared.lastRejectedTransition)
+        assertNull(store.getTaskRejection(session.id))
+    }
+
+    @Test
+    fun `updateTaskRejection и getTaskRejection по неизвестному sessionId — no-op без исключения`() {
+        val store = newStore()
+
+        assertNull(store.updateTaskRejection("нет-такого", "execution отклонён"))
+        assertNull(store.getTaskRejection("нет-такого"))
+        assertTrue(store.list().isEmpty())
+    }
+
+    @Test
+    fun `lastRejectedTransition не входит в снимок ветки — общее на сессию и переживает переключение`() {
+        val store = newStore()
+        val session = store.create()
+        store.append(session.id, user("вопрос 1"))
+        store.updateTaskRejection(session.id, "execution отклонён: из planning разрешено plan_approved")
+        store.forkTwin(session.id)
+
+        // Отказ изменился после форка
+        store.updateTaskRejection(session.id, "validation отклонён")
+
+        val activated = assertNotNull(store.activateBranch(session.id, "b1"))
+
+        // Снимок ветки не захватил отказ: сохраняется текущее сессионное значение
+        assertEquals("validation отклонён", activated.lastRejectedTransition)
+        assertEquals("validation отклонён", assertNotNull(store.get(session.id)).lastRejectedTransition)
+    }
+
     // ── PausedRun: контрольная точка прерванного паузой прогона ──
 
     private fun pausedRun() = PausedRun(

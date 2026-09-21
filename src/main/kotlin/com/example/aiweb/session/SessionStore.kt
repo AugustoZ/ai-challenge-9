@@ -117,6 +117,21 @@ interface SessionStore {
     /** Инварианты сессии ([Session.invariants]); emptyList — сессия не существует или инварианты ещё не ставились. */
     fun getInvariants(sessionId: String): List<StoredInvariant>
 
+    /**
+     * Заменяет описание последнего отклонённого перехода задачи
+     * ([Session.lastRejectedTransition]) на уровне всей сессии. null — очистить
+     * (легальный переход произошёл). Возвращает обновлённую сессию;
+     * null — сессия не существует (вызов no-op).
+     */
+    fun updateTaskRejection(sessionId: String, rejected: String?): Session?
+
+    /**
+     * Описание последнего отклонённого перехода задачи
+     * ([Session.lastRejectedTransition]); null — сессия не существует или отказ
+     * ещё не фиксировался (или уже очищен легальным переходом).
+     */
+    fun getTaskRejection(sessionId: String): String?
+
     /** Снимок всех сессий, отсортированных по updatedAt по убыванию. */
     fun list(): List<Session>
 
@@ -210,6 +225,15 @@ data class Session(
      * пропускает неизвестное поле.
      */
     val invariants: List<StoredInvariant> = emptyList(),
+    /**
+     * Человекочитаемое описание последнего отклонённого перехода задачи (напр.
+     * „execution отклонён: из planning разрешено plan_approved“).
+     * Legacy-файлы сессий без этого поля читаются с null (compat даёт дефолт
+     * поля, ignoreUnknownKeys — rollback). Пишется только при нелегальном
+     * LLM-блоке вне паузы; очищается любым легальным переходом; в
+     * Branch-снимки не входит.
+     */
+    val lastRejectedTransition: String? = null,
     val createdAt: Long,
     val updatedAt: Long,
     /**
@@ -239,7 +263,9 @@ data class Session(
  * Осознанное ограничение: [Session.taskState] в снимок ветки НЕ входит —
  * состояние задачи общее на сессию и переживает переключение веток. То же
  * относится к [Session.invariants]: инварианты в снимок ветки НЕ входят —
- * они общие на сессию и переживают переключение веток. И к [Session.pausedRun]:
+ * они общие на сессию и переживают переключение веток. И к
+ * [Session.lastRejectedTransition]: описание отклонённого перехода в снимок
+ * ветки НЕ входит — оно общее на сессию и переживает переключение веток. И к [Session.pausedRun]:
  * checkpoint прерванного прогона в снимок ветки НЕ входит — он принадлежит
  * сессии, а не содержимому ветки.
  */
@@ -318,6 +344,9 @@ class InMemorySessionStore(
 
         @Volatile
         var invariants: List<StoredInvariant> = emptyList()
+
+        @Volatile
+        var lastRejectedTransition: String? = null
 
         /** Отпечаток захвата активного состояния (см. [Session.capturedMessages]). */
         @Volatile
@@ -504,6 +533,20 @@ class InMemorySessionStore(
         return synchronized(entry) { entry.invariants.toList() }
     }
 
+    override fun updateTaskRejection(sessionId: String, rejected: String?): Session? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) {
+            entry.lastRejectedTransition = rejected
+            entry.updatedAt = now()
+            entry.snapshot()
+        }
+    }
+
+    override fun getTaskRejection(sessionId: String): String? {
+        val entry = sessions[sessionId] ?: return null
+        return synchronized(entry) { entry.lastRejectedTransition }
+    }
+
     override fun list(): List<Session> =
         sessions.values.map { it.snapshot() }.sortedByDescending { it.updatedAt }
 
@@ -556,6 +599,7 @@ class InMemorySessionStore(
             taskState = taskState,
             pausedRun = pausedRun,
             invariants = invariants,
+            lastRejectedTransition = lastRejectedTransition,
             createdAt = createdAt,
             updatedAt = updatedAt,
             capturedMessages = capturedMessages,

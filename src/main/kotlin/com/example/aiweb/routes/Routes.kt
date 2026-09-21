@@ -1615,12 +1615,48 @@ private suspend fun finalizeResponse(
         // побеждает переход, предложенный моделью
         val fresh = sessions.get(session.id)
         if (fresh != null) {
-            val proposed = TaskStateJson.parse(rawReply, fresh.taskState)
-                ?: TaskStateHeuristic.infer(body.message, cleanReply, fresh.taskState)
-            if (proposed != null && fresh.taskState?.stage != TaskStage.PAUSED) {
-                val next = taskStateMachine.apply(fresh.taskState, proposed)
-                if (next != null) {
-                    sessions.updateTaskState(fresh.id, next)
+            // Запись отказа (задача 6 плана task-lifecycle-gates): фиксируется
+            // ТОЛЬКО нелегальный LLM-блок вне паузы (G4, E3, E7) — создание
+            // задачи, same-stage и эвристический фолбэк отказа не дают;
+            // любой легальный переход (LLM или фолбэк) отказ очищает
+            val blockProposal = TaskStateJson.parse(rawReply, fresh.taskState)
+            val proposed = blockProposal ?: TaskStateHeuristic.infer(body.message, cleanReply, fresh.taskState)
+            // Контент-гейт (план bypass-fixes, задача 3): code-dump на PLANNING/
+            // PLAN_APPROVED без объявленного блока task-state — мягкий отказ:
+            // контент ответа не вырезается, стадия держится, эвристическое
+            // продвижение (включая EXEC_MARKERS по ```) отбрасывается. Порог
+            // считается по cleanReply (блок task-state уже стрипнут). Ветка
+            // стоит ПЕРВОЙ — до clear-ветки, которая иначе стёрла бы отказ.
+            val preStage = fresh.taskState?.stage
+            val gateFires = (preStage == TaskStage.PLANNING || preStage == TaskStage.PLAN_APPROVED) &&
+                blockProposal == null &&
+                TaskStateJson.codeBlocksExceedThreshold(cleanReply)
+            when {
+                gateFires -> {
+                    val fenceCount = TaskStateJson.countCodeFences(cleanReply)
+                    sessions.updateTaskRejection(
+                        fresh.id,
+                        contentGateRejectionDescription(preStage!!, (fenceCount + fenceCount % 2) / 2)
+                    )
+                }
+                proposed == null || fresh.taskState?.stage == TaskStage.PAUSED -> {
+                    // Перехода нет (фолбэк с null — тихий no-op) либо пауза в
+                    // полёте победила (G2): нелегального перехода не было
+                    sessions.updateTaskRejection(fresh.id, null)
+                }
+                else -> {
+                    val next = taskStateMachine.apply(fresh.taskState, proposed)
+                    if (next != null) {
+                        sessions.updateTaskState(fresh.id, next)
+                        sessions.updateTaskRejection(fresh.id, null)
+                    } else if (blockProposal != null) {
+                        sessions.updateTaskRejection(
+                            fresh.id,
+                            rejectedTransitionDescription(fresh.taskState, blockProposal)
+                        )
+                    }
+                    // blockProposal == null && next == null: эвристика нелегальное
+                    // предложение не даёт (задача 3) — записи нет
                 }
             }
         }
@@ -1665,6 +1701,9 @@ private suspend fun finalizeResponse(
     // FSM (задача 5, Q5): echo актуального состояния задачи каждый ход —
     // читается из store ПОСЛЕ возможного updateTaskState выше
     val echoTaskState = session?.let { sessions.getTaskState(it.id) }
+    // Эхо отклонённого перехода (задача 6 плана task-lifecycle-gates): свежее
+    // значение из store после мутаций выше, каждый ход (null — ключ omitится)
+    val echoTaskRejected = session?.let { sessions.getTaskRejection(it.id) }
     // Инварианты (задача 6 плана assistant-invariants): echo обоих скоупов
     // каждый ход — глобальный читается из store на свежем списке, сессионный —
     // из снимка [session]; null, когда оба пусты (ключ omitится из JSON)
@@ -1680,6 +1719,7 @@ private suspend fun finalizeResponse(
             judge = runJudge(aiClient, body, response.copy(reply = cleanReply), elapsedMs),
             facts = currentFacts,
             taskState = echoTaskState,
+            taskRejected = echoTaskRejected,
             invariants = echoInvariants
         )
     } else {
@@ -1688,6 +1728,7 @@ private suspend fun finalizeResponse(
             elapsedMs = elapsedMs,
             facts = currentFacts,
             taskState = echoTaskState,
+            taskRejected = echoTaskRejected,
             invariants = echoInvariants
         )
     }
@@ -1695,6 +1736,39 @@ private suspend fun finalizeResponse(
 
 /** Единственный экземпляр автомата: чистый класс без состояния (FSM always-on, без конфиг-шва). */
 private val taskStateMachine = TaskStateMachine()
+
+/**
+ * Человекочитаемое описание отклонённого перехода для
+ * [Session.lastRejectedTransition] (задача 6 плана task-lifecycle-gates):
+ * «Переход <текущий> → <предложенный> отклонён: … (разрешено: …)». Список
+ * разрешённых целей выводится пробным [TaskStateMachine.apply] по каждому
+ * этапу — у автомата нет публичного API таблицы рёбер (изменять
+ * TaskStateMachine запретил план).
+ */
+private fun rejectedTransitionDescription(current: TaskState?, proposed: TaskState): String {
+    val from = current?.stage?.name ?: "без задачи"
+    val allowed = TaskStage.entries
+        .filter { candidate ->
+            taskStateMachine.apply(
+                current,
+                TaskState(stage = candidate, step = "", expectedAction = "")
+            ) != null
+        }
+        .joinToString(", ") { it.name }
+        .ifEmpty { "—" }
+    return "Переход $from → ${proposed.stage.name} отклонён: недопустимый переход (разрешено: $allowed)"
+}
+
+/**
+ * Человекочитаемое описание срабатывания контент-гейта (план bypass-fixes,
+ * задача 3) для [Session.lastRejectedTransition]: на стадии реализации модель
+ * выдала код-дамп, не объявив переход блоком task-state. Переход не
+ * применяется, стадия держится, модель получает причину через инъекцию на
+ * следующем ходу.
+ */
+private fun contentGateRejectionDescription(stage: TaskStage, blocks: Int): String =
+    "Реализация на стадии $stage заблокирована: ответ содержит $blocks код-блоков " +
+        "без объявления перехода task-state. Составь план и дождись утверждения."
 
 /**
  * Системная заметка при инъекции checkpoint прерванного паузой прогона: модель
@@ -2202,10 +2276,12 @@ private suspend fun handleAgent(
     // предпочтения → состояние → инварианты → память). Эфемерная system-строка: в
     // Session.messages не пишется (G5), trim её не режет (инъекция после trim).
     // Снимок [session] достаточен: пауза в полёте перехватывается в
-    // finalizeResponse на свежем перечитании (G2)
+    // finalizeResponse на свежем перечитании (G2). Чекпоинт-дисциплина и строка
+    // об отклонённом переходе (задача 6 плана task-lifecycle-gates) рендерятся
+    // в тот же слот — новых слотов нет
     val taskStateMessage = OpenAIMessage(
         role = "system",
-        content = renderTaskStateBlock(session?.taskState)
+        content = renderTaskStateBlock(session?.taskState, session?.lastRejectedTransition)
     )
 
     // Слот инвариантов (задача 6 плана assistant-invariants): 4-й хвостовой

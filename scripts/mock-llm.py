@@ -15,10 +15,15 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
     GET  /v1/models — список моделей (для /api/models фронта)
     GET  /control  — состояние стаба: {"mode", "delay_ms", "requests"}
      POST /control  — частичное управление: {"mode": "plain|planning|execution|"
-       "validation|done|illegal|refuse|violate|echo-system", "delay_ms": <мс>}
-       (FSM-режимы задачи 5 плана task-state-fsm; «illegal» предлагает переход
-       done→execution — сервер должен отклонить; инвариант-режимы — задача 5
-       плана assistant-invariants; задержка нужна сценарию «пауза в полёте», G2)
+         "validation|done|illegal|refuse|violate|echo-system|plan-approve|"
+         "start-execution|jump-approval|checkpoint|code-dump", "delay_ms": <мс>}
+         (FSM-режимы задачи 5 плана task-state-fsm; «illegal» предлагает переход
+         done→execution — сервер должен отклонить; инвариант-режимы — задача 5
+         плана assistant-invariants; lifecycle-режимы — задача 8 плана
+         task-lifecycle-gates: план/старт исполнения, нелегальный переход с
+         planning и контрольная точка без блока; code-dump — фиксированный
+         дамп кода (3 блока ```python) БЕЗ блока task-state, QA контент-гейта;
+         задержка — «пауза в полёте», G2)
 
 Детерминированные метрики (синхронно с SessionHistory.estimateTokens):
     usage.prompt_tokens     = ceil(сумма_длин_всех_сообщений / 2.5)
@@ -122,6 +127,88 @@ TASK_MODES = {
     "illegal": ("Прыжок с done на execution", "Должен быть отклонён сервером"),
 }
 
+# Режимы вейт-гейтов жизненного цикла (задача 8 плана task-lifecycle-gates).
+# stage пишется ЗАГЛАВНЫМ (сервер нормализует через .trim()?.uppercase(),
+# TaskStateJson.kt:49); у checkpoint stage=None — блок не эмитится:
+# ответ — вопрос о продолжении итерации без перехода этапа.
+LIFECYCLE_MODES = {
+    "plan-approve": {
+        "stage": "PLAN_APPROVED",
+        "step": "План полёта утверждён",
+        "action": "Приступаю к реализации?",
+        "text": "План утверждён и зафиксирован в бортовом журнале. "
+                "К исполнению пока не приступал — работы в этапе планирования не велось. "
+                "Приступаю к реализации?",
+    },
+    "start-execution": {
+        "stage": "EXECUTION",
+        "step": "Итерация реализации 1",
+        "action": "Выполнить итерацию реализации",
+        "text": "Приступаю к реализации: первая итерация выполнена — базовый курс "
+                "рассчитан, отклонений не обнаружено. Продолжаем следующую итерацию?",
+    },
+    "jump-approval": {
+        "stage": "EXECUTION",
+        "step": "Прыжок с planning на execution",
+        "action": "Нелегальный переход — должен быть отклонён сервером",
+        "text": "Перехожу сразу к исполнению, минуя утверждение плана.",
+    },
+    "checkpoint": {
+        "stage": None,
+        "step": "Итерация без перехода",
+        "action": "Продолжить текущую итерацию",
+        "text": "Контрольная точка итерации: работа идёт, переход этапа задачи "
+                "не произведён. Продолжаем текущую итерацию?",
+    },
+}
+
+# Режим code-dump (QA контент-гейта): фиксированный «дамп ядра бота» —
+# 3 блока ```python (хендлеры / диспетчер / хранилище, каждый 5–12 строк)
+# БЕЗ блока task-state: контент-гейт должен срабатывать по объёму кода,
+# а не по наличию маркера. Один фиксированный вариант, без параметризации.
+CODE_DUMP_REPLY = (
+    "Вот ядро бота: три файла, этого хватает для первого запуска.\n\n"
+    "```python\n"
+    "# bot/handlers.py — хендлеры входящих сообщений\n"
+    "def on_start(message):\n"
+    "    return \"Привет! Напиши /help, если нужны команды.\"\n"
+    "\n"
+    "def on_help(message):\n"
+    "    return \"Команды: /start — приветствие, /time — время сервера.\"\n"
+    "\n"
+    "def on_time(message):\n"
+    "    return \"Сейчас %s\" % now_str()\n"
+    "```\n\n"
+    "```python\n"
+    "# bot/dispatch.py — диспетчер: маршрутизация команд\n"
+    "COMMANDS = {\n"
+    "    \"/start\": on_start,\n"
+    "    \"/help\": on_help,\n"
+    "    \"/time\": on_time,\n"
+    "}\n"
+    "\n"
+    "def dispatch(message):\n"
+    "    command = message.text.strip().split(\" \", 1)[0].lower()\n"
+    "    handler = COMMANDS.get(command)\n"
+    "    return handler(message) if handler else \"Неизвестная команда. /help\"\n"
+    "```\n\n"
+    "```python\n"
+    "# bot/storage.py — хранилище пользователей (dict в памяти)\n"
+    "USERS = {}\n"
+    "\n"
+    "def remember_user(chat_id, name):\n"
+    "    USERS[chat_id] = {\"name\": name, \"seen\": now_str()}\n"
+    "\n"
+    "def known_user(chat_id):\n"
+    "    return chat_id in USERS\n"
+    "```\n"
+    "Связка: диспетчер маршрутизирует команды в хендлеры, storage помнит пользователей."
+)
+
+# Режимы code-dump: mode → фиксированный ответ (отдельный словарь — не
+# смешивать со структурами TASK_MODES/LIFECYCLE_MODES).
+CODE_DUMP_MODES = {"code-dump": CODE_DUMP_REPLY}
+
 # Режимы инвариантов (задача 5 плана assistant-invariants):
 # refuse — отказ с цитированием инварианта, ЕСЛИ маркер блока в system
 # (иначе обычный ротационный ответ: детерминированный тест инъекции);
@@ -170,7 +257,13 @@ def _control_update(payload):
         with _lock:
             if "mode" in payload:
                 mode = payload["mode"]
-                if mode == "plain" or mode in TASK_MODES or mode in INVARIANT_MODES:
+                if (
+                    mode == "plain"
+                    or mode in TASK_MODES
+                    or mode in INVARIANT_MODES
+                    or mode in LIFECYCLE_MODES
+                    or mode in CODE_DUMP_MODES
+                ):
                     _mode["mode"] = mode
                 else:
                     return None
@@ -320,6 +413,22 @@ def _pick_reply(messages, mode):
             return VIOLATE_REPLY
         return _echo_system_reply(messages)
 
+    if mode in LIFECYCLE_MODES:
+        spec = LIFECYCLE_MODES[mode]
+        print("mock-llm: lifecycle-режим «%s»" % mode, flush=True)
+        if spec["stage"] is None:
+            return spec["text"]
+        block = (
+            "```task-state\n"
+            "{\"stage\": \"%s\", \"step\": \"%s\", \"expected_action\": \"%s\"}\n"
+            "```" % (spec["stage"], spec["step"], spec["action"])
+        )
+        return spec["text"] + "\n\n" + block
+
+    if mode in CODE_DUMP_MODES:
+        print("mock-llm: code-dump-режим — дамп кода, без блока task-state", flush=True)
+        return CODE_DUMP_MODES[mode]
+
     if mode in TASK_MODES:
         print("mock-llm: FSM-режим «%s» — блок task-state" % mode, flush=True)
         return _task_block(mode)
@@ -403,7 +512,12 @@ class MockLLMHandler(BaseHTTPRequestHandler):
             state = _control_update(payload) if payload is not None else None
             if state is None:
                 self._send_json(400, {"error": {"message": "Ожидаются mode (plain|%s) и/или delay_ms (int ≥ 0)"
-                                                           % "|".join(sorted(set(TASK_MODES) | set(INVARIANT_MODES)))}})
+                                                             % "|".join(sorted(
+                                                                 set(TASK_MODES)
+                                                                 | set(INVARIANT_MODES)
+                                                                 | set(LIFECYCLE_MODES)
+                                                                 | set(CODE_DUMP_MODES)
+                                                             ))}})
             else:
                 self._send_json(200, state)
             return
