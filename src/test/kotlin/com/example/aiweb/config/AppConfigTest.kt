@@ -333,4 +333,133 @@ class AppConfigTest {
         assertEquals("17", root["summaryTokens"]?.jsonPrimitive?.content)
         assertEquals("true", root["summaryApplied"]?.jsonPrimitive?.content)
     }
+
+    // --- MCP: конфиг ---
+
+    @Test
+    fun `no mcp section keeps defaults`() {
+        val path = writeConfig(
+            """
+            {
+              "port": 9091,
+              "apiUrl": "https://old.example/v1",
+              "model": "old-model"
+            }
+            """.trimIndent()
+        )
+
+        val config = AppConfig.fromFile(path)
+
+        assertTrue(config.mcpServers.isEmpty(), "без раздела mcp — серверы не подключены")
+        assertEquals(9091, config.port, "старые поля читаются как раньше")
+        assertEquals("old-model", config.default.model, "старые поля читаются как раньше")
+        assertFalse(config.default.supportsTools, "поведение без новых секций идентично старому")
+    }
+
+    @Test
+    fun `enabled=false is preserved through fromFile`() {
+        val path = writeConfig(
+            """
+            {
+              "mcp": [
+                {
+                  "name": "echo",
+                  "command": "python3",
+                  "args": ["-u"],
+                  "env": {"ECHO_KEY": "echo-value"},
+                  "enabled": false
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val server = AppConfig.fromFile(path).mcpServers.single()
+
+        assertEquals("echo", server.name)
+        assertEquals("python3", server.command)
+        assertEquals(listOf("-u"), server.args)
+        assertEquals(mapOf("ECHO_KEY" to "echo-value"), server.env)
+        assertFalse(server.enabled, "enabled=false обязан сохраниться из файла")
+    }
+
+    @Test
+    fun `duplicate mcp name fails validation`() {
+        val path = writeConfig(
+            """
+            {
+              "mcp": [
+                {"name": "echo", "command": "python3"},
+                {"name": "echo", "command": "sh"}
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val error = assertFailsWith<IllegalArgumentException> { AppConfig.fromFile(path) }
+        assertTrue(
+            "mcp" in error.message!!,
+            "сообщение должно называть раздел mcp: ${error.message}"
+        )
+        assertTrue(
+            "echo" in error.message!!,
+            "сообщение должно называть дублирующееся имя: ${error.message}"
+        )
+    }
+
+    @Test
+    fun `empty mcp command fails validation`() {
+        val path = writeConfig(
+            """
+            {
+              "mcp": [
+                {"name": "broken", "command": ""}
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val error = assertFailsWith<IllegalArgumentException> { AppConfig.fromFile(path) }
+        assertTrue(
+            "mcp" in error.message!!,
+            "сообщение должно называть раздел mcp: ${error.message}"
+        )
+        assertTrue(
+            "broken" in error.message!!,
+            "сообщение должно называть сервер: ${error.message}"
+        )
+    }
+
+    @Test
+    fun `mcp env is not exposed in toString`() {
+        val secret = "super-secret-42"
+        val path = writeConfig(
+            """
+            {
+              "mcp": [
+                {"name": "echo", "command": "python3", "env": {"TOKEN": "$secret"}, "enabled": false}
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val config = AppConfig.fromFile(path)
+        val server = config.mcpServers.single()
+
+        assertEquals(mapOf("TOKEN" to secret), server.env, "env читается из файла корректно")
+        val serverText = server.toString()
+        val configText = config.toString()
+        assertTrue(
+            "echo" in serverText,
+            "имя сервера остаётся в toString: $serverText"
+        )
+        assertFalse(
+            secret in serverText,
+            "значения env не должны попадать в toString сервера: $serverText"
+        )
+        assertFalse(
+            secret in configText,
+            "значения env не должны попадать в toString конфига"
+        )
+    }
 }

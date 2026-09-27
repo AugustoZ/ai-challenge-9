@@ -9,3 +9,8 @@ config.json
 # Фронтенд (React/Vite)
 frontend/dist/
 frontend/node_modules/
+
+# MCP-серверы (Python)
+mcp-servers/.venv/
+mcp-servers/.tg_buffer.jsonl
+mcp-servers/.tg_messages.db*

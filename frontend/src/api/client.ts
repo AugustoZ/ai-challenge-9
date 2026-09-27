@@ -13,6 +13,8 @@ import type {
   MemoryKind,
   MemoryListResponse,
   MemoryOverview,
+  PipelineRunAccepted,
+  PipelineStatus,
   UpdatePreferencesRequest,
   UserCreatedResponse,
   UserPreferences,
@@ -292,4 +294,16 @@ export async function deleteSessionInvariant(
     `invariants/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(id)}`,
     signal,
   );
+}
+
+/* ---------- Пайплайны: запуск сценария и статус прогона ---------- */
+
+/** POST /api/pipeline/run {name} — асинхронный запуск сценария (202 {runId}; 404 нет сценария, 409 прогон уже идёт). */
+export async function runPipeline(name: string, signal?: AbortSignal): Promise<PipelineRunAccepted> {
+  return postJson<PipelineRunAccepted>('pipeline/run', { name }, signal);
+}
+
+/** GET /api/pipeline/status?name=… — статус текущего/последнего прогона (404 — ещё не запускался). */
+export async function getPipelineStatus(name: string, signal?: AbortSignal): Promise<PipelineStatus> {
+  return getJson<PipelineStatus>(`pipeline/status?name=${encodeURIComponent(name)}`, signal);
 }

@@ -547,3 +547,44 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   avoidTopics: '',
   interests: '',
 };
+
+/* ---------- Пайплайны (Kotlin: pipeline/PipelineService.kt — синхронизировать вручную) ---------- */
+
+/** Состояние прогона сценария (Kotlin: PipelineStatus.state). */
+export type PipelineState = 'running' | 'succeeded' | 'failed';
+
+/**
+ * Состояние шага: enum Kotlin PipelineStepState (running/done/failed/skipped)
+ * плюс стартовый 'pending', которым PipelineService.run засевает все шаги.
+ */
+export type PipelineStepState = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+
+/** Один шаг сценария в отчёте (Kotlin: PipelineStepStatus). */
+export interface PipelineStep {
+  id: string;
+  tool: string;
+  status: PipelineStepState;
+  /** Длительность шага, мс; null — шаг ещё не завершён. */
+  durationMs?: number | null;
+  /** Сообщение об ошибке упавшего шага. */
+  error?: string | null;
+  /** Усечённый до 500 символов результат шага. */
+  resultPreview?: string | null;
+}
+
+/** Статус текущего/последнего прогона сценария (Kotlin: PipelineStatus). */
+export interface PipelineStatus {
+  name: string;
+  runId: string;
+  state: PipelineState;
+  /** Момент старта, ISO-8601 (Kotlin Instant.toString()). */
+  startedAt: string;
+  /** Момент завершения, ISO-8601; null/absent — прогон ещё идёт. */
+  finishedAt?: string | null;
+  steps: PipelineStep[];
+}
+
+/** Ответ 202 POST /api/pipeline/run (Kotlin: PipelineRunAccepted). */
+export interface PipelineRunAccepted {
+  runId: string;
+}

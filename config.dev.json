@@ -14,6 +14,14 @@
     "read_file": {"enabled": false, "url": "http://tool-sandbox:8080", "hostDir": "/Users/you/Downloads"},
     "write_file": {"enabled": false, "url": "http://tool-sandbox:8080", "hostDir": "/Users/you/Downloads"}
   },
+  "mcp": [
+    {
+      "name": "echo",
+      "command": "mcp-servers/.venv/bin/python",
+      "args": ["src/test/resources/mcp/fake_echo_server.py"],
+      "enabled": true
+    }
+  ],
   "providers": [
     {
       "id": "opencode",

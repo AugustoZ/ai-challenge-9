@@ -35,6 +35,21 @@ COPY frontend/dist build/frontend-static/static
 # Собираем дистрибутив приложения (фронтенд пропускаем — уже внутри)
 RUN ./gradlew installDist --no-daemon -PskipFrontend
 
+# ---------- Стадия Python-окружения для MCP-серверов ----------
+# config.json запускает MCP-серверы как mcp-servers/.venv/bin/python (относительно
+# cwd /app). venv создаём и наполняем здесь, а не в финальной стадии: дистрибуция
+# скриптов + pip-деп войны в юзер-слое не нужен. Симлинки venv указывают на
+# /usr/local/bin/python3.12 именно этой стадии — ниже он копируется в финал.
+FROM python:3.12-slim-bookworm AS mcp-python
+
+RUN python -m venv /app/mcp-servers/.venv
+# Только mcp + httpx (питон-серверы их единственные зависимости; см.
+# mcp-servers/requirements.txt). Версии фиксируем под v1-API, который используют
+# серверы (from mcp.server.fastmcp import FastMCP): mcp 2.x переименовал FastMCP
+# в MCPServer и ломает import — поэтому mcp<2 / именно 1.30.0 (как в .venv хоста).
+# Telethon больше не нужен (Bot API).
+RUN /app/mcp-servers/.venv/bin/pip install --no-cache-dir "mcp==1.30.0" "httpx==0.28.1"
+
 # ---------- Стадия запуска ----------
 FROM eclipse-temurin:22-jre
 
@@ -48,6 +63,26 @@ COPY --from=build /app/build/install/aiweb /app/aiweb
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin aiweb \
     && mkdir -p /app/data \
     && chown -R aiweb:aiweb /app/data
+
+# Python 3.12-рантайм из mcp-python (обе стадии — Debian bookworm, glibc-совместимы).
+# Это делает валидным путь интерпретатора, на который смотрят симлинки venv.
+COPY --from=mcp-python /usr/local /usr/local
+
+# Уже собранный venv (/app/mcp-servers/.venv) — владелец aiweb, чтобы непривилегированный
+# пользователь мог исполнять питон и писать свои файлы.
+COPY --from=mcp-python --chown=aiweb:aiweb /app/mcp-servers/.venv /app/mcp-servers/.venv
+
+# Исходники MCP-серверов (config.json запускает их по этому пути).
+COPY --chown=aiweb:aiweb mcp-servers/tg_server.py mcp-servers/wiki_server.py mcp-servers/common.py /app/mcp-servers/
+
+# Python-модуль _sqlite3 (нужен для FTS5 в tg_server.py) линкуется с системной
+# libsqlite3.so.0, которой нет в базе temurin (Ubuntu 24.04) — ставим её.
+RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# БД Telegram-сообщений — в персистентный том /app/data: WAL-сайдкары ложатся
+# в тот же каталог (требование SQLite; на NFS SQLite — порча данных).
+ENV TG_DB_FILE=/app/data/tg_messages.db
 
 # Дальше всё выполняется от непривилегированного пользователя
 USER aiweb

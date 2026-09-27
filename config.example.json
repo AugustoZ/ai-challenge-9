@@ -19,6 +19,15 @@
     "read_file": {"enabled": false, "url": "http://tool-sandbox:8080", "hostDir": "/Users/you/Downloads"},
     "write_file": {"enabled": false, "url": "http://tool-sandbox:8080", "hostDir": "/Users/you/Downloads"}
   },
+  "mcp": [
+    {
+      "name": "example-server",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": {},
+      "enabled": false
+    }
+  ],
   "providers": [
     {
       "id": "opencode",

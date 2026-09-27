@@ -55,6 +55,12 @@ data class FileConfig(
     val tools: FileToolsConfig? = null,
     /** Настройки памяти агента: стратегия поиска и (стадия 2) эмбеддинги; null — keyword-поиск. */
     val memory: MemoryConfig? = null,
+    /**
+     * Раздел MCP-серверов: внешние инструменты по stdio-транспорту (список
+     * [FileMcpServerConfig]). null/отсутствие раздела — MCP-серверы не подключены.
+     * Только конфиг-файл: переменных окружения для раздела нет.
+     */
+    val mcp: List<FileMcpServerConfig>? = null,
     val providers: List<FileProvider>? = null
 )
 
@@ -80,6 +86,24 @@ data class FileToolsConfig(
     @SerialName("read_file") val readFile: SandboxToolConfig? = null,
     /** Запись файлов в рабочую папку через sandbox-контейнер (инструмент write_file). */
     @SerialName("write_file") val writeFile: SandboxToolConfig? = null
+)
+
+/**
+ * Один MCP-сервер из раздела "mcp" конфиг-файла (stdio-транспорт): сервер
+ * запускается командой [command] с аргументами [args] и переменными окружения
+ * [env]. Имя [name] уникально в пределах раздела (валидация в AppConfig).
+ */
+@Serializable
+data class FileMcpServerConfig(
+    val name: String,
+    val command: String,
+    val args: List<String> = emptyList(),
+    val env: Map<String, String> = emptyMap(),
+    val enabled: Boolean = true,
+    /** Таймаут одиночного запроса (callTool/listTools), мс; null — значение по умолчанию. */
+    @SerialName("request_timeout_ms") val requestTimeoutMs: Long? = null,
+    /** Таймаут инициализации (initialize), мс; null — значение по умолчанию. */
+    @SerialName("initialization_timeout_ms") val initializationTimeoutMs: Long? = null
 )
 
 /**
@@ -640,6 +664,41 @@ data class MemoryOverviewResponse(
     val shortTerm: MemoryShortTermOverview,
     val working: MemoryWorkingOverview,
     val longTerm: MemoryLongTermOverview
+)
+
+/**
+ * Один инструмент инвентаря GET /api/tools.
+ * source: "builtin" (раздел "tools" конфига), "native-tool" (NativeToolProvider),
+ * "mcp" (тул подключённого MCP-сервера).
+ */
+@Serializable
+data class ToolsInventoryItem(
+    val name: String,
+    val description: String,
+    val source: String
+)
+
+/** MCP-сервер инвентаря GET /api/tools: статус подключения и его тулы. */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ToolsMcpServer(
+    val name: String,
+    /** connected | disabled | degraded | failed. */
+    val status: String,
+    /** Причина ошибки; заполняется только при degraded/failed, иначе null. */
+    val error: String? = null,
+    // ALWAYS: пустой список у неподключённого сервера тоже идёт в ответ
+    // (kotlinx по умолчанию пропускает поля, равные default)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val tools: List<ToolsInventoryItem> = emptyList()
+)
+
+/** Ответ GET /api/tools — инвентарь инструментов и статусы подключений. */
+@Serializable
+data class ToolsInventoryResponse(
+    val servers: List<ToolsMcpServer>,
+    val native: List<ToolsInventoryItem>,
+    val builtin: List<ToolsInventoryItem>
 )
 
 // --- Протокол OpenCode (локальный экземпляр opencode serve) ---

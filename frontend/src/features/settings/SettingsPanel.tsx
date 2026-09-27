@@ -24,6 +24,7 @@ import InvariantsPanel from '../invariants/InvariantsPanel';
 import type { ContextStrategy } from '../../stores/settings';
 import { useSettingsStore } from '../../stores/settings';
 import PreferencesSection from './PreferencesSection';
+import FaqPipelineSection from './FaqPipelineSection';
 import { resolveModelValue } from './models';
 import useModels from './useModels';
 import styles from './SettingsPanel.module.css';
@@ -356,6 +357,10 @@ export default function SettingsPanel({ open, maintenance }: { open: boolean; ma
       {/* Секция «Обслуживание» (index.html L244–255) — слот App: состояние
           Режима ТО и самописца живёт в каркасе страницы, как в ваниле */}
       {maintenance}
+
+      {/* Секция «Обслуживание: FAQ» (план Task 11): клавиша запуска
+          faq-24h и зона статуса с автоопросом /api/pipeline/status */}
+      <FaqPipelineSection />
 
       <div className={styles.panelFoot}>
         <button type="button" className={styles.resetBtn} onClick={reset}>

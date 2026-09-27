@@ -52,6 +52,9 @@ import com.example.aiweb.model.SessionSummary
 import com.example.aiweb.model.SessionsCleared
 import com.example.aiweb.model.SessionsResponse
 import com.example.aiweb.model.StreamEvent
+import com.example.aiweb.model.ToolsInventoryItem
+import com.example.aiweb.model.ToolsInventoryResponse
+import com.example.aiweb.model.ToolsMcpServer
 import com.example.aiweb.model.TurnUsage
 import com.example.aiweb.model.UserCreatedResponse
 import com.example.aiweb.model.WorkingEntriesResponse
@@ -63,6 +66,8 @@ import com.example.aiweb.memory.MemoryRetriever
 import com.example.aiweb.memory.MemorySearchEngine
 import com.example.aiweb.memory.WorkingEntry
 import com.example.aiweb.memory.WorkingMemoryStore
+import com.example.aiweb.mcp.McpConnectionStatus
+import com.example.aiweb.mcp.McpServerManager
 import com.example.aiweb.prefs.PreferenceLimits
 import com.example.aiweb.prefs.PreferencesStore
 import com.example.aiweb.prefs.UserPreferences
@@ -82,11 +87,18 @@ import com.example.aiweb.task.TaskStateHeuristic
 import com.example.aiweb.task.TaskStateMachine
 import com.example.aiweb.task.TaskStateJson
 import com.example.aiweb.task.renderTaskStateBlock
+import com.example.aiweb.pipeline.PipelineErrorResponse
+import com.example.aiweb.pipeline.PipelineRunAccepted
+import com.example.aiweb.pipeline.PipelineRunOutcome
+import com.example.aiweb.pipeline.PipelineRunRequest
+import com.example.aiweb.pipeline.PipelineService
 import com.example.aiweb.tools.MemoryRecallTool
 import com.example.aiweb.tools.MemorySaveTool
+import com.example.aiweb.tools.NativeToolProvider
 import com.example.aiweb.tools.NativeToolTransport
 import com.example.aiweb.tools.PromptToolTransport
 import com.example.aiweb.tools.TaskNotesTool
+import com.example.aiweb.tools.Tool
 import com.example.aiweb.tools.ToolRegistry
 import io.ktor.server.application.*
 import io.ktor.http.*
@@ -95,6 +107,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.util.AttributeKey
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
@@ -136,7 +149,9 @@ fun Route.aiRoutes(
     },
     factExtractorFactory: (LLMClient) -> FactExtractor = {
         OpenAIFactExtractor(it)
-    }
+    },
+    pipelineScenarioDir: String? = null,
+    pipelineExtraTools: List<Tool> = emptyList()
 ) {
     val clients: Map<ProviderConfig, LLMClient> =
         config.providers.associateWith { clientFactory(it) }
@@ -168,10 +183,6 @@ fun Route.aiRoutes(
     // Активные запросы стриминга для POST /api/cancel
     val activeRequests = ActiveRequests()
 
-    // Реестр инструментов агента: строится один раз из раздела "tools" конфига
-    // (отключённые в конфиге инструменты не видны модели)
-    val registry = ToolRegistry.forConfig(config.tools)
-
     // Память агента: строится один раз и живёт между запросами. Базовый каталог —
     // тот же dataDir, что у хранилища сессий; без каталога данных (P0-режим)
     // память живёт во временном каталоге процесса (переживать рестарт не обязана).
@@ -185,6 +196,51 @@ fun Route.aiRoutes(
         workingMemory,
         longTermMemory,
         config.memory
+    )
+
+    // Реестр инструментов агента: строится один раз из раздела "tools" конфига
+    // (отключённые в конфиге инструменты не видны модели). Поверх — нативные
+    // инструменты задачи 4 (reminder, summarize, search, saveToFile) через
+    // augmentedWith: общий dataDir (P0-режим — временный каталог) и LLM-клиент
+    // первого провайдера (null — провайдеров нет, summarize отвечает ok = false).
+    // Базовый реестр и нативные инструменты хранятся отдельно: GET /api/tools
+    // (задача 9) отчитывается инвентарём по секциям (builtin / native-tool).
+    val baseRegistry = ToolRegistry.forConfig(config.tools)
+    val nativeTools = NativeToolProvider.tools(memoryBaseDir, clients.values.firstOrNull())
+    val registry = baseRegistry.augmentedWith(nativeTools)
+
+    // MCP (задача 9): менеджер подключений строится из раздела "mcp" конфига —
+    // единственный экземпляр на процесс, рядом со сборкой реестра. Лайфцикл —
+    // скоуп Application (CoroutineScope): start() — coroutine при старте,
+    // close() — finally при отмене скоупа (остановка приложения); shutdown-хук
+    // JVM — страховка от жёсткого завершения. Пустой раздел — ноль серверов,
+    // GET /api/tools ответит servers=[] (не ошибка).
+    val mcpManager = McpServerManager(config.mcpServers)
+    mcpManager.installShutdownHook()
+    application.launch { mcpManager.start() }
+    application.launch {
+        try {
+            CompletableDeferred<Unit>().await()
+        } finally {
+            mcpManager.close()
+        }
+    }
+
+    // Pipeline (задача 10): реестр сценариев из config/pipelines/*.json и
+    // in-memory статус. toolLookup резолвит тул по всему набору: registry
+    // (builtin + native) → mcpManager.mcpRegistry() (адаптеры mcp). Дополнительные
+    // тулы (pipelineExtraTools) подмешиваются только для пайплайна — основной
+    // registry (GET /api/tools) не трогаем. Асинхронный запуск — на скоупе
+    // Application (как mcpManager), POST /run возвращает 202 сразу.
+    val pipelineToolLookup: (String) -> Tool? = { name ->
+        pipelineExtraTools.firstOrNull { it.name == name }
+            ?: registry.get(name)
+            ?: mcpManager.mcpRegistry().get(name)
+    }
+    val pipelineService = PipelineService(
+        scenarioDir = pipelineScenarioDir ?: "config/pipelines",
+        toolLookup = pipelineToolLookup,
+        scope = application
     )
 
     // Сироты рабочей памяти (файлы сессий, удалённых из хранилища) чистятся
@@ -256,8 +312,11 @@ fun Route.aiRoutes(
     // | 28 | /api/invariants/global            | POST   | protected (общий справочник)        |
     // | 29 | /api/invariants/global/{id}       | DELETE | protected                           |
     // | 30 | /api/invariants/session           | POST   | user-scoped (своя сессия)           |
-    // | 31 | /api/invariants/session/{sessionId}/{id} | DELETE | user-scoped (своя сессия)    |
-    // | +  | /api/auth/users/{id}              | DELETE | protected (нужен валидный токен)    |
+     // | 31 | /api/invariants/session/{sessionId}/{id} | DELETE | user-scoped (своя сессия)    |
+     // | 32 | /api/tools                        | GET    | protected (общий инвентарь)   |
+     // | 33 | /api/pipeline/run                 | POST   | protected (общий запуск)     |
+     // | 34 | /api/pipeline/status              | GET    | protected (общий статус)     |
+     // | +  | /api/auth/users/{id}              | DELETE | protected (нужен валидный токен)    |
     //
     // user-scoped означает: ресурс адресуется только в границах своего userId
     // (сессии/ветки/рабочая память — по владельцу сессии); чужой id и legacy-сессия
@@ -502,7 +561,8 @@ fun Route.aiRoutes(
             val response = withContext(ExchangeLog.userContext(userId)) {
                 handleAgent(
                     chat.aiClient, body, chat.provider, chat.session,
-                    sessions, config, compressors.getValue(chat.provider), registry, memory,
+                    sessions, config, compressors.getValue(chat.provider), registry,
+                    mcpManager.adapters(), memory,
                     preferences, invariantStore, userId
                 )
             }
@@ -607,7 +667,8 @@ fun Route.aiRoutes(
                     val response = withContext(ExchangeLog.userContext(userId)) {
                         handleAgent(
                             chat.aiClient, body, chat.provider, chat.session,
-                            sessions, config, compressors.getValue(chat.provider), registry, memory,
+                            sessions, config, compressors.getValue(chat.provider), registry,
+                            mcpManager.adapters(), memory,
                             preferences, invariantStore, userId,
                             onEvent = { event ->
                                 frames.trySend(StreamEvent.Agent(event))
@@ -1241,6 +1302,77 @@ fun Route.aiRoutes(
                 )
             )
         )
+    }
+
+    // GET /api/tools — инвентарь инструментов и статусы подключений MCP (задача 9).
+    // Read-only, без пользовательской области: builtin (раздел "tools" конфига),
+    // native (NativeToolProvider) и per-server статусы/tuлы McpServerManager.
+    // Пустой mcp-раздел — servers=[]; env-значения серверов в ответ не попадают.
+    get("/api/tools") {
+        val servers = config.mcpServers.map { server ->
+            val status = mcpManager.status(server.name)
+            val hasError = status == McpConnectionStatus.DEGRADED || status == McpConnectionStatus.FAILED
+            ToolsMcpServer(
+                name = server.name,
+                status = status.name.lowercase(),
+                error = if (hasError) mcpManager.error(server.name) else null,
+                tools = mcpManager.listTools(server.name).map {
+                    ToolsInventoryItem(name = it.name, description = it.description, source = "mcp")
+                }
+            )
+        }
+        call.respond(
+            ToolsInventoryResponse(
+                servers = servers,
+                native = nativeTools.map {
+                    ToolsInventoryItem(name = it.name, description = it.description, source = "native-tool")
+                },
+                builtin = baseRegistry.specs().map {
+                    ToolsInventoryItem(
+                        name = it.function.name,
+                        description = it.function.description,
+                        source = "builtin"
+                    )
+                }
+            )
+        )
+    }
+
+    // POST /api/pipeline/run — асинхронный запуск сценария по имени (задача 10):
+    // 202 с runId возвращается сразу, тело сценария исполняется в корутине на
+    // скоупе Application. Неизвестное имя — 404; сценарий уже в активном запуске —
+    // 409. Общий ресурс (protected): auth-токен уже наложен центральным intercept.
+    post("/api/pipeline/run") {
+        val request = try {
+            call.receive<PipelineRunRequest>()
+        } catch (e: Exception) {
+            println("Ошибка десериализации запроса: ${e.message}")
+            null
+        }
+        if (request == null) {
+            call.respond(HttpStatusCode.BadRequest, PipelineErrorResponse("Некорректный запрос."))
+            return@post
+        }
+        when (val outcome = pipelineService.run(request.name.trim())) {
+            is PipelineRunOutcome.Accepted ->
+                call.respond(HttpStatusCode.Accepted, PipelineRunAccepted(outcome.runId))
+            PipelineRunOutcome.NotFound ->
+                call.respond(HttpStatusCode.NotFound, PipelineErrorResponse("Сценарий не найден: ${request.name}"))
+            PipelineRunOutcome.Conflict ->
+                call.respond(HttpStatusCode.Conflict, PipelineErrorResponse("Сценарий '${request.name}' уже выполняется"))
+        }
+    }
+
+    // GET /api/pipeline/status?name= — статус текущего/последнего запуска сценария.
+    // Сценарий не запускался или имя неизвестно — 404.
+    get("/api/pipeline/status") {
+        val name = call.request.queryParameters["name"].orEmpty().trim()
+        val status = pipelineService.status(name)
+        if (status == null) {
+            call.respond(HttpStatusCode.NotFound, PipelineErrorResponse("Статус сценария '$name' не найден"))
+        } else {
+            call.respond(status)
+        }
     }
 
     // GET /api/files/{name} — пользователь скачивает файлы, записанные агентом
@@ -2179,6 +2311,7 @@ private suspend fun handleAgent(
     config: AppConfig,
     compressor: HistoryCompressor,
     registry: ToolRegistry,
+    mcpTools: List<Tool>,
     memory: AgentMemory,
     preferences: PreferencesStore,
     invariantStore: GlobalInvariantStore,
@@ -2189,13 +2322,19 @@ private suspend fun handleAgent(
 ): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
+    // MCP (mcp-integration): адаптеры тулов подключённых MCP-серверов (tg, wiki)
+    // подмешиваются в реестр чата на КАЖДЫЙ запрос. Серверы коннектятся асинхронно
+    // после старта, поэтому печь их в реестр на старте нельзя (adapters() вернул бы
+    // пустой список); не подключившийся сервер просто не даёт тулов, без ошибки.
+    // Модель видит тула как mcp__<server>__<name> — так же, как их резолвит пайплайн.
+    val withMcp = registry.augmentedWith(mcpTools)
     // Память запроса: по умолчанию (null/true) инструменты памяти добавляются
-    // к копии реестра; memoryTools = false — базовый реестр без изменений.
+    // к копии реестра; memoryTools = false — реестр с MCP, но без memory-тулов.
     // Долговременный слой — память текущего пользователя (задача 8)
     val memoryEnabled = body.memoryTools ?: true
     val userLongTerm = memory.long.forUser(userId)
     val requestRegistry = if (memoryEnabled) {
-        registry.augmentedWith(
+        withMcp.augmentedWith(
             listOf(
                 TaskNotesTool(memory.working, session?.id),
                 MemorySaveTool(userLongTerm),
@@ -2203,7 +2342,7 @@ private suspend fun handleAgent(
             )
         )
     } else {
-        registry
+        withMcp
     }
 
     val loop = AgentLoop(

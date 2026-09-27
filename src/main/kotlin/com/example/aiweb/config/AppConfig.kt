@@ -3,6 +3,7 @@ package com.example.aiweb.config
 import com.example.aiweb.model.ContextStrategy
 import com.example.aiweb.model.FileConfig
 import com.example.aiweb.model.FileProvider
+import com.example.aiweb.model.FileMcpServerConfig
 import com.example.aiweb.model.FileToolsConfig
 import com.example.aiweb.model.MemoryConfig
 import kotlinx.serialization.json.Json
@@ -35,6 +36,43 @@ data class ProviderConfig(
     companion object {
         const val TYPE_OPENAI = "openai"
         const val TYPE_OPENCODE = "opencode"
+    }
+}
+
+/**
+ * Рантайм-конфигурация одного MCP-сервера (раздел "mcp" конфиг-файла).
+ *
+ * [toString] намеренно не печатает значения [env]: секция может носить секреты
+ * (ключи API), а конфиг попадает в логи и отладочный вывод. Ключи и число
+ * переменных видны, значения скрыты.
+ */
+data class McpServerConfig(
+    /** Уникальное имя сервера в пределах раздела mcp. */
+    val name: String,
+    /** Команда запуска серверного процесса (stdio-транспорт). */
+    val command: String,
+    /** Аргументы команды. */
+    val args: List<String> = emptyList(),
+    /** Переменные окружения процесса; значения исключены из [toString]. */
+    val env: Map<String, String> = emptyMap(),
+    /** false — сервер не запускается (конфигурация остаётся видимой). */
+    val enabled: Boolean = true,
+    /** Таймаут одиночного запроса (callTool/listTools), мс. */
+    val requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
+    /** Таймаут инициализации (handshake initialize), мс. */
+    val initializationTimeoutMs: Long = DEFAULT_INITIALIZATION_TIMEOUT_MS
+) {
+    override fun toString(): String =
+        "McpServerConfig(name=$name, command=$command, args=$args, " +
+            "env=<${env.size} keys, values hidden>, enabled=$enabled, " +
+            "requestTimeoutMs=$requestTimeoutMs, initializationTimeoutMs=$initializationTimeoutMs)"
+
+    companion object {
+        /** Таймаут запроса по умолчанию (30 с). */
+        const val DEFAULT_REQUEST_TIMEOUT_MS = 30_000L
+
+        /** Таймаут инициализации по умолчанию (10 с). */
+        const val DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000L
     }
 }
 
@@ -93,7 +131,13 @@ data class AppConfig(
      * fail-fast в [validate]: невалидная строка падает стартом. null — ключ
      * в файле отсутствовал.
      */
-    val contextStrategyRaw: String? = null
+    val contextStrategyRaw: String? = null,
+    /**
+     * MCP-серверы из раздела "mcp" конфиг-файла; пусто — раздел отсутствовал
+     * или список пуст. Только конфиг-файл: переменных окружения нет.
+     * Значения env в [McpServerConfig] не попадают в toString.
+     */
+    val mcpServers: List<McpServerConfig> = emptyList()
 ) {
     val providers: List<ProviderConfig> get() = listOf(default) + extraProviders
 
@@ -215,7 +259,8 @@ data class AppConfig(
                 compressionMergeEvery = fc.compressionMergeEvery ?: compressionMergeEvery,
                 compressionSummaryMaxTokens = fc.compressionSummaryMaxTokens ?: compressionSummaryMaxTokens,
                 contextStrategy = ContextStrategy.fromId(fc.contextStrategy) ?: contextStrategy,
-                contextStrategyRaw = fc.contextStrategy
+                contextStrategyRaw = fc.contextStrategy,
+                mcpServers = fc.mcp?.map { it.toMcpServerConfig() } ?: mcpServers
             )
         }
 
@@ -241,6 +286,18 @@ data class AppConfig(
                 "contextStrategy: неизвестная стратегия '$contextStrategyRaw' " +
                     "(допустимо: ${ContextStrategy.values().joinToString(", ") { it.id }})"
             }
+            val seenMcpNames = mutableSetOf<String>()
+            mcpServers.forEach { server ->
+                require(server.name.isNotBlank()) {
+                    "mcp: пустое имя сервера — в разделе mcp каждой записи нужно имя"
+                }
+                require(seenMcpNames.add(server.name)) {
+                    "mcp: дублирующееся имя сервера '${server.name}' — имена в разделе mcp должны быть уникальны"
+                }
+                require(server.command.isNotBlank()) {
+                    "mcp: сервер '${server.name}' — пустая команда: укажите команду запуска MCP-сервера"
+                }
+            }
             return this
         }
 
@@ -254,6 +311,17 @@ data class AppConfig(
             copy(default = default.copy(model = value))
     }
 }
+
+/** Разбор MCP-сервера из конфиг-файла. */
+private fun FileMcpServerConfig.toMcpServerConfig(): McpServerConfig = McpServerConfig(
+    name = name.trim(),
+    command = command.trim(),
+    args = args.map { it.trim() },
+    env = env.toMap(),
+    enabled = enabled,
+    requestTimeoutMs = requestTimeoutMs ?: McpServerConfig.DEFAULT_REQUEST_TIMEOUT_MS,
+    initializationTimeoutMs = initializationTimeoutMs ?: McpServerConfig.DEFAULT_INITIALIZATION_TIMEOUT_MS
+)
 
 /** Разбор провайдера из конфиг-файла. */
 private fun FileProvider.toProviderConfig(): ProviderConfig = ProviderConfig(

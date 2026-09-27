@@ -1,0 +1,96 @@
+/* ============================================================
+   Секция «Обслуживание: FAQ» (план Task 11): зона статуса
+   прогона faq-24h. Клавиша запуска — на классах табло
+   (.annunciator), здесь только её неактивное состояние.
+   Цвета — только токены tokens.css.
+   ============================================================ */
+
+/* Клавиша запуска неактивна, пока прогон идёт или стартует */
+.runBtn:disabled {
+    cursor: default;
+    opacity: 0.55;
+    filter: none;
+    transform: none;
+}
+
+/* Зона статуса — утопленный колодец с показаниями */
+.statusZone {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 9px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.45;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.idleText {
+    color: var(--ink-faint);
+}
+
+/* Состояние прогона — цвет лампы по исходу */
+.stateRunning {
+    color: var(--amber);
+}
+
+.stateSucceeded {
+    color: var(--green);
+}
+
+.stateFailed {
+    color: var(--red);
+}
+
+.steps {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stepRow {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+/* Метка ✓/✗/… фиксированной ширины — колонка выравнена */
+.stepMark {
+    flex-shrink: 0;
+    width: 1.2em;
+    text-align: center;
+}
+
+.stepDone {
+    color: var(--green);
+}
+
+.stepFailed {
+    color: var(--red);
+}
+
+.stepRunning {
+    color: var(--amber);
+}
+
+.stepIdle {
+    color: var(--ink-faint);
+}
+
+/* Сообщение упавшего шага — под строкой шага, с отступом метки */
+.stepError {
+    color: var(--red);
+    padding-left: calc(1.2em + 6px);
+    overflow-wrap: anywhere;
+}
+
+/* Сообщение о сбое сети/запуска — над зоной показаний */
+.errorText {
+    color: var(--red);
+}
