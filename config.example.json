@@ -28,6 +28,12 @@
       "enabled": false
     }
   ],
+  "rag": {
+    "url": "http://localhost:18700/search",
+    "k": 5,
+    "timeoutMs": 10000,
+    "maxBlockChars": 6000
+  },
   "providers": [
     {
       "id": "opencode",

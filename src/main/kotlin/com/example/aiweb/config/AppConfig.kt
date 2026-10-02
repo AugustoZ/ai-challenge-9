@@ -77,6 +77,41 @@ data class McpServerConfig(
 }
 
 /**
+ * Рантайм-конфигурация RAG-поиска (раздел "rag" конфиг-файла).
+ *
+ * RAG активен только если [url] != null; при отсутствии ключей в разделе
+ * значения дополняются дефолтами [DEFAULT_K]/[DEFAULT_TIMEOUT_MS]/
+ * [DEFAULT_MAX_BLOCK_CHARS]. Валидация значений выполняется только при
+ * непустом url (см. AppConfig.validate).
+ *
+ * Только конфиг-файл: переменных окружения для RAG-раздела нет.
+ */
+data class RagConfig(
+    /** Адрес RAG-сервиса (POST {url} с телом {"query": ..., "k": ...}); null — RAG выключен. */
+    val url: String? = null,
+    /** Число извлекаемых чанков (1..20). */
+    val k: Int = DEFAULT_K,
+    /** Таймаут запроса к RAG-сервису, мс (>= 1000). */
+    val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    /** Максимальный суммарный размер инжектируемого блока документов, символы (>= 500). */
+    val maxBlockChars: Int = DEFAULT_MAX_BLOCK_CHARS
+) {
+    companion object {
+        /** Число чанков по умолчанию. */
+        const val DEFAULT_K = 5
+
+        /** Максимальное число извлекаемых чанков. */
+        const val K_MAX = 20
+
+        /** Таймаут запроса по умолчанию (10 с). */
+        const val DEFAULT_TIMEOUT_MS = 10_000L
+
+        /** Бюджет блока документов по умолчанию. */
+        const val DEFAULT_MAX_BLOCK_CHARS = 6_000
+    }
+}
+
+/**
  * Конфигурация приложения.
  *
  * Значения подставляются по приоритету (от высшего к низшему):
@@ -137,7 +172,12 @@ data class AppConfig(
      * или список пуст. Только конфиг-файл: переменных окружения нет.
      * Значения env в [McpServerConfig] не попадают в toString.
      */
-    val mcpServers: List<McpServerConfig> = emptyList()
+    val mcpServers: List<McpServerConfig> = emptyList(),
+    /**
+     * RAG-поиск по базе знаний: url == null — RAG выключен. Только конфиг-файл:
+     * переменных окружения нет.
+     */
+    val rag: RagConfig = RagConfig()
 ) {
     val providers: List<ProviderConfig> get() = listOf(default) + extraProviders
 
@@ -260,7 +300,15 @@ data class AppConfig(
                 compressionSummaryMaxTokens = fc.compressionSummaryMaxTokens ?: compressionSummaryMaxTokens,
                 contextStrategy = ContextStrategy.fromId(fc.contextStrategy) ?: contextStrategy,
                 contextStrategyRaw = fc.contextStrategy,
-                mcpServers = fc.mcp?.map { it.toMcpServerConfig() } ?: mcpServers
+                mcpServers = fc.mcp?.map { it.toMcpServerConfig() } ?: mcpServers,
+                rag = fc.rag?.let {
+                    RagConfig(
+                        url = it.url ?: rag.url,
+                        k = it.k ?: rag.k,
+                        timeoutMs = it.timeoutMs ?: rag.timeoutMs,
+                        maxBlockChars = it.maxBlockChars ?: rag.maxBlockChars
+                    )
+                } ?: rag
             )
         }
 
@@ -296,6 +344,25 @@ data class AppConfig(
                 }
                 require(server.command.isNotBlank()) {
                     "mcp: сервер '${server.name}' — пустая команда: укажите команду запуска MCP-сервера"
+                }
+            }
+            // RAG-раздел валидируется только при непустом url: без адреса RAG выключен,
+            // параметры с дефолтами не используются.
+            if (rag.url != null) {
+                require(rag.url!!.isNotBlank()) {
+                    "rag: url должен быть непустым — укажите адрес RAG-сервиса (POST {url})"
+                }
+                require(rag.k in 1..RagConfig.K_MAX) {
+                    "rag: k должен быть в диапазоне 1..${RagConfig.K_MAX} (получено: ${rag.k}) — " +
+                        "число извлекаемых чанков"
+                }
+                require(rag.timeoutMs >= 1000) {
+                    "rag: timeoutMs должен быть не меньше 1000 (получено: ${rag.timeoutMs}) — " +
+                        "таймаут запроса к RAG-сервису"
+                }
+                require(rag.maxBlockChars >= 500) {
+                    "rag: maxBlockChars должен быть не меньше 500 (получено: ${rag.maxBlockChars}) — " +
+                        "максимальный размер инжектируемого блока документов"
                 }
             }
             return this

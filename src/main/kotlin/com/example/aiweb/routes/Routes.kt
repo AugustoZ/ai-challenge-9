@@ -16,6 +16,7 @@ import com.example.aiweb.client.OpenAIFactExtractor
 import com.example.aiweb.client.OpenAIHistorySummarizer
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
+import com.example.aiweb.config.RagConfig
 import com.example.aiweb.invariants.GlobalInvariantStore
 import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.invariants.renderInvariantBlock
@@ -92,6 +93,12 @@ import com.example.aiweb.pipeline.PipelineRunAccepted
 import com.example.aiweb.pipeline.PipelineRunOutcome
 import com.example.aiweb.pipeline.PipelineRunRequest
 import com.example.aiweb.pipeline.PipelineService
+import com.example.aiweb.rag.KtorRagClient
+import com.example.aiweb.rag.Passage
+import com.example.aiweb.rag.RagClient
+import com.example.aiweb.rag.RagPrompts
+import com.example.aiweb.rag.RagService
+import com.example.aiweb.rag.toRetrievedSource
 import com.example.aiweb.tools.MemoryRecallTool
 import com.example.aiweb.tools.MemorySaveTool
 import com.example.aiweb.tools.NativeToolProvider
@@ -150,6 +157,7 @@ fun Route.aiRoutes(
     factExtractorFactory: (LLMClient) -> FactExtractor = {
         OpenAIFactExtractor(it)
     },
+    ragFactory: (RagConfig) -> RagClient = { KtorRagClient(it) },
     pipelineScenarioDir: String? = null,
     pipelineExtraTools: List<Tool> = emptyList()
 ) {
@@ -208,6 +216,11 @@ fun Route.aiRoutes(
     val baseRegistry = ToolRegistry.forConfig(config.tools)
     val nativeTools = NativeToolProvider.tools(memoryBaseDir, clients.values.firstOrNull())
     val registry = baseRegistry.augmentedWith(nativeTools)
+
+    // RAG (задача 6 плана rag-mode): клиент строится один раз при настроенном
+    // сервером RAG (config.rag.url != null); KtorRagClient бросает на пустом url,
+    // поэтому создаётся только когда RAG включён — иначе null (руг выключен).
+    val ragClient: RagClient? = config.rag.url?.let { ragFactory(config.rag) }
 
     // MCP (задача 9): менеджер подключений строится из раздела "mcp" конфига —
     // единственный экземпляр на процесс, рядом со сборкой реестра. Лайфцикл —
@@ -561,7 +574,7 @@ fun Route.aiRoutes(
             val response = withContext(ExchangeLog.userContext(userId)) {
                 handleAgent(
                     chat.aiClient, body, chat.provider, chat.session,
-                    sessions, config, compressors.getValue(chat.provider), registry,
+                    sessions, config, ragClient, compressors.getValue(chat.provider), registry,
                     mcpManager.adapters(), memory,
                     preferences, invariantStore, userId
                 )
@@ -667,7 +680,7 @@ fun Route.aiRoutes(
                     val response = withContext(ExchangeLog.userContext(userId)) {
                         handleAgent(
                             chat.aiClient, body, chat.provider, chat.session,
-                            sessions, config, compressors.getValue(chat.provider), registry,
+                            sessions, config, ragClient, compressors.getValue(chat.provider), registry,
                             mcpManager.adapters(), memory,
                             preferences, invariantStore, userId,
                             onEvent = { event ->
@@ -2309,6 +2322,7 @@ private suspend fun handleAgent(
     session: Session?,
     sessions: SessionStore,
     config: AppConfig,
+    ragClient: RagClient?,
     compressor: HistoryCompressor,
     registry: ToolRegistry,
     mcpTools: List<Tool>,
@@ -2433,7 +2447,26 @@ private suspend fun handleAgent(
         invariantStore.list(),
         session?.invariants ?: emptyList()
     )?.let { OpenAIMessage(role = "system", content = it) }
-    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, invariantsMessage, memoryMessage)
+
+    // RAG (задача 6 плана rag-mode): клиент хочет RAG (ragEnabled=true) И сервер
+    // его настроил (config.rag.url != null). Retrieval — по body.message после trim,
+    // блок документов — последним system-сообщением seed (после памяти). Fail-open:
+    // недоступный RAG → пустой список + warn-лог (RagService); блок инжектить нечего.
+    val ragWanted = body.ragEnabled == true && config.rag.url != null
+    val ragPassages: List<Passage> = if (ragWanted && body.message.isNotBlank()) {
+        ragClient?.let { RagService(it).retrieve(body.message, config.rag.k) } ?: emptyList()
+    } else {
+        emptyList()
+    }
+    val ragMessage = if (ragPassages.isNotEmpty()) {
+        OpenAIMessage(
+            role = "system",
+            content = RagPrompts.buildRagBlock(ragPassages, config.rag.maxBlockChars)
+        )
+    } else {
+        null
+    }
+    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, invariantsMessage, memoryMessage, ragMessage)
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(
@@ -2463,7 +2496,9 @@ private suspend fun handleAgent(
         summaryTokens = mergeResult?.tokens,
         summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
         contextStrategy = strategy.id,
-        branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null
+        branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null,
+        ragEnabled = ragWanted,
+        retrievedSources = ragPassages.map { it.toRetrievedSource() }
     )
 }
 

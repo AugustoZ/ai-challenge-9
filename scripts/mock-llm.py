@@ -36,9 +36,14 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
       mirror-режима визуально различались);
     - если в messages есть system-сообщение, содержащее фразу «Сводка ранее»
       (маркер запроса к суммаризатору) → фиксированный короткий «summary-ответ»;
-    - если в messages есть system-сообщение, содержащее фразу «Извлечение фактов»
-      (маркер запроса к экстрактору фактов, задача 5) → детерминированный KV-JSON
-      [{"key":"цель","value":"<текст из последнего user-сообщения>"}];
+     - если в messages есть system-сообщение, содержащее фразу «Извлечение фактов»
+       (маркер запроса к экстрактору фактов, задача 5) → детерминированный KV-JSON
+       [{"key":"цель","value":"<текст из последнего user-сообщения>"}];
+     - если в messages есть system-сообщение, содержащее фразу «РЕЛЕВАНТНЫЕ
+       ДОКУМЕНТЫ» (маркер RAG-блока, задача 8 плана shturman-rag-mode) →
+       детерминированный ответ, цитирующий источники строк
+       `[N] source: <файл> · раздел: <section>` (без ```-фенсов;
+       refuse/invariant-режимы приоритетнее маркера);
     - tools в теле запроса игнорируются; промт-протокол инструментов
       (PromptToolTransport, system-сообщение «Ты ассистент с доступом к
       инструментам») эмулируется минимально для E2E памяти агента:
@@ -75,6 +80,16 @@ FACTS_MARKER = "Извлечение фактов"
 # задача 6 плана assistant-invariants): system-промпт содержит эту фразу —
 # режим refuse отказывает, цитируя первый инвариант после заголовка.
 INVARIANTS_MARKER = "НЕПРЕЛОЖНЫЕ ИНВАРИАНТЫ"
+
+# Маркер RAG-блока (точная копия RagPrompts.RAG_MARKER, задача 4 плана
+# shturman-rag-mode): system-промпт содержит эту фразу — отвечаем детерминированным
+# ответом, цитирующим источники строк `[N] source: <файл> · раздел: <section>`,
+# БЕЗ ```-фенсов (не пересекается с code-dump-логикой). refuse/invariant-режимы
+# приоритетнее маркера (refuse + RAG-блок → refuse).
+RAG_MARKER = "РЕЛЕВАНТНЫЕ ДОКУМЕНТЫ"
+
+# Строка источника в RAG-блоке: `[N] source: <файл> · раздел: <section>`.
+RAG_SOURCE_LINE = re.compile(r"^\[(\d+)\]\s*source:\s*(.+?)\s*·\s*раздел:\s*(.+?)\s*$")
 
 # Маркер промт-протокола инструментов (PromptToolTransport.buildToolPrompt):
 # system-сообщение начинается с этой фразы и перечисляет доступные инструменты.
@@ -356,6 +371,42 @@ def _first_invariant(content):
     return None
 
 
+def _parse_rag_entries(content):
+    """Разбирает RAG-блок: список (source, section, [строки чанка]) по строкам
+    `[N] source: <файл> · раздел: <section>`; чанк — строки до следующей
+    нумерованной строки. Пустой список, если нумерованных строк нет."""
+    entries = []
+    current = None
+    for line in content.splitlines():
+        match = RAG_SOURCE_LINE.match(line.strip())
+        if match:
+            if current is not None:
+                entries.append(current)
+            current = (match.group(2), match.group(3), [])
+        elif current is not None:
+            current[2].append(line)
+    if current is not None:
+        entries.append(current)
+    return entries
+
+
+def _rag_reply(content):
+    """Детерминированный RAG-ответ (задача 8 плана shturman-rag-mode):
+    «По базе знаний: <source1> (раздел <section1>). <первые 200 символов
+    первого чанка>. Источники: <source1>; <source2>». Без ```-фенсов.
+    None, если в блоке нет нумерованных строк источников."""
+    entries = _parse_rag_entries(content)
+    if not entries:
+        return None
+    source, section, chunk_lines = entries[0]
+    parts = ["По базе знаний: %s (раздел %s)." % (source, section)]
+    chunk = "\n".join(chunk_lines).strip()
+    if chunk:
+        parts.append(chunk[:200])
+    parts.append("Источники: " + "; ".join(entry[0] for entry in entries))
+    return " ".join(parts)
+
+
 def _echo_system_reply(messages):
     """Детерминированный дамп system-сообщений: роль + первые 200 символов
     каждого, с разделителем-переносом (задача 5 плана assistant-invariants)."""
@@ -412,6 +463,21 @@ def _pick_reply(messages, mode):
         if mode == "violate":
             return VIOLATE_REPLY
         return _echo_system_reply(messages)
+
+    # RAG-маркер (задача 8 плана shturman-rag-mode): после маркеров
+    # FACTS/SUMMARY и ПОСЛЕ invariant-режимов (refuse приоритетнее RAG-блока),
+    # до ротации — ответ детерминированный, не зависит от счётчика.
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and RAG_MARKER in content:
+            print("mock-llm: RAG-запрос (маркер «%s»)" % RAG_MARKER, flush=True)
+            reply = _rag_reply(content)
+            if reply is None:
+                print("mock-llm: RAG-маркер без строк источников — обычный ответ", flush=True)
+                return _pick_rotation()
+            return reply
 
     if mode in LIFECYCLE_MODES:
         spec = LIFECYCLE_MODES[mode]

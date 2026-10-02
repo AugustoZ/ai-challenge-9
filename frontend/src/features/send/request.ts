@@ -59,7 +59,7 @@ export interface SendContext {
 /** Поля настроек, уходящие в запрос; зеркальные не участвуют (волна 6). */
 export type SendSettings = Pick<
   SettingsValues,
-  'model' | 'temperature' | 'maxTokens' | 'topP' | 'stop' | 'thinking' | 'judge' | 'contextStrategy' | 'memoryTools'
+  'model' | 'temperature' | 'maxTokens' | 'topP' | 'stop' | 'thinking' | 'judge' | 'contextStrategy' | 'memoryTools' | 'ragEnabled'
 >;
 
 /**
@@ -90,6 +90,8 @@ export function buildChatRequest(
     judgeEnabled: settings.judge,
     contextStrategy: settings.contextStrategy,
     memoryTools: settings.memoryTools,
+    /* RAG всегда идёт явным boolean: сервер включает поиск только при true. */
+    ragEnabled: settings.ragEnabled,
   } as ChatRequest & { memoryTools: boolean };
   if (settings.contextStrategy === 'branching' && ctx.sessionId && ctx.activeBranchId) {
     request.branchId = ctx.activeBranchId;

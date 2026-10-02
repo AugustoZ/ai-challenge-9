@@ -12,12 +12,13 @@
    ============================================================ */
 
 import { Fragment, useEffect, useMemo, useRef } from 'react';
-import type { AgentEvent, AgentFinal, JudgeReport } from '../../api/types';
+import type { AgentEvent, AgentFinal, JudgeReport, RetrievedSource } from '../../api/types';
 import { fmtElapsed, fmtRate } from '../../lib/format';
 import { highlightCodeBlocks, renderMarkdown } from '../../lib/markdown';
 import { stripTaskStateBlocks } from '../../lib/taskStateFilter';
 import AgentTrace from '../trace/AgentTrace';
 import JudgeReportComponent from '../judge/JudgeReport';
+import SourcesReport from '../sources/SourcesReport';
 import styles from './Entry.module.css';
 
 /** Приборные показания ответа (поля ChatResponse, script.js L259–274). */
@@ -47,6 +48,9 @@ export interface JournalEntry {
   events?: AgentEvent[];
   /** Заключение судьи под ответом. */
   judge?: JudgeReport;
+  /** RAG-поиск (план shturman-rag-mode, задача 7): действовал ли и
+      какие фрагменты найдены — блок «Источники» рядом с судьёй. */
+  rag?: { enabled: boolean; sources?: RetrievedSource[] };
   /**
    * Индикатор обработки (script.js showTyping L586–600): запись-заглушка
    * на время потока — три мигающие лампы вместо пузыря, под ними строка
@@ -177,6 +181,12 @@ export default function Entry({ entry }: { entry: JournalEntry }) {
           <span className={styles.summaryBadge}>Сводка применена</span>
         ) : null}
 
+        {entry.rag?.sources?.length ? (
+          /* Бейдж числа источников — та же янтарная пластина, что у
+             «Сводка применена»: RAG участвовал в обмене, счёт виден сразу */
+          <span className={styles.sourcesBadge}>{`Источники: ${entry.rag.sources.length}`}</span>
+        ) : null}
+
         {isPlain ? (
           <div className={entry.kind === 'system'
             ? `${styles.bubble} ${styles.system}`
@@ -197,6 +207,8 @@ export default function Entry({ entry }: { entry: JournalEntry }) {
         ) : null}
 
         {entry.judge ? <JudgeReportComponent judge={entry.judge} /> : null}
+
+        {entry.rag?.sources?.length ? <SourcesReport sources={entry.rag.sources} /> : null}
       </div>
     </div>
   );

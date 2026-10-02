@@ -134,6 +134,7 @@ export default function SettingsPanel({ open, maintenance }: { open: boolean; ma
   const contextStrategy = useSettingsStore((s) => s.contextStrategy);
   const mirrorMode = useSettingsStore((s) => s.mirrorMode);
   const memoryTools = useSettingsStore((s) => s.memoryTools);
+  const ragEnabled = useSettingsStore((s) => s.ragEnabled);
   const setModel = useSettingsStore((s) => s.setModel);
   const setTemperature = useSettingsStore((s) => s.setTemperature);
   const setMaxTokens = useSettingsStore((s) => s.setMaxTokens);
@@ -144,6 +145,7 @@ export default function SettingsPanel({ open, maintenance }: { open: boolean; ma
   const setContextStrategy = useSettingsStore((s) => s.setContextStrategy);
   const setMirrorMode = useSettingsStore((s) => s.setMirrorMode);
   const setMemoryTools = useSettingsStore((s) => s.setMemoryTools);
+  const setRagEnabled = useSettingsStore((s) => s.setRagEnabled);
   const reset = useSettingsStore((s) => s.reset);
 
   const models = useModels();
@@ -343,6 +345,20 @@ export default function SettingsPanel({ open, maintenance }: { open: boolean; ma
         </SettingInline>
         <p className={annunciatorStyles.hint}>
           Выключите, чтобы агент не читал и не сохранял память
+        </p>
+        {/* RAG (план shturman-rag-mode, задача 7): клавиша рядом с
+            «Инструментами памяти»; состояние — settings store (задача 5) */}
+        <SettingInline
+          label="Поиск по базе (RAG)"
+          ariaLabel="Описание параметра «Поиск по базе (RAG)»"
+          tip="Поиск по базе документов: перед ответом в контекст подставляются релевантные фрагменты корпуса; найденное видно в блоке «Источники» под ответом"
+        >
+          <Toggle pressed={ragEnabled} onToggle={() => setRagEnabled(!ragEnabled)}>
+            {`Поиск по базе (RAG): ${ragEnabled ? 'ВКЛ' : 'ВЫКЛ'}`}
+          </Toggle>
+        </SettingInline>
+        <p className={annunciatorStyles.hint}>
+          Перед ответом ищутся релевантные фрагменты документов; найденное — в блоке «Источники» под ответом
         </p>
       </section>
 
