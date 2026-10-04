@@ -1,5 +1,0 @@
-> Task :testClasses UP-TO-DATE
-> Task :test
-
-BUILD SUCCESSFUL in 970ms
-5 actionable tasks: 1 executed, 4 up-to-date
