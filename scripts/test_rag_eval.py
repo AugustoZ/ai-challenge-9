@@ -184,7 +184,8 @@ class JudgeDisplayTest(unittest.TestCase):
         self.assertEqual(rag_eval.judge_display({"foo": "bar"}), "—")
 
 
-def _row(question, mode, substr_ok, sources_ok, judge=None, pt=100, ct=50, ms=1234):
+def _row(question, mode, substr_ok, sources_ok, judge=None, pt=100, ct=50, ms=1234,
+         retrieved_empty=False):
     return {
         "question": question,
         "mode": mode,
@@ -196,6 +197,7 @@ def _row(question, mode, substr_ok, sources_ok, judge=None, pt=100, ct=50, ms=12
         "prompt_tokens": pt,
         "completion_tokens": ct,
         "elapsed_ms": ms,
+        "retrieved_empty": retrieved_empty,
     }
 
 
@@ -262,6 +264,201 @@ class FormatReportTest(unittest.TestCase):
         row = _row("Вопрос?", "no-rag", 0, False, pt=None, ct=None, ms=None)
         report = rag_eval.format_report([row], "mock")
         self.assertIn("| — |", report)
+
+
+class BuildChatPayloadTest(unittest.TestCase):
+    def test_v1_payload_has_no_stage2_keys(self):
+        payload = rag_eval.build_chat_payload("Вопрос?", True, "default", "mock", True)
+        self.assertEqual(
+            payload,
+            {
+                "message": "Вопрос?",
+                "ragEnabled": True,
+                "provider": "default",
+                "model": "mock",
+                "judgeEnabled": True,
+            },
+        )
+        # T6-инвариант отсутствия override-ключей в v1-теле
+        self.assertNotIn("ragThreshold", payload)
+        self.assertNotIn("ragRerank", payload)
+        self.assertNotIn("ragRewrite", payload)
+
+    def test_filtered_override_only_threshold(self):
+        payload = rag_eval.build_chat_payload(
+            "Вопрос?", True, "default", "mock", False, {"ragThreshold": 0.88}
+        )
+        self.assertEqual(payload["ragThreshold"], 0.88)
+        self.assertNotIn("ragRerank", payload)
+        self.assertNotIn("ragRewrite", payload)
+
+    def test_none_override_values_are_skipped(self):
+        payload = rag_eval.build_chat_payload(
+            "Вопрос?", False, "default", "mock", False,
+            {"ragRerank": None, "ragThreshold": 0.5},
+        )
+        self.assertNotIn("ragRerank", payload)
+        self.assertIn("ragThreshold", payload)
+
+    def test_stage2_raw_only_rag_enabled(self):
+        overrides = rag_eval.stage2_overrides("raw", 0.88)
+        payload = rag_eval.build_chat_payload(
+            "Вопрос?", True, "default", "mock", False, overrides
+        )
+        self.assertEqual(payload["ragEnabled"], True)
+        self.assertNotIn("ragThreshold", payload)
+        self.assertNotIn("ragRerank", payload)
+        self.assertNotIn("ragRewrite", payload)
+
+    def test_rerank_rewrite_combines_overrides(self):
+        payload = rag_eval.build_chat_payload(
+            "Вопрос?", True, "default", "mock", False,
+            rag_eval.stage2_overrides("rerank+rewrite", 0.88),
+        )
+        self.assertTrue(payload["ragRerank"])
+        self.assertTrue(payload["ragRewrite"])
+        self.assertNotIn("ragThreshold", payload)
+
+
+class Stage2ModesTest(unittest.TestCase):
+    def test_overrides_per_base_mode(self):
+        self.assertEqual(rag_eval.stage2_overrides("raw", 0.88), {})
+        self.assertEqual(
+            rag_eval.stage2_overrides("filtered", 0.88), {"ragThreshold": 0.88}
+        )
+        self.assertEqual(rag_eval.stage2_overrides("rerank", 0.88), {"ragRerank": True})
+
+    def test_overrides_rewrite_variants(self):
+        self.assertEqual(
+            rag_eval.stage2_overrides("raw+rewrite", 0.88), {"ragRewrite": True}
+        )
+        self.assertEqual(
+            rag_eval.stage2_overrides("filtered+rewrite", 0.88),
+            {"ragThreshold": 0.88, "ragRewrite": True},
+        )
+
+    def test_unknown_mode_raises(self):
+        with self.assertRaises(ValueError):
+            rag_eval.stage2_overrides("bogus", 0.88)
+        with self.assertRaises(ValueError):
+            rag_eval.score_scale("bogus")
+
+    def test_scale_tags_per_mode(self):
+        self.assertEqual(rag_eval.score_scale("raw"), "cosine")
+        self.assertEqual(rag_eval.score_scale("filtered"), "cosine")
+        self.assertEqual(rag_eval.score_scale("rerank"), "rerank-sigmoid")
+        self.assertEqual(rag_eval.score_scale("rerank+rewrite"), "rerank-sigmoid")
+        self.assertEqual(rag_eval.score_scale("filtered+rewrite"), "cosine")
+
+    def test_matrix_without_rewrite(self):
+        self.assertEqual(
+            rag_eval.build_mode_matrix(["raw", "filtered", "rerank"], False),
+            ["raw", "filtered", "rerank"],
+        )
+
+    def test_matrix_with_rewrite_adds_same_modes(self):
+        self.assertEqual(
+            rag_eval.build_mode_matrix(["raw", "filtered", "rerank"], True),
+            [
+                "raw",
+                "filtered",
+                "rerank",
+                "raw+rewrite",
+                "filtered+rewrite",
+                "rerank+rewrite",
+            ],
+        )
+
+
+class ParseArgsStage2Test(unittest.TestCase):
+    def test_no_new_flags_keeps_v1(self):
+        args = rag_eval.parse_args(["--model", "mock"])
+        self.assertIsNone(args.modes)
+        self.assertFalse(args.rewrite)
+        self.assertEqual(args.threshold, rag_eval.DEFAULT_FILTERED_THRESHOLD)
+
+    def test_modes_and_rewrite_parsed(self):
+        args = rag_eval.parse_args(
+            ["--model", "mock", "--modes", "raw,filtered,rerank", "--rewrite"]
+        )
+        self.assertEqual(args.modes, ["raw", "filtered", "rerank"])
+        self.assertTrue(args.rewrite)
+
+    def test_unknown_mode_name_rejected(self):
+        with self.assertRaises(SystemExit):
+            rag_eval.parse_args(["--model", "mock", "--modes", "raw,bogus"])
+
+    def test_threshold_out_of_range_rejected(self):
+        with self.assertRaises(SystemExit):
+            rag_eval.parse_args(["--model", "mock", "--threshold", "1.5"])
+        with self.assertRaises(SystemExit):
+            rag_eval.parse_args(["--model", "mock", "--threshold", "abc"])
+
+
+def _thirty_rows():
+    rows = []
+    for i in range(1, 11):
+        q = "Вопрос %d про прошивку?" % i
+        rows.append(_row(q, "raw", 2, True, ms=100))
+        rows.append(_row(q, "filtered", 2, i <= 8, ms=200, retrieved_empty=i > 8))
+        rows.append(_row(q, "rerank", 2, True, ms=300))
+    return rows
+
+
+class ModeSummariesTest(unittest.TestCase):
+    def test_aggregates_sources_median_and_empty(self):
+        summaries = rag_eval.mode_summaries(_thirty_rows())
+        by_mode = {s["mode"]: s for s in summaries}
+        self.assertEqual(by_mode["raw"]["sources_passed"], 10)
+        self.assertEqual(by_mode["filtered"]["sources_passed"], 8)
+        self.assertEqual(by_mode["filtered"]["total"], 10)
+        self.assertEqual(by_mode["filtered"]["empty_replies"], 2)
+        self.assertEqual(by_mode["rerank"]["median_ms"], 300)
+        self.assertEqual(by_mode["raw"]["median_ms"], 100)
+
+    def test_median_skips_failures_and_none(self):
+        rows = [
+            _row("В1?", "filtered", 0, False, ms=None, retrieved_empty=True),
+            _row("В2?", "filtered", 2, True, ms=500),
+        ]
+        (summary,) = rag_eval.mode_summaries(rows)
+        self.assertEqual(summary["median_ms"], 500)
+        self.assertEqual(summary["empty_replies"], 1)
+
+    def test_summary_lines_in_stage2_report(self):
+        report = rag_eval.format_report(
+            _thirty_rows(), "mock", stage2=True, threshold=0.88
+        )
+        self.assertIn("- raw: источники 100% (10/10), медиана 100 мс, пустых ответов 0", report)
+        self.assertIn("- filtered: источники 80% (8/10), медиана 200 мс, пустых ответов 2", report)
+        self.assertIn("- rerank: источники 100% (10/10), медиана 300 мс, пустых ответов 0", report)
+
+    def test_scale_tag_column_on_every_row(self):
+        rows = [
+            _row("В1?", "raw", 2, True),
+            _row("В1?", "filtered", 2, True),
+            _row("В1?", "rerank", 2, True),
+        ]
+        report = rag_eval.format_report(rows, "mock", stage2=True, threshold=0.88)
+        self.assertIn("| В1? | raw | score: cosine |", report)
+        self.assertIn("| В1? | filtered | score: cosine |", report)
+        self.assertIn("| В1? | rerank | score: rerank-sigmoid |", report)
+        self.assertIn("| Вопрос | Режим | Шкала |", report)
+        self.assertNotIn("rag:вкл", report)
+
+    def test_threshold_note_in_report_when_filtered(self):
+        report = rag_eval.format_report(
+            [_row("В1?", "filtered", 2, True)], "mock", stage2=True, threshold=0.88
+        )
+        self.assertIn("Порог filtered: 0.88", report)
+        self.assertIn("хвост-кат", report)
+
+    def test_v1_format_untouched_by_stage2_params(self):
+        rows = _twenty_rows(rag_full=True)
+        self.assertEqual(
+            rag_eval.format_report(rows, "mock"),
+            rag_eval.format_report(rows, "mock", stage2=False, threshold=0.88),
+        )
 
 
 if __name__ == "__main__":

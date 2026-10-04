@@ -17,8 +17,21 @@ import kotlinx.serialization.json.Json
  * (по образцу LLMClient). Реализация по умолчанию — [KtorRagClient].
  */
 interface RagClient {
-    /** Ищет релевантные чанки по запросу; k — число источников. */
-    suspend fun search(query: String, k: Int): List<Passage>
+    /**
+     * Ищет релевантные чанки по запросу; k — число источников.
+     *
+     * Параметры стадии 2 (T9) опциональны, дефолты сохраняют совместимость
+     * существующих вызовов: kBefore — кандидаты до реранка/фильтрации (только из
+     * config.rag.kBefore, per-request Lock OUT); threshold — порог отсечения по
+     * финальной шкале score; rerank — режим реранкинга sidecar.
+     */
+    suspend fun search(
+        query: String,
+        k: Int,
+        kBefore: Int? = null,
+        threshold: Double? = null,
+        rerank: Boolean = false
+    ): List<Passage>
 }
 
 /**
@@ -46,7 +59,11 @@ class KtorRagClient(config: RagConfig) : RagClient {
     /** Единый Json-инстанс клиента (по образцу AIClient): кодирование тела и разбор ответа. */
     private val json = Json {
         ignoreUnknownKeys = true
-        encodeDefaults = true
+        // Ключи стадии 2 (k_before/threshold/rerank) сериализуются ТОЛЬКО если заданы:
+        // encodeDefaults=false выкидывает значения, равные дефолту, explicitNulls=false
+        // не пишет null → при дефолтном конфиге тело остаётся ровно {"query":…,"k":N}.
+        encodeDefaults = false
+        explicitNulls = false
     }
 
     private val client = HttpClient(CIO) {
@@ -58,11 +75,17 @@ class KtorRagClient(config: RagConfig) : RagClient {
         expectSuccess = false // статус проверяем вручную — понятное сообщение об ошибке
     }
 
-    override suspend fun search(query: String, k: Int): List<Passage> {
+    override suspend fun search(
+        query: String,
+        k: Int,
+        kBefore: Int?,
+        threshold: Double?,
+        rerank: Boolean
+    ): List<Passage> {
         // k=0/отрицательный не уезжает в sidecar: кламп в 1 (понятное поведение
         // вместо ошибки 400 на ровном месте)
         val safeK = k.coerceAtLeast(1)
-        val request = buildSearchRequest(query, safeK)
+        val request = buildSearchRequest(query, safeK, kBefore, threshold, rerank)
 
         val response = client.post(searchUrl) {
             contentType(ContentType.Application.Json)
@@ -79,9 +102,17 @@ class KtorRagClient(config: RagConfig) : RagClient {
         return parseSearchResponse(bodyText)
     }
 
-    /** Тело запроса к sidecar: {"query": "...", "k": N} (внутреннее — для тестов). */
-    internal fun buildSearchRequest(query: String, k: Int): String =
-        json.encodeToString(SidecarSearchRequest(query = query, k = k))
+    /** Тело запроса к sidecar: {"query": "...", "k": N} + опц. k_before/threshold/rerank (для тестов). */
+    internal fun buildSearchRequest(
+        query: String,
+        k: Int,
+        kBefore: Int? = null,
+        threshold: Double? = null,
+        rerank: Boolean = false
+    ): String =
+        json.encodeToString(
+            SidecarSearchRequest(query = query, k = k, kBefore = kBefore, threshold = threshold, rerank = rerank)
+        )
 
     /** Разбор массива sidecar → [Passage] с ПОЛНЫМ content (без обрезки на клиенте). */
     internal fun parseSearchResponse(bodyText: String): List<Passage> =
@@ -99,11 +130,14 @@ class KtorRagClient(config: RagConfig) : RagClient {
     /** Закрытие HTTP-клиента. */
     fun close() = client.close()
 
-    /** Тело запроса к sidecar (протокол задачи 2). */
+    /** Тело запроса к sidecar (протокол задачи 2 + ключи стадии 2). */
     @Serializable
     private data class SidecarSearchRequest(
         val query: String,
-        val k: Int
+        val k: Int,
+        @SerialName("k_before") val kBefore: Int? = null,
+        val threshold: Double? = null,
+        val rerank: Boolean = false
     )
 
     /**

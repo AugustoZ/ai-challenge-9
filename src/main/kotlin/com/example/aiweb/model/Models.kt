@@ -139,7 +139,17 @@ data class RagFileConfig(
     /** Таймаут запроса к RAG-сервису, мс; null — значение по умолчанию. */
     val timeoutMs: Long? = null,
     /** Максимальный суммарный размер инжектируемого блока документов, символы; null — значение по умолчанию. */
-    val maxBlockChars: Int? = null
+    val maxBlockChars: Int? = null,
+    /** Реранкер на стороне RAG-сервиса; null — значение по умолчанию (false). */
+    val rerank: Boolean? = null,
+    /** Порог отсечения на финальной шкале score; null — фильтрация порогом выключена. */
+    val threshold: Double? = null,
+    /** Число кандидатов до фильтрации/реранкинга (1..20); null — берётся k. */
+    val kBefore: Int? = null,
+    /** Переписывание поискового запроса через LLM; null — значение по умолчанию (false). */
+    val rewrite: Boolean? = null,
+    /** Таймаут переписывания запроса, мс; null — значение по умолчанию (8000). */
+    val rewriteTimeoutMs: Long? = null
 )
 
 /** Конечная точка эмбеддингов (стадия 2). */
@@ -220,6 +230,15 @@ data class ChatRequest(
      * эхом несёт ragEnabled и retrievedSources; false/дефолт — RAG выключен.
      */
     val ragEnabled: Boolean = false,
+    /**
+     * Порог релевантности RAG для этого запроса, перекрывающий config.rag.threshold;
+     * null — берётся из конфигурации. Вне диапазона (0, 1] — 400 при приёме запроса.
+     */
+    val ragThreshold: Double? = null,
+    /** Реранкер для этого запроса, перекрывающий config.rag.rerank; null — берётся из конфигурации. */
+    val ragRerank: Boolean? = null,
+    /** Переписывание запроса для этого запроса, перекрывающее config.rag.rewrite; null — берётся из конфигурации. */
+    val ragRewrite: Boolean? = null,
     /** Сжатие истории для этого запроса; null — брать из конфигурации (приоритет: поле запроса > конфиг). */
     val compressionEnabled: Boolean? = null,
     /** Стратегия формирования контекста: off | window | summary | facts | branching; null — разрешить по приоритету (legacy-флаг, затем конфиг). */

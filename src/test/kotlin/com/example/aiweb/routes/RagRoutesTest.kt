@@ -16,18 +16,26 @@ import com.example.aiweb.rag.Passage
 import com.example.aiweb.rag.RagClient
 import com.example.aiweb.session.HistorySummarizer
 import com.example.aiweb.session.SummarizeResult
+import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpServer
 import io.ktor.client.call.body
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
+import java.net.InetSocketAddress
 import java.nio.file.Files
+import java.util.Collections
+import java.util.concurrent.Executors
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -58,11 +66,23 @@ class RagRoutesTest {
         var calls = 0
         val queries = mutableListOf<String>()
         val ks = mutableListOf<Int>()
+        val kBefores = mutableListOf<Int?>()
+        val thresholds = mutableListOf<Double?>()
+        val reranks = mutableListOf<Boolean>()
 
-        override suspend fun search(query: String, k: Int): List<Passage> {
+        override suspend fun search(
+            query: String,
+            k: Int,
+            kBefore: Int?,
+            threshold: Double?,
+            rerank: Boolean
+        ): List<Passage> {
             calls++
             queries.add(query)
             ks.add(k)
+            kBefores.add(kBefore)
+            thresholds.add(threshold)
+            reranks.add(rerank)
             throwError?.let { throw it }
             return passages
         }
@@ -95,12 +115,14 @@ class RagRoutesTest {
     private fun withApp(
         ragConfig: RagConfig = RagConfig(),
         ragFactory: (RagConfig) -> RagClient = { FakeRagClient() },
+        clientFactory: (() -> LLMClient)? = null,
         block: suspend (base: String, fake: FakeLLMClient) -> Unit
     ) {
         val dataDir = tempDataDir()
-        val chat = FakeLLMClient(
+        val defaultChat = FakeLLMClient(
             ChatResult(reply = "ответ сервера", promptTokens = 1, completionTokens = 2, totalTokens = 3, elapsedMs = 42L)
         )
+        val chat = clientFactory?.invoke() ?: defaultChat
         withAuthApp(module = {
             routing {
                 aiRoutes(
@@ -121,8 +143,63 @@ class RagRoutesTest {
                 )
             }
         }) { app ->
-            kotlinx.coroutines.runBlocking { block(app.base, chat) }
+            kotlinx.coroutines.runBlocking { block(app.base, defaultChat) }
         }
+    }
+
+    /** LLM-клиент, различающий rewrite-вызов от основного по system-маркеру промпта. */
+    private class RewriteAwareLLMClient(
+        private val rewrite: (LLMCall) -> ChatResult,
+        private val main: ChatResult
+    ) : LLMClient {
+        val calls = mutableListOf<LLMCall>()
+
+        override suspend fun ask(call: LLMCall): ChatResult {
+            calls.add(call)
+            val isRewrite = call.messages.any { it.role == "system" && it.content.orEmpty().contains(REWRITE_MARKER) }
+            return if (isRewrite) rewrite(call) else main
+        }
+    }
+
+    private fun chatResult(reply: String) = ChatResult(reply = reply, promptTokens = 1, completionTokens = 1, totalTokens = 2, elapsedMs = 10L)
+
+    private fun startFakeSidecar(responder: (HttpExchange) -> Unit): Pair<String, MutableList<String>> {
+        val bodies = Collections.synchronizedList(mutableListOf<String>())
+        val http = HttpServer.create(InetSocketAddress(0), 0)
+        http.executor = Executors.newCachedThreadPool()
+        http.createContext("/search") { exchange ->
+            try {
+                bodies.add(exchange.requestBody.readBytes().decodeToString())
+                responder(exchange)
+            } finally {
+                exchange.close()
+            }
+        }
+        http.start()
+        return "http://127.0.0.1:${http.address.port}/search" to bodies
+    }
+
+    private fun respondJson(exchange: HttpExchange, status: Int, body: String) {
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        exchange.responseHeaders.add("Content-Type", "application/json; charset=utf-8")
+        exchange.sendResponseHeaders(status, bytes.size.toLong())
+        exchange.responseBody.write(bytes)
+    }
+
+    private fun <T> withCapturedStderr(block: () -> T): Pair<T, String> {
+        val original = System.err
+        val capture = ByteArrayOutputStream()
+        try {
+            System.setErr(PrintStream(capture, true, Charsets.UTF_8))
+            val result = block()
+            return result to capture.toString("UTF-8")
+        } finally {
+            System.setErr(original)
+        }
+    }
+
+    private companion object {
+        const val REWRITE_MARKER = "переписываешь поисковый запрос"
     }
 
     private suspend fun createSession(client: io.ktor.client.HttpClient, base: String): String {
@@ -301,5 +378,196 @@ class RagRoutesTest {
             assertEquals("c2", sources[1].jsonObject["chunkId"]!!.jsonPrimitive.content)
             client.close()
         }
+    }
+
+    // ===== Стадия 2 (задача 4): валидация per-request override ragThreshold =====
+
+    // (з) Невалидный override — 400 до LLM
+    @Test
+    fun `невалидный ragThreshold override - 400 с русским сообщением`() {
+        withApp(ragConfig = RagConfig(url = "http://fake/search"), ragFactory = { FakeRagClient() }) { base, fake ->
+            val client = testHttpClient()
+            listOf(1.5, 0.0, -0.1).forEach { threshold ->
+                val response = client.post("$base/api/chat") {
+                    contentType(ContentType.Application.Json)
+                    setBody(ChatRequest(message = "вопрос", ragEnabled = true, ragThreshold = threshold))
+                }
+
+                assertEquals(HttpStatusCode.BadRequest, response.status, "порог $threshold должен отклоняться")
+                val text = response.bodyAsText()
+                assertTrue("порог" in text.lowercase(), "сообщение должно называть порог по-русски: $text")
+                assertTrue("должен" in text, "сообщение должно быть на русском: $text")
+            }
+            assertEquals(0, fake.calls.size, "LLM не вызывается при невалидном override")
+            client.close()
+        }
+    }
+
+    // ===== Стадия 2 (задача 9): v2 search-параметры, rewrite, rerank-degrade =====
+
+    @Test
+    fun `дефолтный конфиг - тело sidecar ровно query и k`() {
+        val body = KtorRagClient(RagConfig(url = "http://127.0.0.1:1/search")).buildSearchRequest("вопрос", 5)
+        val parsed = Json.parseToJsonElement(body).jsonObject
+        assertEquals(setOf("query", "k"), parsed.keys, "ровно query и k, без новых ключей: $body")
+        assertEquals("вопрос", parsed["query"]!!.jsonPrimitive.content)
+        assertEquals(5, parsed["k"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `override threshold доходит до тела sidecar`() {
+        val body = KtorRagClient(RagConfig(url = "http://127.0.0.1:1/search")).buildSearchRequest("вопрос", 5, threshold = 0.8)
+        val parsed = Json.parseToJsonElement(body).jsonObject
+        assertEquals(0.8, parsed["threshold"]!!.jsonPrimitive.content.toDouble())
+    }
+
+    @Test
+    fun `kBefore из конфига доходит до тела sidecar`() {
+        val body = KtorRagClient(RagConfig(url = "http://127.0.0.1:1/search")).buildSearchRequest("вопрос", 5, kBefore = 20)
+        val parsed = Json.parseToJsonElement(body).jsonObject
+        assertEquals(20, parsed["k_before"]!!.jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `rerank true доходит до тела sidecar а false не пишется`() {
+        val on = Json.parseToJsonElement(
+            KtorRagClient(RagConfig(url = "http://127.0.0.1:1/search")).buildSearchRequest("вопрос", 5, rerank = true)
+        ).jsonObject
+        assertEquals(true, on["rerank"]!!.jsonPrimitive.content.toBoolean())
+        val off = Json.parseToJsonElement(
+            KtorRagClient(RagConfig(url = "http://127.0.0.1:1/search")).buildSearchRequest("вопрос", 5)
+        ).jsonObject
+        assertTrue("rerank" !in off.keys, "rerank=false не пишется (v1-инвариант)")
+    }
+
+    @Test
+    fun `override pass-through - threshold и rerank доходят до retrieve`() {
+        val rag = FakeRagClient(passages = listOf(passage("c1", "текст")))
+        withApp(ragConfig = RagConfig(url = "http://fake/search"), ragFactory = { rag }) { base, _ ->
+            val client = testHttpClient()
+            client.post("$base/api/chat") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "вопрос", ragEnabled = true, ragThreshold = 0.8, ragRerank = true))
+            }.body<ChatResponse>()
+            assertEquals(listOf<Double?>(0.8), rag.thresholds, "override threshold доходит до retrieve")
+            assertEquals(listOf(true), rag.reranks, "override rerank доходит до retrieve")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `kBefore из конфига доходит до retrieve на маршруте`() {
+        val rag = FakeRagClient()
+        withApp(ragConfig = RagConfig(url = "http://fake/search", kBefore = 20), ragFactory = { rag }) { base, _ ->
+            val client = testHttpClient()
+            client.post("$base/api/chat") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "вопрос", ragEnabled = true))
+            }.body<ChatResponse>()
+            assertEquals(listOf<Int?>(20), rag.kBefores, "kBefore из конфига прокидывается в retrieve")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `дефолтный конфиг на маршруте - retrieve без новых значений`() {
+        val rag = FakeRagClient()
+        withApp(ragConfig = RagConfig(url = "http://fake/search"), ragFactory = { rag }) { base, _ ->
+            val client = testHttpClient()
+            client.post("$base/api/chat") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "вопрос", ragEnabled = true))
+            }.body<ChatResponse>()
+            assertEquals(listOf<Double?>(null), rag.thresholds, "дефолтный порог null (ключ не шлём)")
+            assertEquals(listOf(false), rag.reranks, "дефолтный rerank false")
+            assertEquals(listOf<Int?>(null), rag.kBefores, "дефолтный kBefore null")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `rewrite fail-open - сбой AI даёт поиск на оригинальном запросе и 200`() {
+        val rag = FakeRagClient(passages = listOf(passage("c1", "текст")))
+        val lazy = RewriteAwareLLMClient(
+            rewrite = { throw IllegalStateException("rewrite сбой") },
+            main = chatResult("ответ сервера")
+        )
+        withApp(
+            ragConfig = RagConfig(url = "http://fake/search", rewrite = true),
+            ragFactory = { rag },
+            clientFactory = { lazy }
+        ) { base, _ ->
+            val client = testHttpClient()
+            val response = client.post("$base/api/chat") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "оригинальный запрос", ragEnabled = true))
+            }.body<ChatResponse>()
+            assertEquals(listOf("оригинальный запрос"), rag.queries, "после сбоя рерайта поиск на оригинальном запросе")
+            // passages присутствуют → бэкенд добавляет блоки источников к ответу
+            assertTrue(response.reply.startsWith("ответ сервера"), "базовый ответ в начале: ${response.reply}")
+            assertTrue("Источники:" in response.reply, "блок «Источники:» добавлен: ${response.reply}")
+            assertTrue("Цитаты:" in response.reply, "блок «Цитаты:» добавлен: ${response.reply}")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `rewrite применяется до retrieve - переписанный запрос в sidecar и не утекает в ответ`() {
+        val rag = FakeRagClient(passages = listOf(passage("c1", "текст")))
+        val lazy = RewriteAwareLLMClient(
+            rewrite = { chatResult("переписанный запрос") },
+            main = chatResult("ответ сервера")
+        )
+        withApp(
+            ragConfig = RagConfig(url = "http://fake/search", rewrite = true),
+            ragFactory = { rag },
+            clientFactory = { lazy }
+        ) { base, _ ->
+            val client = testHttpClient()
+            val response = client.post("$base/api/chat") {
+                contentType(ContentType.Application.Json)
+                setBody(ChatRequest(message = "оригинальный запрос", ragEnabled = true))
+            }.body<ChatResponse>()
+            assertEquals(listOf("переписанный запрос"), rag.queries, "поиск выполнен на переписанном запросе")
+            assertTrue("переписанный запрос" !in response.reply, "переписанный запрос не утекает в ответ: ${response.reply}")
+            // passages присутствуют → бэкенд добавляет блоки источников к ответу
+            assertTrue(response.reply.startsWith("ответ сервера"), "базовый ответ в начале: ${response.reply}")
+            assertTrue("Источники:" in response.reply, "блок «Источники:» добавлен: ${response.reply}")
+            assertTrue("Цитаты:" in response.reply, "блок «Цитаты:» добавлен: ${response.reply}")
+            client.close()
+        }
+    }
+
+    @Test
+    fun `rerank-degrade на маршруте - 400 Реранкер не настроен повторяет без реранка`() {
+        var call = 0
+        val passages = """[{"chunk_id":"c1","score":0.9,"source":"docs/faq.md","title":"FAQ","section":"S","content":"текст"}]"""
+        val (url, bodies) = startFakeSidecar { exchange ->
+            call++
+            if (call == 1) {
+                respondJson(exchange, 400, """{"error":"Реранкер не настроен — запустите sidecar с --rerank-model"}""")
+            } else {
+                respondJson(exchange, 200, passages)
+            }
+        }
+        val (_, err) = withCapturedStderr {
+            withApp(ragConfig = RagConfig(url = url, rerank = true), ragFactory = { KtorRagClient(it) }) { base, _ ->
+                val client = testHttpClient()
+                val response = client.post("$base/api/chat") {
+                    contentType(ContentType.Application.Json)
+                    setBody(ChatRequest(message = "как отформатировать флешку", ragEnabled = true, ragRerank = true))
+                }.body<ChatResponse>()
+                // passages присутствуют → бэкенд добавляет блоки источников к ответу
+                assertTrue(response.reply.startsWith("ответ сервера"), "базовый ответ в начале: ${response.reply}")
+                assertTrue("Источники:" in response.reply, "блок «Источники:» добавлен: ${response.reply}")
+                assertTrue("Цитаты:" in response.reply, "блок «Цитаты:» добавлен: ${response.reply}")
+                assertEquals(1, response.retrievedSources.size, "после деградации sources непусты")
+                client.close()
+            }
+        }
+        assertEquals(2, bodies.size, "два обращения к sidecar: с реранком и без")
+        assertTrue(bodies[0].contains("\"rerank\":true"), "первый запрос с реранком: ${bodies[0]}")
+        assertTrue("rerank" !in bodies[1], "повторный запрос без реранка: ${bodies[1]}")
+        assertTrue(err.contains("Реранкер не настроен"), "русский warn о деградации: $err")
     }
 }

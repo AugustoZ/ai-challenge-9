@@ -34,4 +34,13 @@ sealed class AgentEvent {
     @Serializable
     @SerialName("final")
     data class Final(override val step: Int, val text: String, val reason: String) : AgentEvent()
+
+    /**
+     * RAG-отклик «не знаю» (задача 5 плана rag-answers-minichat): sidecar ответил
+     * успешно, но все чанки ниже порога релевантности — агент отвечает
+     * детерминированным шаблоном БЕЗ вызова LLM. step — псевдошаг (цикл не запускался).
+     */
+    @Serializable
+    @SerialName("rag_unknown")
+    data class RagUnknown(override val step: Int, val message: String) : AgentEvent()
 }

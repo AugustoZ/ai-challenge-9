@@ -45,12 +45,20 @@ class RagPromptsTest {
         )
 
         assertTrue(
-            block.contains("Отвечай по приведённым документам"),
+            block.contains("Отвечай строго по приведённым документам"),
             "инструкция в блоке: $block"
         )
         assertTrue(
-            block.contains("[файл · раздел]"),
-            "формат источников назван: $block"
+            block.contains("нумерованные ссылки вида [1]"),
+            "формат источников (нумерованные ссылки) назван в инструкции: $block"
+        )
+        assertTrue(
+            block.contains("· раздел:"),
+            "формат файла·раздела присутствует в разметке чанков: $block"
+        )
+        assertTrue(
+            block.contains("Не выводи собственные разделы «Источники:» и «Цитаты:»"),
+            "собственные разделы «Источники:»/«Цитаты:» запрещены инструкцией: $block"
         )
     }
 
@@ -94,9 +102,16 @@ class RagPromptsTest {
     @Test
     fun `пер-чанк обрезка ставит многоточие в конце текста чанка`() {
         val longText = "Б".repeat(300)
-        val block = RagPrompts.buildRagBlock(listOf(passage(1, longText)), maxChars = 200)
+        // Шапка (маркер+инструкция) сама учитывается в бюджете maxChars —
+        // поэтому кап задаём от её фактической длины, а не фиксированным числом.
+        val probe = RagPrompts.buildRagBlock(listOf(passage(1, "x")), maxChars = 10_000)
+        val headerLen = probe.indexOf("\n\n[1]")
+        assertTrue(headerLen > 0, "шапка (маркер+инструкция) присутствует в блоке: $probe")
+        val maxChars = headerLen + 200
 
-        assertTrue(block.length <= 200, "кап соблюдён: ${block.length}")
+        val block = RagPrompts.buildRagBlock(listOf(passage(1, longText)), maxChars = maxChars)
+
+        assertTrue(block.length <= maxChars, "кап соблюдён: ${block.length} > $maxChars")
         assertTrue(block.contains("…"), "обрезанный чанк завершается «…»")
         assertFalse(block.trimEnd().endsWith("Б" + "Б"), "текст не должен закончиться без «…», если был обрезан")
     }

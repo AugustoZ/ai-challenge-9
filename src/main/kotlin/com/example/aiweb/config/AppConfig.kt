@@ -94,7 +94,27 @@ data class RagConfig(
     /** Таймаут запроса к RAG-сервису, мс (>= 1000). */
     val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     /** Максимальный суммарный размер инжектируемого блока документов, символы (>= 500). */
-    val maxBlockChars: Int = DEFAULT_MAX_BLOCK_CHARS
+    val maxBlockChars: Int = DEFAULT_MAX_BLOCK_CHARS,
+    /**
+     * Реранкер на стороне RAG-сервиса (второй этап пайплайна): true — сервис
+     * переранжирует кандидатов и score приходит на sigmoid-шкале [0, 1].
+     */
+    val rerank: Boolean = false,
+    /**
+     * Порог отсечения нерелевантных результатов на финальной шкале score
+     * (cosine [-1, 1] при rerank=false, sigmoid [0, 1] при rerank=true);
+     * null — фильтрация порогом выключена.
+     */
+    val threshold: Double? = null,
+    /**
+     * Число кандидатов до фильтрации/реранкинга (1..20); null — берётся [k].
+     * Клэмп sidecar до 50 из конфига недоступен: K_MAX Штурмана = 20.
+     */
+    val kBefore: Int? = null,
+    /** Переписывание поискового запроса через LLM перед извлечением (fail-open). */
+    val rewrite: Boolean = false,
+    /** Таймаут запроса на переписывание запроса, мс (>= 1000). */
+    val rewriteTimeoutMs: Long = DEFAULT_REWRITE_TIMEOUT_MS
 ) {
     companion object {
         /** Число чанков по умолчанию. */
@@ -108,6 +128,9 @@ data class RagConfig(
 
         /** Бюджет блока документов по умолчанию. */
         const val DEFAULT_MAX_BLOCK_CHARS = 6_000
+
+        /** Таймаут переписывания запроса по умолчанию (8 с). */
+        const val DEFAULT_REWRITE_TIMEOUT_MS = 8_000L
     }
 }
 
@@ -306,7 +329,12 @@ data class AppConfig(
                         url = it.url ?: rag.url,
                         k = it.k ?: rag.k,
                         timeoutMs = it.timeoutMs ?: rag.timeoutMs,
-                        maxBlockChars = it.maxBlockChars ?: rag.maxBlockChars
+                        maxBlockChars = it.maxBlockChars ?: rag.maxBlockChars,
+                        rerank = it.rerank ?: rag.rerank,
+                        threshold = it.threshold ?: rag.threshold,
+                        kBefore = it.kBefore ?: rag.kBefore,
+                        rewrite = it.rewrite ?: rag.rewrite,
+                        rewriteTimeoutMs = it.rewriteTimeoutMs ?: rag.rewriteTimeoutMs
                     )
                 } ?: rag
             )
@@ -363,6 +391,22 @@ data class AppConfig(
                 require(rag.maxBlockChars >= 500) {
                     "rag: maxBlockChars должен быть не меньше 500 (получено: ${rag.maxBlockChars}) — " +
                         "максимальный размер инжектируемого блока документов"
+                }
+                rag.threshold?.let { threshold ->
+                    require(threshold > 0.0 && threshold <= 1.0) {
+                        "rag: порог threshold должен быть больше 0 и не больше 1 (получено: $threshold) — " +
+                            "отсечение нерелевантных результатов на шкале score"
+                    }
+                }
+                rag.kBefore?.let { kBefore ->
+                    require(kBefore in 1..RagConfig.K_MAX) {
+                        "rag: kBefore должен быть в диапазоне 1..${RagConfig.K_MAX} (получено: $kBefore) — " +
+                            "число кандидатов до фильтрации/реранкинга"
+                    }
+                }
+                require(rag.rewriteTimeoutMs >= 1000) {
+                    "rag: rewriteTimeoutMs должен быть не меньше 1000 (получено: ${rag.rewriteTimeoutMs}) — " +
+                        "таймаут переписывания поискового запроса"
                 }
             }
             return this

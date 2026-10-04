@@ -60,6 +60,18 @@ describe('buildChatRequest', () => {
     expect(buildChatRequest(settings({ ragEnabled: false }), NO_SESSION, 'q').ragEnabled).toBe(false);
   });
 
+  it('stage-2 overrides (ragThreshold/ragRerank/ragRewrite) фронт НЕ отправляет — ни по умолчанию, ни при ragEnabled=true', () => {
+    const requests = [
+      buildChatRequest(settings(), NO_SESSION, 'q'),
+      buildChatRequest(settings({ ragEnabled: true }), NO_SESSION, 'q'),
+    ];
+    for (const request of requests) {
+      expect('ragThreshold' in request).toBe(false);
+      expect('ragRerank' in request).toBe(false);
+      expect('ragRewrite' in request).toBe(false);
+    }
+  });
+
   it('составная модель «providerId/modelId» разбирается на пару провайдер/модель', () => {
     const request = buildChatRequest(settings({ model: 'openai/gpt-4o' }), NO_SESSION, 'q');
     expect(request.provider).toBe('openai');

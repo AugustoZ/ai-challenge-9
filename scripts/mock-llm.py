@@ -40,10 +40,16 @@ context-compression-shturman, решение 15). ТОЛЬКО stdlib, без з
        (маркер запроса к экстрактору фактов, задача 5) → детерминированный KV-JSON
        [{"key":"цель","value":"<текст из последнего user-сообщения>"}];
      - если в messages есть system-сообщение, содержащее фразу «РЕЛЕВАНТНЫЕ
-       ДОКУМЕНТЫ» (маркер RAG-блока, задача 8 плана shturman-rag-mode) →
-       детерминированный ответ, цитирующий источники строк
-       `[N] source: <файл> · раздел: <section>` (без ```-фенсов;
-       refuse/invariant-режимы приоритетнее маркера);
+        ДОКУМЕНТЫ» (маркер RAG-блока, задача 8 плана shturman-rag-mode) →
+        детерминированный ответ, цитирующий источники строк
+        `[N] source: <файл> · раздел: <section>` (без ```-фенсов;
+        refuse/invariant-режимы приоритетнее маркера);
+      - если в messages есть system-сообщение, содержащее фразу «переписываешь
+        поисковый запрос» (маркер запроса QueryRewriter, задача 5 плана
+        shturman-rag-stage2) → детерминированный identity-ответ: текст
+        последнего user-сообщения БЕЗ ИЗМЕНЕНИЙ; проверяется ПЕРВЫМ (до
+        FACTS/SUMMARY, инвариант- и RAG-маркеров), rewrite — standalone
+        суб-вызов, счётчик ротации не трогаем;
     - tools в теле запроса игнорируются; промт-протокол инструментов
       (PromptToolTransport, system-сообщение «Ты ассистент с доступом к
       инструментам») эмулируется минимально для E2E памяти агента:
@@ -87,6 +93,15 @@ INVARIANTS_MARKER = "НЕПРЕЛОЖНЫЕ ИНВАРИАНТЫ"
 # БЕЗ ```-фенсов (не пересекается с code-dump-логикой). refuse/invariant-режимы
 # приоритетнее маркера (refuse + RAG-блок → refuse).
 RAG_MARKER = "РЕЛЕВАНТНЫЕ ДОКУМЕНТЫ"
+
+# Маркер запроса на перепись поискового запроса (точная строка из
+# system-промпта QueryRewriter, задача 5 плана shturman-rag-stage2 — жёсткий
+# контракт с Kotlin-стороной): отвечаем ДЕТЕРМИНИРОВАННЫМ identity —
+# текст последнего user-сообщения без изменений. ПОЧЕМУ identity, а не
+# «умный» рерайт: mock проверяет МЕХАНИКУ fail-open рерайта (таймаут/ошибка
+# → оригинал) и воспроизводимость сравнения rewrite on/off; КАЧЕСТВО
+# переписи меряется только с реальным LLM (зафиксировано в плане, задача 7).
+REWRITE_MARKER = "переписываешь поисковый запрос"
 
 # Строка источника в RAG-блоке: `[N] source: <файл> · раздел: <section>`.
 RAG_SOURCE_LINE = re.compile(r"^\[(\d+)\]\s*source:\s*(.+?)\s*·\s*раздел:\s*(.+?)\s*$")
@@ -391,9 +406,12 @@ def _parse_rag_entries(content):
 
 
 def _rag_reply(content):
-    """Детерминированный RAG-ответ (задача 8 плана shturman-rag-mode):
-    «По базе знаний: <source1> (раздел <section1>). <первые 200 символов
-    первого чанка>. Источники: <source1>; <source2>». Без ```-фенсов.
+    """Детерминированный RAG-ответ (задача 8 плана shturman-rag-mode;
+    T2 rag-answers-minichat: печать списка ссылок на файлы исключена —
+    блоки ссылок/цитат теперь эмитит только бэкенд Штурмана, mock
+    остаётся ответчиком простым ответом): «По базе знаний: <source1>
+    (раздел <section1>). <первые 200 символов первого чанка>».
+    Без ```-фенсов.
     None, если в блоке нет нумерованных строк источников."""
     entries = _parse_rag_entries(content)
     if not entries:
@@ -403,8 +421,17 @@ def _rag_reply(content):
     chunk = "\n".join(chunk_lines).strip()
     if chunk:
         parts.append(chunk[:200])
-    parts.append("Источники: " + "; ".join(entry[0] for entry in entries))
     return " ".join(parts)
+
+
+def _rewrite_reply(messages):
+    """Детерминированный rewrite-ответ (задача 7 плана shturman-rag-stage2):
+    identity — текст последнего user-сообщения БЕЗ ИЗМЕНЕНИЙ (ничего не
+    обрезаем, ничего не добавляем). Почему identity: mock проверяет механику
+    fail-open рерайта (таймаут/ошибка → оригинал) и воспроизводимость
+    сравнения rewrite on/off; качество переписи меряется только с реальным
+    LLM. Счётчик ротации не трогаем: одинаковый вход → одинаковый выход."""
+    return _last_user_text(messages)
 
 
 def _echo_system_reply(messages):
@@ -426,10 +453,24 @@ def _echo_system_reply(messages):
 
 
 def _pick_reply(messages, mode):
-    """Сводка/факты — фиксированные ответы по маркерам; инвариант-режимы
+    """Rewrite (задача 7 shturman-rag-stage2) — identity последнего
+    user-сообщения, проверяется ПЕРВЫМ (до всех остальных маркеров/режимов);
+    сводка/факты — фиксированные ответы по маркерам; инвариант-режимы
     (задача 5 assistant-invariants) — refuse/violate/echo-system; FSM-режим —
     реплика с блоком task-state; tool-протокол памяти — по итерации цикла
     (вызов → финальный текст); иначе — реплика из ротации."""
+    # Rewrite-маркер: standalone суб-вызов QueryRewriter — проверяем ДО
+    # FACTS/SUMMARY, invariant-режимов, RAG-маркера и ротации (rewrite-промпт
+    # не несёт RAG-маркера и не должен попадать в ротацию; ответ — identity,
+    # счётчик ротации не трогаем).
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and REWRITE_MARKER in content:
+            print("mock-llm: rewrite-запрос (маркер «%s») — identity-ответ" % REWRITE_MARKER, flush=True)
+            return _rewrite_reply(messages)
+
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "system":
             continue

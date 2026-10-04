@@ -81,7 +81,7 @@ class KtorRagClientTest {
         """.trimIndent()
         val url = startFakeSidecar { respondJson(it, 200, canonical) }
 
-        val result = KtorRagClient(RagConfig(url = url)).search("порталы", 3)
+        val result = KtorRagClient(RagConfig(url = url)).search("порталы", 3, null, null, false)
 
         assertEquals(3, result.size)
         val first = result[0]
@@ -101,7 +101,7 @@ class KtorRagClientTest {
         val canonical = """[{"chunk_id":"c1","score":0.9,"source":"f.md","title":"T","section":"S","content":"$longContent"}]"""
         val url = startFakeSidecar { respondJson(it, 200, canonical) }
 
-        val passage = KtorRagClient(RagConfig(url = url)).search("q", 1).single()
+        val passage = KtorRagClient(RagConfig(url = url)).search("q", 1, null, null, false).single()
 
         // Клиент отдаёт ПОЛНЫЙ content в Passage (обрезка не на клиенте)
         assertEquals(longContent, passage.content)
@@ -117,7 +117,7 @@ class KtorRagClientTest {
     fun `тело запроса - POST с query и k`() = runBlocking {
         val url = startFakeSidecar { respondJson(it, 200, "[]") }
 
-        KtorRagClient(RagConfig(url = url)).search("тестовый запрос", 4)
+        KtorRagClient(RagConfig(url = url)).search("тестовый запрос", 4, null, null, false)
 
         val sent = capturedBodies.single()
         val parsed = Json.parseToJsonElement(sent).jsonObject
@@ -129,7 +129,7 @@ class KtorRagClientTest {
     fun `k=0 клампится в 1 в исходящем теле`() = runBlocking {
         val url = startFakeSidecar { respondJson(it, 200, "[]") }
 
-        KtorRagClient(RagConfig(url = url)).search("q", 0)
+        KtorRagClient(RagConfig(url = url)).search("q", 0, null, null, false)
 
         val parsed = Json.parseToJsonElement(capturedBodies.single()).jsonObject
         assertEquals(1, parsed["k"]!!.jsonPrimitive.content.toInt())
@@ -139,7 +139,7 @@ class KtorRagClientTest {
     fun `отрицательный k клампится в 1`() = runBlocking {
         val url = startFakeSidecar { respondJson(it, 200, "[]") }
 
-        KtorRagClient(RagConfig(url = url)).search("q", -7)
+        KtorRagClient(RagConfig(url = url)).search("q", -7, null, null, false)
 
         val parsed = Json.parseToJsonElement(capturedBodies.single()).jsonObject
         assertEquals(1, parsed["k"]!!.jsonPrimitive.content.toInt())
@@ -150,7 +150,7 @@ class KtorRagClientTest {
         val url = startFakeSidecar { respondJson(it, 500, """{"error":"index down"}""") }
 
         try {
-            KtorRagClient(RagConfig(url = url, timeoutMs = 2_000)).search("q", 2)
+            KtorRagClient(RagConfig(url = url, timeoutMs = 2_000)).search("q", 2, null, null, false)
             fail("ожидалось исключение при HTTP 500")
         } catch (e: IllegalStateException) {
             assertTrue(
@@ -168,7 +168,7 @@ class KtorRagClientTest {
         }
 
         try {
-            KtorRagClient(RagConfig(url = url, timeoutMs = 300)).search("q", 1)
+            KtorRagClient(RagConfig(url = url, timeoutMs = 300)).search("q", 1, null, null, false)
             fail("ожидался срыв запроса по таймауту")
         } catch (e: IOException) {
             // HttpRequestTimeoutException — подкласс IOException; это ожидаемый путь
@@ -179,7 +179,7 @@ class KtorRagClientTest {
     fun `пустой массив sidecar - пустой список`() = runBlocking {
         val url = startFakeSidecar { respondJson(it, 200, "[]") }
 
-        val result = KtorRagClient(RagConfig(url = url)).search("q", 5)
+        val result = KtorRagClient(RagConfig(url = url)).search("q", 5, null, null, false)
 
         assertTrue(result.isEmpty())
     }
@@ -193,7 +193,7 @@ class KtorRagClientDeadPortTest {
         val deadClient = KtorRagClient(RagConfig(url = "http://127.0.0.1:1/search", timeoutMs = 1_000))
 
         try {
-            deadClient.search("q", 2)
+            deadClient.search("q", 2, null, null, false)
             fail("ожидалось исключение при отказе соединения")
         } catch (expected: IOException) {
             // ConnectException — подкласс IOException; ок

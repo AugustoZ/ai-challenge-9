@@ -33,6 +33,14 @@ export interface ChatRequest {
   memoryTools?: boolean | null;
   /** RAG-поиск по корпусу документов: null/false — выключен, true — включён. */
   ragEnabled?: boolean | null;
+  /**
+   * Stage-2 overrides RAG (Kotlin: Models.kt ChatRequest — синхронизировать
+   * вручную): порог отсечения, реранкер, query rewrite. null — взять из
+   * конфига сервера. Фронтенд их НЕ отправляет — только контракт.
+   */
+  ragThreshold?: number | null;
+  ragRerank?: boolean | null;
+  ragRewrite?: boolean | null;
 }
 
 /** Полный ответ сервера: и блокирующий /api/chat, и кадр final стрима. */

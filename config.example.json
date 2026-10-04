@@ -32,7 +32,12 @@
     "url": "http://localhost:18700/search",
     "k": 5,
     "timeoutMs": 10000,
-    "maxBlockChars": 6000
+    "maxBlockChars": 6000,
+    "rerank": false,
+    "threshold": null,
+    "kBefore": null,
+    "rewrite": false,
+    "rewriteTimeoutMs": 8000
   },
   "providers": [
     {

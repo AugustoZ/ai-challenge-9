@@ -58,7 +58,10 @@ class RagMarkerTest(unittest.TestCase):
         self.assertIn("1. Подготовка флешки", reply1)
         self.assertIn("ru/FAQ-all.md (раздел 1. Подготовка флешки)", reply1)
         self.assertIn("Флешка должна быть отформатирована в exFAT", reply1)
-        self.assertIn("Источники: ru/FAQ-all.md; ru/Гид.md", reply1)
+        # T2 (rag-answers-minichat): mock больше НЕ печатает секцию
+        # «Источники:» — единственный эмиттер блоков источников теперь
+        # бэкенд Штурмана; mock остаётся ответчиком простым ответом.
+        self.assertNotIn("Источники:", reply1)
         # Стабильность: повторный идентичный вызов → идентичный ответ
         # (без ротации, без случайности).
         reply2 = mock_llm._pick_reply(_rag_messages(), "plain")
@@ -126,6 +129,50 @@ class RagMarkerTest(unittest.TestCase):
         self.assertEqual(
             mock_llm._pick_reply(messages, "plain"), mock_llm.SUMMARY_REPLY
         )
+
+
+# System-инструкция QueryRewriter (задача 5 плана shturman-rag-stage2):
+# несёт маркер mock-llm REWRITE_MARKER (строковое совпадение «переписываешь
+# поисковый запрос»).
+REWRITE_SYSTEM = (
+    "Ты переписываешь поисковый запрос пользователя для полнотекстового "
+    "поиска по документации. Верни ТОЛЬКО переписанный запрос одной "
+    "строкой, без пояснений."
+)
+
+REWRITE_USER = "как отформатировать флешку"
+
+
+def _rewrite_messages(extra_system=None):
+    messages = [{"role": "system", "content": REWRITE_SYSTEM}]
+    if extra_system is not None:
+        messages.append({"role": "system", "content": extra_system})
+    messages.append({"role": "user", "content": REWRITE_USER})
+    return messages
+
+
+class RewriteMarkerTest(unittest.TestCase):
+    def test_rewrite_marker_returns_last_user_text_unchanged(self):
+        # identity: ответ == текст последнего user-сообщения, без маркеров,
+        # без изменений; повторный идентичный вызов → идентичный ответ.
+        reply = mock_llm._pick_reply(_rewrite_messages(), "plain")
+        self.assertEqual(reply, REWRITE_USER)
+        self.assertEqual(mock_llm._pick_reply(_rewrite_messages(), "plain"), reply)
+
+    def test_rewrite_marker_beats_rag_marker(self):
+        # payload содержит И rewrite-инструкцию, И RAG_MARKER → rewrite-путь
+        # побеждает (identity, а не _rag_reply).
+        messages = _rewrite_messages(extra_system=RAG_BLOCK)
+        reply = mock_llm._pick_reply(messages, "plain")
+        self.assertEqual(reply, REWRITE_USER)
+        self.assertNotIn("По базе знаний", reply)
+
+    def test_no_rewrite_marker_keeps_pick_reply_behavior(self):
+        # без rewrite-маркера существующее _pick_reply не меняется:
+        # RAG-блок по-прежнему идёт в _rag_reply.
+        reply = mock_llm._pick_reply(_rag_messages(), "plain")
+        self.assertTrue(reply.startswith("По базе знаний: "), reply)
+        self.assertIn("ru/FAQ-all.md", reply)
 
 
 if __name__ == "__main__":
