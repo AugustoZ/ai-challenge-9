@@ -8,15 +8,11 @@ build
 # (Node-стадии нет), dist копируется из контекста — НЕ исключать frontend/dist.
 frontend/node_modules
 
-# Python MCP-серверы: хост-артефакты и venv в образ не тащим. venv собирается
-# в отдельной стадии (mcp-python), БД/буфер/кэш — только runtime-данные на хосте,
-# echo/ — локальный артефакт. НЕ исключать сами .py (Dockerfile их копирует в финал).
+# Python MCP-серверы: venv в образ не тащим — собирается в отдельной стадии
+# (mcp-python). НЕ исключать сами .py (Dockerfile их копирует в финал).
+# tg_server/storage переехали в ../shturman-bot — в образ идёт только wiki_server.
 mcp-servers/.venv/
 mcp-servers/__pycache__/
-mcp-servers/*.db*
-mcp-servers/.tg_buffer.jsonl*
-mcp-servers/.imported*
-mcp-servers/.tg_messages.db*
 mcp-servers/echo
 
 # Служебное

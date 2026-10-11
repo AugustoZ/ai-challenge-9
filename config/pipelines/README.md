@@ -43,7 +43,7 @@
 ### Как добавить свой сценарий
 
 1. Положите файл `config/pipelines/<имя>.json` в этот каталог (формат выше).
-2. Проверьте имена тулов и имена аргументов: встроенные — в `src/main/kotlin/com/example/aiweb/tools/`, MCP-тулы — в `mcp-servers/*_server.py` (сигнатуры функций).
+2. Проверьте имена тулов и имена аргументов: встроенные — в `src/main/kotlin/com/example/aiweb/tools/`, MCP-тулы — в `mcp-servers/wiki_server.py` и `../shturman-bot/tg_server.py` (сигнатуры функций).
 3. Запустите: `POST /api/pipeline/run` с `{"scenario": "<имя>"}` (202 → статус через `GET /api/pipeline/status`).
 
 ## Как назвать серверы в config.json
@@ -54,7 +54,7 @@
 
 ```json
 "mcp": [
-  { "name": "tg",   "command": "…/mcp-servers/.venv/bin/python", "args": ["…/mcp-servers/tg_server.py"],   "enabled": true },
+  { "name": "tg",   "command": "…/shturman-bot/.venv/bin/python", "args": ["…/shturman-bot/tg_server.py"], "enabled": true },
   { "name": "wiki", "command": "…/mcp-servers/.venv/bin/python", "args": ["…/mcp-servers/wiki_server.py"], "enabled": true }
 ]
 ```

@@ -73,16 +73,10 @@ COPY --from=mcp-python /usr/local /usr/local
 COPY --from=mcp-python --chown=aiweb:aiweb /app/mcp-servers/.venv /app/mcp-servers/.venv
 
 # Исходники MCP-серверов (config.json запускает их по этому пути).
-COPY --chown=aiweb:aiweb mcp-servers/tg_server.py mcp-servers/wiki_server.py mcp-servers/common.py /app/mcp-servers/
-
-# Python-модуль _sqlite3 (нужен для FTS5 в tg_server.py) линкуется с системной
-# libsqlite3.so.0, которой нет в базе temurin (Ubuntu 24.04) — ставим её.
-RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# БД Telegram-сообщений — в персистентный том /app/data: WAL-сайдкары ложатся
-# в тот же каталог (требование SQLite; на NFS SQLite — порча данных).
-ENV TG_DB_FILE=/app/data/tg_messages.db
+# tg_server и хостовый bot_responder переехали в standalone-проект
+# shturman-bot (смежный каталог Projects/shturman-bot) — в контейнере
+# остаётся только wiki_server + common.
+COPY --chown=aiweb:aiweb mcp-servers/wiki_server.py mcp-servers/common.py /app/mcp-servers/
 
 # Дальше всё выполняется от непривилегированного пользователя
 USER aiweb

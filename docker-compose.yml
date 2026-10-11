@@ -32,9 +32,9 @@ services:
       - AI_API_URL=${AI_API_URL}
       - AI_API_KEY=${AI_API_KEY}
       - AI_MODEL=${AI_MODEL}
-      # БД Telegram-сообщений tg_server.py — в персистентный том /app/data
-      # (переживает down/up). НЕ размещать этот том на NFS: SQLite там портится.
-      - TG_DB_FILE=/app/data/tg_messages.db
+      # tg-сервер и бот переехали в standalone-проект shturman-bot: снапшот
+      # TG-БД (./shturman-bot/.tg-db-share) контейнеру больше не нужен —
+      # tg_server на хосте запускается config.json из каталога shturman-bot.
     # Две сети (P2): default — интернет для LLM API, sandbox — внутренняя
     # сеть для вызова tool-sandbox (internal: true, без egress).
     networks:
