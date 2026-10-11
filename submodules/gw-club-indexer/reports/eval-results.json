@@ -1,0 +1,1683 @@
+{
+  "params": {
+    "n_docs": 33,
+    "model": "intfloat/multilingual-e5-small",
+    "provider": "local",
+    "embedding_dim": 384,
+    "n_items": 30,
+    "origins": {
+      "heading": 0,
+      "faq": 30
+    }
+  },
+  "strategies": {
+    "fixed": {
+      "n_chunks": 199,
+      "params": {
+        "max_tokens": 400,
+        "overlap_tokens": 60
+      },
+      "coherence": 0.027701909646229355,
+      "length": {
+        "n_chunks": 199,
+        "min": 2.0,
+        "p50": 364.0,
+        "p90": 399.0,
+        "max": 6084.0,
+        "pct_below_30": 0.035175879396984924,
+        "pct_over_max_tokens": 0.07035175879396985
+      },
+      "n_items": 30,
+      "n_items_with_hit": 30,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr_at_10": 0.8733333333333333,
+      "items": [
+        {
+          "query": "Как правильно отформатировать флешку?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Как правильно отформатировать флешку?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "6c82e71cbdd6cbf4",
+            "b5c0b85568138b4c",
+            "d0aa3e500da4c47a",
+            "cb0550ad84984f4e",
+            "8874a95d52da5087"
+          ],
+          "top10_ids": [
+            "6c82e71cbdd6cbf4",
+            "b5c0b85568138b4c",
+            "d0aa3e500da4c47a",
+            "cb0550ad84984f4e",
+            "8874a95d52da5087",
+            "3a82d7108e5db412",
+            "279ad06839a187c5",
+            "cfb7f51cde8d89a0",
+            "d016ed361fcc98e6",
+            "34e6c46781c1b75a"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Какой должна быть структура файлов на флешке?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Какой должна быть структура файлов на флешке?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "6c82e71cbdd6cbf4",
+            "b5c0b85568138b4c",
+            "d0aa3e500da4c47a",
+            "8874a95d52da5087",
+            "4b51a17f5b2d9a63"
+          ],
+          "top10_ids": [
+            "6c82e71cbdd6cbf4",
+            "b5c0b85568138b4c",
+            "d0aa3e500da4c47a",
+            "8874a95d52da5087",
+            "4b51a17f5b2d9a63",
+            "7338469f9ab67945",
+            "9a19f6b16c56cc77",
+            "cb0550ad84984f4e",
+            "fdda1d67b0213878",
+            "76315c1d5710a99f"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Какую флешку использовать для установки прошивки?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Какую флешку использовать для установки прошивки?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "d0aa3e500da4c47a",
+            "6c82e71cbdd6cbf4",
+            "b5c0b85568138b4c",
+            "cb0550ad84984f4e",
+            "3a82d7108e5db412"
+          ],
+          "top10_ids": [
+            "d0aa3e500da4c47a",
+            "6c82e71cbdd6cbf4",
+            "b5c0b85568138b4c",
+            "cb0550ad84984f4e",
+            "3a82d7108e5db412",
+            "98dd436907246f54",
+            "8874a95d52da5087",
+            "6a8ad4b6b6be77b0",
+            "279ad06839a187c5",
+            "d0afe1df4ff71830"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Что делать, если установка зависла на 0/0?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Что делать, если установка зависла на 0/0?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "cb0550ad84984f4e",
+            "6c82e71cbdd6cbf4",
+            "8874a95d52da5087",
+            "05e8fd7bc0d55f60",
+            "b8f34b0013dec0b4"
+          ],
+          "top10_ids": [
+            "cb0550ad84984f4e",
+            "6c82e71cbdd6cbf4",
+            "8874a95d52da5087",
+            "05e8fd7bc0d55f60",
+            "b8f34b0013dec0b4",
+            "39d4a74283d14672",
+            "269a8e164eb0fc38",
+            "6eaa15c333786959",
+            "6ae6266ba0809ba1",
+            "597a854eaaa107f8"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Где включать Wi‑Fi: на телефоне или на ГУ?",
+          "source": "ru/FAQ-all.md",
+          "section": "2. Подключение к Wi‑Fi и интернет > Где включать Wi‑Fi: на телефоне или на ГУ?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "34e6c46781c1b75a",
+            "c5dc2d5fa38286a1",
+            "a7fafae7891ed157",
+            "401217a28148bc41",
+            "94b32375b2dd5aaa"
+          ],
+          "top10_ids": [
+            "34e6c46781c1b75a",
+            "c5dc2d5fa38286a1",
+            "a7fafae7891ed157",
+            "401217a28148bc41",
+            "94b32375b2dd5aaa",
+            "d6be1a10cbcb4873",
+            "8b9507603c6bd6a0",
+            "4690ec15fe9c2036",
+            "70b7ad82e9413d9d",
+            "279ad06839a187c5"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Как проверить, что интернет на ГУ действительно работает?",
+          "source": "ru/FAQ-all.md",
+          "section": "2. Подключение к Wi‑Fi и интернет > Как проверить, что интернет на ГУ действительно работает?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "34e6c46781c1b75a",
+            "4287c7c2701a1648",
+            "50b2654c261db539",
+            "86a21d08ed2f8ae5",
+            "3a717af2c1907a19"
+          ],
+          "top10_ids": [
+            "34e6c46781c1b75a",
+            "4287c7c2701a1648",
+            "50b2654c261db539",
+            "86a21d08ed2f8ae5",
+            "3a717af2c1907a19",
+            "d72da2cc75f2fadc",
+            "6c1c9a984254d5a7",
+            "fdda1d67b0213878",
+            "76315c1d5710a99f",
+            "6c8349209c7ca559"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Где вводить код активации или промокод?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Где вводить код активации или промокод?",
+          "origin": "faq",
+          "relevant_count": 2,
+          "top5_ids": [
+            "94b32375b2dd5aaa",
+            "1ddf0912a4aee874",
+            "34e6c46781c1b75a",
+            "401217a28148bc41",
+            "dc7908e7aab7dac3"
+          ],
+          "top10_ids": [
+            "94b32375b2dd5aaa",
+            "1ddf0912a4aee874",
+            "34e6c46781c1b75a",
+            "401217a28148bc41",
+            "dc7908e7aab7dac3",
+            "d016ed361fcc98e6",
+            "19a2d918588f1b3a",
+            "c3dd1673fcd436b3",
+            "a7fafae7891ed157",
+            "b511266ac3495b96"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Как происходит оплата и активация прошивки?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Как происходит оплата и активация прошивки?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "94b32375b2dd5aaa",
+            "34e6c46781c1b75a",
+            "6c82e71cbdd6cbf4",
+            "00cf17f76b865f64",
+            "279ad06839a187c5"
+          ],
+          "top10_ids": [
+            "94b32375b2dd5aaa",
+            "34e6c46781c1b75a",
+            "6c82e71cbdd6cbf4",
+            "00cf17f76b865f64",
+            "279ad06839a187c5",
+            "09f6075957f42b51",
+            "d302dcedb1f726de",
+            "d0aa3e500da4c47a",
+            "401217a28148bc41",
+            "a7fafae7891ed157"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли оплатить прошивку из другой страны?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Можно ли оплатить прошивку из другой страны?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "94b32375b2dd5aaa",
+            "98dd436907246f54",
+            "7254391c4ed54176",
+            "34e6c46781c1b75a",
+            "23f5b38b65794a77"
+          ],
+          "top10_ids": [
+            "94b32375b2dd5aaa",
+            "98dd436907246f54",
+            "7254391c4ed54176",
+            "34e6c46781c1b75a",
+            "23f5b38b65794a77",
+            "00cf17f76b865f64",
+            "d302dcedb1f726de",
+            "23f8ba9984c30170",
+            "b319edf2dc57fb27",
+            "fdf9d54179332279"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Что делать, если после оплаты прошивка не активировалась?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Что делать, если после оплаты прошивка не активировалась?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "94b32375b2dd5aaa",
+            "34e6c46781c1b75a",
+            "00cf17f76b865f64",
+            "d302dcedb1f726de",
+            "2b5779f7a3ca1cc4"
+          ],
+          "top10_ids": [
+            "94b32375b2dd5aaa",
+            "34e6c46781c1b75a",
+            "00cf17f76b865f64",
+            "d302dcedb1f726de",
+            "2b5779f7a3ca1cc4",
+            "6c82e71cbdd6cbf4",
+            "cb0550ad84984f4e",
+            "a7fafae7891ed157",
+            "d0aa3e500da4c47a",
+            "8874a95d52da5087"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли перейти с Lite на Full / Ultra / Assist / Max?",
+          "source": "ru/FAQ-all.md",
+          "section": "4. Переход на старшую версию прошивки > Можно ли перейти с Lite на Full / Ultra / Assist / Max?",
+          "origin": "faq",
+          "relevant_count": 2,
+          "top5_ids": [
+            "74cee08ea81f6855",
+            "94b32375b2dd5aaa",
+            "e9b26532cea48bef",
+            "d6be1a10cbcb4873",
+            "6eaa15c333786959"
+          ],
+          "top10_ids": [
+            "74cee08ea81f6855",
+            "94b32375b2dd5aaa",
+            "e9b26532cea48bef",
+            "d6be1a10cbcb4873",
+            "6eaa15c333786959",
+            "39d4a74283d14672",
+            "8874a95d52da5087",
+            "671b45ac41a49016",
+            "d0afe1df4ff71830",
+            "b9f258776129c82b"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Сохраняется ли лицензия при переходе на старшую прошивку?",
+          "source": "ru/FAQ-all.md",
+          "section": "4. Переход на старшую версию прошивки > Сохраняется ли лицензия при переходе на старшую прошивку?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "74cee08ea81f6855",
+            "4690ec15fe9c2036",
+            "d302dcedb1f726de",
+            "09f6075957f42b51",
+            "d0aa3e500da4c47a"
+          ],
+          "top10_ids": [
+            "74cee08ea81f6855",
+            "4690ec15fe9c2036",
+            "d302dcedb1f726de",
+            "09f6075957f42b51",
+            "d0aa3e500da4c47a",
+            "00cf17f76b865f64",
+            "d0afe1df4ff71830",
+            "cfb7f51cde8d89a0",
+            "94b32375b2dd5aaa",
+            "084854bec0b93a84"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Что будет, если сделать сброс к заводским настройкам после активации?",
+          "source": "ru/FAQ-all.md",
+          "section": "4. Переход на старшую версию прошивки > Что будет, если сделать сброс к заводским настройкам после активации?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "d302dcedb1f726de",
+            "6ae6266ba0809ba1",
+            "cfb7f51cde8d89a0",
+            "74cee08ea81f6855",
+            "756e775627052632"
+          ],
+          "top10_ids": [
+            "d302dcedb1f726de",
+            "6ae6266ba0809ba1",
+            "cfb7f51cde8d89a0",
+            "74cee08ea81f6855",
+            "756e775627052632",
+            "ce78cbc09538b838",
+            "39d4a74283d14672",
+            "4690ec15fe9c2036",
+            "269a8e164eb0fc38",
+            "6eaa15c333786959"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли прошить TANK 300, выпущенный для внутреннего рынка Китая?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Можно ли прошить TANK 300, выпущенный для внутреннего рынка Китая?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "98dd436907246f54",
+            "0243eff9a3874976",
+            "e9b26532cea48bef",
+            "d0afe1df4ff71830",
+            "05e8fd7bc0d55f60"
+          ],
+          "top10_ids": [
+            "98dd436907246f54",
+            "0243eff9a3874976",
+            "e9b26532cea48bef",
+            "d0afe1df4ff71830",
+            "05e8fd7bc0d55f60",
+            "73b90ab5a96691a2",
+            "8874a95d52da5087",
+            "677dc447a0d1d3c0",
+            "9a4181da45cfbbff",
+            "671b45ac41a49016"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли ставить прошивку TANK 300 на HAVAL и наоборот?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Можно ли ставить прошивку TANK 300 на HAVAL и наоборот?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "e9b26532cea48bef",
+            "6a8ad4b6b6be77b0",
+            "d0aa3e500da4c47a",
+            "98dd436907246f54",
+            "b90a438a209ed6b8"
+          ],
+          "top10_ids": [
+            "e9b26532cea48bef",
+            "6a8ad4b6b6be77b0",
+            "d0aa3e500da4c47a",
+            "98dd436907246f54",
+            "b90a438a209ed6b8",
+            "c203df99578e94d1",
+            "7254391c4ed54176",
+            "b8f34b0013dec0b4",
+            "05e8fd7bc0d55f60",
+            "8874a95d52da5087"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "На какие TANK 300 можно ставить прошивки GW-CLUB?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > На какие TANK 300 можно ставить прошивки GW-CLUB?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "98dd436907246f54",
+            "3a82d7108e5db412",
+            "9a4181da45cfbbff",
+            "73b90ab5a96691a2",
+            "8aa38c0cf3657c24"
+          ],
+          "top10_ids": [
+            "98dd436907246f54",
+            "3a82d7108e5db412",
+            "9a4181da45cfbbff",
+            "73b90ab5a96691a2",
+            "8aa38c0cf3657c24",
+            "c3dd1673fcd436b3",
+            "8874a95d52da5087",
+            "e9b26532cea48bef",
+            "6a8ad4b6b6be77b0",
+            "d0afe1df4ff71830"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Подойдут ли прошивки для TANK 300, купленного в Казахстане или других странах?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Подойдут ли прошивки для TANK 300, купленного в Казахстане или других странах?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "98dd436907246f54",
+            "e9b26532cea48bef",
+            "d0afe1df4ff71830",
+            "05e8fd7bc0d55f60",
+            "0243eff9a3874976"
+          ],
+          "top10_ids": [
+            "98dd436907246f54",
+            "e9b26532cea48bef",
+            "d0afe1df4ff71830",
+            "05e8fd7bc0d55f60",
+            "0243eff9a3874976",
+            "8874a95d52da5087",
+            "7254391c4ed54176",
+            "d0aa3e500da4c47a",
+            "b90a438a209ed6b8",
+            "5fd847e86df815f1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Работают ли прошивки с комплектацией Adventure и другими версиями TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Работают ли прошивки с комплектацией Adventure и другими версиями TANK 300?",
+          "origin": "faq",
+          "relevant_count": 2,
+          "top5_ids": [
+            "e9b26532cea48bef",
+            "98dd436907246f54",
+            "d0afe1df4ff71830",
+            "8874a95d52da5087",
+            "05e8fd7bc0d55f60"
+          ],
+          "top10_ids": [
+            "e9b26532cea48bef",
+            "98dd436907246f54",
+            "d0afe1df4ff71830",
+            "8874a95d52da5087",
+            "05e8fd7bc0d55f60",
+            "73b90ab5a96691a2",
+            "d0aa3e500da4c47a",
+            "0243eff9a3874976",
+            "9a4181da45cfbbff",
+            "5fd847e86df815f1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли сделать бэкап штатной прошивки TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "2. Функционал прошивок (Lite / Full / Max и др.) > Можно ли сделать бэкап штатной прошивки TANK 300?",
+          "origin": "faq",
+          "relevant_count": 2,
+          "top5_ids": [
+            "e9b26532cea48bef",
+            "9a4181da45cfbbff",
+            "98dd436907246f54",
+            "d0afe1df4ff71830",
+            "d0aa3e500da4c47a"
+          ],
+          "top10_ids": [
+            "e9b26532cea48bef",
+            "9a4181da45cfbbff",
+            "98dd436907246f54",
+            "d0afe1df4ff71830",
+            "d0aa3e500da4c47a",
+            "05e8fd7bc0d55f60",
+            "8874a95d52da5087",
+            "73b90ab5a96691a2",
+            "0243eff9a3874976",
+            "5fd847e86df815f1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Нужна ли именно Full или Max прошивка для китайского TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "2. Функционал прошивок (Lite / Full / Max и др.) > Нужна ли именно Full или Max прошивка для китайского TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "e9b26532cea48bef",
+            "98dd436907246f54",
+            "d0afe1df4ff71830",
+            "5fd847e86df815f1",
+            "05e8fd7bc0d55f60"
+          ],
+          "top10_ids": [
+            "e9b26532cea48bef",
+            "98dd436907246f54",
+            "d0afe1df4ff71830",
+            "5fd847e86df815f1",
+            "05e8fd7bc0d55f60",
+            "8874a95d52da5087",
+            "73b90ab5a96691a2",
+            "3a82d7108e5db412",
+            "d0aa3e500da4c47a",
+            "c203df99578e94d1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Чем отличаются Lite, Full, бесплатная (колодцы) и более новые версии для TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "2. Функционал прошивок (Lite / Full / Max и др.) > Чем отличаются Lite, Full, бесплатная (колодцы) и более новые версии для TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "e9b26532cea48bef",
+            "39d4a74283d14672",
+            "6eaa15c333786959",
+            "ca18dd1f732ec216",
+            "b90a438a209ed6b8"
+          ],
+          "top10_ids": [
+            "e9b26532cea48bef",
+            "39d4a74283d14672",
+            "6eaa15c333786959",
+            "ca18dd1f732ec216",
+            "b90a438a209ed6b8",
+            "d0afe1df4ff71830",
+            "671b45ac41a49016",
+            "23e084d1cdcc2074",
+            "73b90ab5a96691a2",
+            "8874a95d52da5087"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Android Auto не работает по Wi‑Fi, только по кабелю. Это нормально?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Android Auto не работает по Wi‑Fi, только по кабелю. Это нормально?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "70b7ad82e9413d9d",
+            "34e6c46781c1b75a",
+            "ce78cbc09538b838",
+            "2b5779f7a3ca1cc4",
+            "279ad06839a187c5"
+          ],
+          "top10_ids": [
+            "70b7ad82e9413d9d",
+            "34e6c46781c1b75a",
+            "ce78cbc09538b838",
+            "2b5779f7a3ca1cc4",
+            "279ad06839a187c5",
+            "d0bdca3b4a621b59",
+            "cb0550ad84984f4e",
+            "65824251a30ce035",
+            "a7fafae7891ed157",
+            "dc9dd6b472c2f32a"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Выходит ошибка при установке или запуске microG. Как исправить?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Выходит ошибка при установке или запуске microG. Как исправить?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "9a4181da45cfbbff",
+            "269a8e164eb0fc38",
+            "99c24161ad9901f4",
+            "dc2ee81be87a4014",
+            "4690ec15fe9c2036"
+          ],
+          "top10_ids": [
+            "9a4181da45cfbbff",
+            "269a8e164eb0fc38",
+            "99c24161ad9901f4",
+            "dc2ee81be87a4014",
+            "4690ec15fe9c2036",
+            "68ce53bd176d8f66",
+            "8874a95d52da5087",
+            "dc7908e7aab7dac3",
+            "e3ca7fc3cec7c158",
+            "a2d8fbaa70813267"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Зачем нужен microG/GMS Core для YouTube на TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Зачем нужен microG/GMS Core для YouTube на TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "9a4181da45cfbbff",
+            "99c24161ad9901f4",
+            "597a854eaaa107f8",
+            "8874a95d52da5087",
+            "1353da4e08c403f0"
+          ],
+          "top10_ids": [
+            "9a4181da45cfbbff",
+            "99c24161ad9901f4",
+            "597a854eaaa107f8",
+            "8874a95d52da5087",
+            "1353da4e08c403f0",
+            "dc2ee81be87a4014",
+            "5fd847e86df815f1",
+            "3a82d7108e5db412",
+            "39d4a74283d14672",
+            "e21b841a167b7047"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Не запускается YouTube или зависает в мини‑окне. Что делать?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Не запускается YouTube или зависает в мини‑окне. Что делать?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "9a4181da45cfbbff",
+            "4690ec15fe9c2036",
+            "99c24161ad9901f4",
+            "5d9c1aec6b049bbd",
+            "34e6c46781c1b75a"
+          ],
+          "top10_ids": [
+            "9a4181da45cfbbff",
+            "4690ec15fe9c2036",
+            "99c24161ad9901f4",
+            "5d9c1aec6b049bbd",
+            "34e6c46781c1b75a",
+            "269a8e164eb0fc38",
+            "dc2ee81be87a4014",
+            "3f9c32c22f010693",
+            "e21b841a167b7047",
+            "597a854eaaa107f8"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Как вывести карту/навигацию на экран приборной панели?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "4. GPS и навигация > Как вывести карту/навигацию на экран приборной панели?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "9196b39c80966ac4",
+            "050e97c4dfa33335",
+            "6d2700a657a84a39",
+            "0b1584ba012e63f2",
+            "8aa38c0cf3657c24"
+          ],
+          "top10_ids": [
+            "9196b39c80966ac4",
+            "050e97c4dfa33335",
+            "6d2700a657a84a39",
+            "0b1584ba012e63f2",
+            "8aa38c0cf3657c24",
+            "f5ae1f8fb066a532",
+            "bc0d7307ab6c572a",
+            "0b4fc47a17a5f717",
+            "c2b30a06232ca51c",
+            "f4e8316427eb2849"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Нужно ли внешнее устройство для работы навигации на TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "4. GPS и навигация > Нужно ли внешнее устройство для работы навигации на TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "70b7ad82e9413d9d",
+            "8aa38c0cf3657c24",
+            "e9b26532cea48bef",
+            "98dd436907246f54",
+            "05e8fd7bc0d55f60"
+          ],
+          "top10_ids": [
+            "70b7ad82e9413d9d",
+            "8aa38c0cf3657c24",
+            "e9b26532cea48bef",
+            "98dd436907246f54",
+            "05e8fd7bc0d55f60",
+            "73b90ab5a96691a2",
+            "8874a95d52da5087",
+            "39d4a74283d14672",
+            "6eaa15c333786959",
+            "5fd847e86df815f1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Есть ли голосовой ассистент на Ultra/Assist/Max для TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "5. Голосовой ассистент > Есть ли голосовой ассистент на Ultra/Assist/Max для TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "73b90ab5a96691a2",
+            "c3dd1673fcd436b3",
+            "bd1a4119528f1a28",
+            "8aa38c0cf3657c24",
+            "ad30b6a0af59e3b0"
+          ],
+          "top10_ids": [
+            "73b90ab5a96691a2",
+            "c3dd1673fcd436b3",
+            "bd1a4119528f1a28",
+            "8aa38c0cf3657c24",
+            "ad30b6a0af59e3b0",
+            "b072980276e6ac3e",
+            "e9b26532cea48bef",
+            "dc7908e7aab7dac3",
+            "d0afe1df4ff71830",
+            "39d4a74283d14672"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Какие автомобили HAVAL поддерживаются прошивками GW-CLUB?",
+          "source": "ru/FaqHaval.md",
+          "section": "1. Совместимость и выбор прошивки > Какие автомобили HAVAL поддерживаются прошивками GW-CLUB?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "6a8ad4b6b6be77b0",
+            "dc2ee81be87a4014",
+            "084854bec0b93a84",
+            "f4e8316427eb2849",
+            "1a3196382bf67ec3"
+          ],
+          "top10_ids": [
+            "6a8ad4b6b6be77b0",
+            "dc2ee81be87a4014",
+            "084854bec0b93a84",
+            "f4e8316427eb2849",
+            "1a3196382bf67ec3",
+            "d6be1a10cbcb4873",
+            "a7fafae7891ed157",
+            "65824251a30ce035",
+            "1ddf0912a4aee874",
+            "dc7908e7aab7dac3"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Подходит ли одна прошивка для Dargo и H6?",
+          "source": "ru/FaqHaval.md",
+          "section": "1. Совместимость и выбор прошивки > Подходит ли одна прошивка для Dargo и H6?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "6a8ad4b6b6be77b0",
+            "dc2ee81be87a4014",
+            "9a9957eef061616e",
+            "1a3196382bf67ec3",
+            "c203df99578e94d1"
+          ],
+          "top10_ids": [
+            "6a8ad4b6b6be77b0",
+            "dc2ee81be87a4014",
+            "9a9957eef061616e",
+            "1a3196382bf67ec3",
+            "c203df99578e94d1",
+            "b8f34b0013dec0b4",
+            "3ce8b0abf686e4c5",
+            "37c7f2260196b739",
+            "b9f258776129c82b",
+            "e9b26532cea48bef"
+          ],
+          "recall_at_5": 1.0
+        }
+      ]
+    },
+    "structure": {
+      "n_chunks": 376,
+      "params": {
+        "max_tokens": 400,
+        "overlap_tokens": 60
+      },
+      "coherence": 0.0680279124365457,
+      "length": {
+        "n_chunks": 376,
+        "min": 6.0,
+        "p50": 107.0,
+        "p90": 335.5,
+        "max": 6090.0,
+        "pct_below_30": 0.018617021276595744,
+        "pct_over_max_tokens": 0.04521276595744681
+      },
+      "n_items": 30,
+      "n_items_with_hit": 30,
+      "recall_at_5": 1.0,
+      "recall_at_10": 1.0,
+      "mrr_at_10": 1.0,
+      "items": [
+        {
+          "query": "Как правильно отформатировать флешку?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Как правильно отформатировать флешку?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "28560a96cf04841a",
+            "2051f2c7cbe4f66c",
+            "c5bfd93b8e1edb87",
+            "9576158db01004f9",
+            "83681fbcaa0dd648"
+          ],
+          "top10_ids": [
+            "28560a96cf04841a",
+            "2051f2c7cbe4f66c",
+            "c5bfd93b8e1edb87",
+            "9576158db01004f9",
+            "83681fbcaa0dd648",
+            "1b0d4d7e826d3c0f",
+            "a15640772d1dfe9c",
+            "c9ebbeb2f9a5a1e2",
+            "91bc6c5b8cac062b",
+            "a483175ddf702019"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Какой должна быть структура файлов на флешке?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Какой должна быть структура файлов на флешке?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "1b0d4d7e826d3c0f",
+            "28560a96cf04841a",
+            "9576158db01004f9",
+            "a15640772d1dfe9c",
+            "2051f2c7cbe4f66c"
+          ],
+          "top10_ids": [
+            "1b0d4d7e826d3c0f",
+            "28560a96cf04841a",
+            "9576158db01004f9",
+            "a15640772d1dfe9c",
+            "2051f2c7cbe4f66c",
+            "c5bfd93b8e1edb87",
+            "83681fbcaa0dd648",
+            "c9ebbeb2f9a5a1e2",
+            "a483175ddf702019",
+            "9c7b98d93f12dbfd"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Какую флешку использовать для установки прошивки?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Какую флешку использовать для установки прошивки?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "a15640772d1dfe9c",
+            "9576158db01004f9",
+            "c5bfd93b8e1edb87",
+            "55e433c4ac637001",
+            "1b0d4d7e826d3c0f"
+          ],
+          "top10_ids": [
+            "a15640772d1dfe9c",
+            "9576158db01004f9",
+            "c5bfd93b8e1edb87",
+            "55e433c4ac637001",
+            "1b0d4d7e826d3c0f",
+            "a483175ddf702019",
+            "83681fbcaa0dd648",
+            "91bc6c5b8cac062b",
+            "9b6c385db3726ab5",
+            "9c7b98d93f12dbfd"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Что делать, если установка зависла на 0/0?",
+          "source": "ru/FAQ-all.md",
+          "section": "1. Подготовка флешки > Что делать, если установка зависла на 0/0?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "91bc6c5b8cac062b",
+            "c9ebbeb2f9a5a1e2",
+            "f611eac71edf8e38",
+            "50568b3466bb61b1",
+            "ba1c5b626f357c86"
+          ],
+          "top10_ids": [
+            "91bc6c5b8cac062b",
+            "c9ebbeb2f9a5a1e2",
+            "f611eac71edf8e38",
+            "50568b3466bb61b1",
+            "ba1c5b626f357c86",
+            "4e8364b27f6c0d54",
+            "0fe300b1495da544",
+            "8a1cc49a54da13eb",
+            "1050f5bb8a70b4f4",
+            "3d6c6533918c2d23"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Где включать Wi‑Fi: на телефоне или на ГУ?",
+          "source": "ru/FAQ-all.md",
+          "section": "2. Подключение к Wi‑Fi и интернет > Где включать Wi‑Fi: на телефоне или на ГУ?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "8f9b51ed50fa94c8",
+            "a65b169368d93d7a",
+            "37e286886021206f",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1"
+          ],
+          "top10_ids": [
+            "8f9b51ed50fa94c8",
+            "a65b169368d93d7a",
+            "37e286886021206f",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1",
+            "d7ef7938ada05ef1",
+            "e7227e855b5801f9",
+            "e68baf3364d9b498",
+            "d5147a60c1560d22",
+            "91bc6c5b8cac062b"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Как проверить, что интернет на ГУ действительно работает?",
+          "source": "ru/FAQ-all.md",
+          "section": "2. Подключение к Wi‑Fi и интернет > Как проверить, что интернет на ГУ действительно работает?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "a65b169368d93d7a",
+            "22fa4bde8c71ee9a",
+            "37e286886021206f",
+            "8f9b51ed50fa94c8",
+            "bdd4b8c95fac7b42"
+          ],
+          "top10_ids": [
+            "a65b169368d93d7a",
+            "22fa4bde8c71ee9a",
+            "37e286886021206f",
+            "8f9b51ed50fa94c8",
+            "bdd4b8c95fac7b42",
+            "95aedd6db32af6de",
+            "91bc6c5b8cac062b",
+            "38dff1bd6b7f869e",
+            "0e553fb02b57535f",
+            "65dc1bbb444f22ab"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Где вводить код активации или промокод?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Где вводить код активации или промокод?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "6de04b9a252c842b",
+            "37e286886021206f",
+            "501d947ed0dac414",
+            "d7ef7938ada05ef1",
+            "e7227e855b5801f9"
+          ],
+          "top10_ids": [
+            "6de04b9a252c842b",
+            "37e286886021206f",
+            "501d947ed0dac414",
+            "d7ef7938ada05ef1",
+            "e7227e855b5801f9",
+            "870a12c4455a0c37",
+            "22fa4bde8c71ee9a",
+            "d5147a60c1560d22",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Как происходит оплата и активация прошивки?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Как происходит оплата и активация прошивки?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "37e286886021206f",
+            "24e157152d0a21b7",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1",
+            "22fa4bde8c71ee9a"
+          ],
+          "top10_ids": [
+            "37e286886021206f",
+            "24e157152d0a21b7",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1",
+            "22fa4bde8c71ee9a",
+            "e50317f226a03bc6",
+            "9c7b98d93f12dbfd",
+            "d7ef7938ada05ef1",
+            "e7227e855b5801f9",
+            "1050f5bb8a70b4f4"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли оплатить прошивку из другой страны?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Можно ли оплатить прошивку из другой страны?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "5a3e65fe31ec9fba",
+            "adabea246f92d140",
+            "24e157152d0a21b7",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1"
+          ],
+          "top10_ids": [
+            "5a3e65fe31ec9fba",
+            "adabea246f92d140",
+            "24e157152d0a21b7",
+            "7cc515db9bbc6949",
+            "0ef944dd3b0505a1",
+            "37e286886021206f",
+            "e50317f226a03bc6",
+            "8cf0fc44b48faed3",
+            "1050f5bb8a70b4f4",
+            "3d6c6533918c2d23"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Что делать, если после оплаты прошивка не активировалась?",
+          "source": "ru/FAQ-all.md",
+          "section": "3. Оплата и активация > Что делать, если после оплаты прошивка не активировалась?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "22fa4bde8c71ee9a",
+            "37e286886021206f",
+            "f611eac71edf8e38",
+            "24e157152d0a21b7",
+            "91bc6c5b8cac062b"
+          ],
+          "top10_ids": [
+            "22fa4bde8c71ee9a",
+            "37e286886021206f",
+            "f611eac71edf8e38",
+            "24e157152d0a21b7",
+            "91bc6c5b8cac062b",
+            "0fe300b1495da544",
+            "50568b3466bb61b1",
+            "5a3e65fe31ec9fba",
+            "50b3ba38fde68685",
+            "7cc515db9bbc6949"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли перейти с Lite на Full / Ultra / Assist / Max?",
+          "source": "ru/FAQ-all.md",
+          "section": "4. Переход на старшую версию прошивки > Можно ли перейти с Lite на Full / Ultra / Assist / Max?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "55657f4e3c9036ce",
+            "4c129cd65bc64d82",
+            "1435656c1aa259e3",
+            "f84124e8fb8eb36d",
+            "01cd2f6a12a275ff"
+          ],
+          "top10_ids": [
+            "55657f4e3c9036ce",
+            "4c129cd65bc64d82",
+            "1435656c1aa259e3",
+            "f84124e8fb8eb36d",
+            "01cd2f6a12a275ff",
+            "78c95a6268f20231",
+            "570a1a182686966e",
+            "802cb84f53d76e46",
+            "de2cf744d150f81d",
+            "c6f69e966b2e2850"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Сохраняется ли лицензия при переходе на старшую прошивку?",
+          "source": "ru/FAQ-all.md",
+          "section": "4. Переход на старшую версию прошивки > Сохраняется ли лицензия при переходе на старшую прошивку?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "01cd2f6a12a275ff",
+            "55657f4e3c9036ce",
+            "24e157152d0a21b7",
+            "5d2bd9cbee0275c0",
+            "bd75de2a5aff7d78"
+          ],
+          "top10_ids": [
+            "01cd2f6a12a275ff",
+            "55657f4e3c9036ce",
+            "24e157152d0a21b7",
+            "5d2bd9cbee0275c0",
+            "bd75de2a5aff7d78",
+            "745cf78669a67d92",
+            "5a3e65fe31ec9fba",
+            "90b4710edd6911c7",
+            "2da2727ae9a70b9e",
+            "50568b3466bb61b1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Что будет, если сделать сброс к заводским настройкам после активации?",
+          "source": "ru/FAQ-all.md",
+          "section": "4. Переход на старшую версию прошивки > Что будет, если сделать сброс к заводским настройкам после активации?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "bdd4b8c95fac7b42",
+            "f611eac71edf8e38",
+            "50568b3466bb61b1",
+            "33b8c0719094b708",
+            "47406b02a5fe13ee"
+          ],
+          "top10_ids": [
+            "bdd4b8c95fac7b42",
+            "f611eac71edf8e38",
+            "50568b3466bb61b1",
+            "33b8c0719094b708",
+            "47406b02a5fe13ee",
+            "e5521939ed4bf9d1",
+            "745cf78669a67d92",
+            "91bc6c5b8cac062b",
+            "50b3ba38fde68685",
+            "e68baf3364d9b498"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли прошить TANK 300, выпущенный для внутреннего рынка Китая?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Можно ли прошить TANK 300, выпущенный для внутреннего рынка Китая?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "3f0ffbba5ce09807",
+            "c23d1ce9656eec8c",
+            "adabea246f92d140",
+            "bf89717313c1d870",
+            "9752fa8c565e416c"
+          ],
+          "top10_ids": [
+            "3f0ffbba5ce09807",
+            "c23d1ce9656eec8c",
+            "adabea246f92d140",
+            "bf89717313c1d870",
+            "9752fa8c565e416c",
+            "adb2450cfee08ec1",
+            "6a4b9d4910c15ee5",
+            "67f63c1ad28a266b",
+            "73ed6fa01c9fbf24",
+            "bdc2fb658617f106"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли ставить прошивку TANK 300 на HAVAL и наоборот?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Можно ли ставить прошивку TANK 300 на HAVAL и наоборот?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "6a4b9d4910c15ee5",
+            "9752fa8c565e416c",
+            "d5f3115668c3d822",
+            "55e433c4ac637001",
+            "323e6cb298cb9e7b"
+          ],
+          "top10_ids": [
+            "6a4b9d4910c15ee5",
+            "9752fa8c565e416c",
+            "d5f3115668c3d822",
+            "55e433c4ac637001",
+            "323e6cb298cb9e7b",
+            "3f0ffbba5ce09807",
+            "adabea246f92d140",
+            "67f63c1ad28a266b",
+            "8cf0fc44b48faed3",
+            "bdc2fb658617f106"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "На какие TANK 300 можно ставить прошивки GW-CLUB?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > На какие TANK 300 можно ставить прошивки GW-CLUB?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "bdc2fb658617f106",
+            "f63333cd76c9f2c5",
+            "59666968245f3c8e",
+            "228a371b9b7daa25",
+            "95d28f4afc19d30f"
+          ],
+          "top10_ids": [
+            "bdc2fb658617f106",
+            "f63333cd76c9f2c5",
+            "59666968245f3c8e",
+            "228a371b9b7daa25",
+            "95d28f4afc19d30f",
+            "9752fa8c565e416c",
+            "6a4b9d4910c15ee5",
+            "27a6ce75ba213535",
+            "73ed6fa01c9fbf24",
+            "67f63c1ad28a266b"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Подойдут ли прошивки для TANK 300, купленного в Казахстане или других странах?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Подойдут ли прошивки для TANK 300, купленного в Казахстане или других странах?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "adabea246f92d140",
+            "67f63c1ad28a266b",
+            "3f0ffbba5ce09807",
+            "9752fa8c565e416c",
+            "6a4b9d4910c15ee5"
+          ],
+          "top10_ids": [
+            "adabea246f92d140",
+            "67f63c1ad28a266b",
+            "3f0ffbba5ce09807",
+            "9752fa8c565e416c",
+            "6a4b9d4910c15ee5",
+            "adb2450cfee08ec1",
+            "c23d1ce9656eec8c",
+            "bdc2fb658617f106",
+            "570a1a182686966e",
+            "5a3e65fe31ec9fba"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Работают ли прошивки с комплектацией Adventure и другими версиями TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "1. Совместимость и риски > Работают ли прошивки с комплектацией Adventure и другими версиями TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "67f63c1ad28a266b",
+            "adabea246f92d140",
+            "6a4b9d4910c15ee5",
+            "9752fa8c565e416c",
+            "adb2450cfee08ec1"
+          ],
+          "top10_ids": [
+            "67f63c1ad28a266b",
+            "adabea246f92d140",
+            "6a4b9d4910c15ee5",
+            "9752fa8c565e416c",
+            "adb2450cfee08ec1",
+            "f63333cd76c9f2c5",
+            "802cb84f53d76e46",
+            "570a1a182686966e",
+            "3f0ffbba5ce09807",
+            "73ed6fa01c9fbf24"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Можно ли сделать бэкап штатной прошивки TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "2. Функционал прошивок (Lite / Full / Max и др.) > Можно ли сделать бэкап штатной прошивки TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "59666968245f3c8e",
+            "adabea246f92d140",
+            "9752fa8c565e416c",
+            "67f63c1ad28a266b",
+            "3f0ffbba5ce09807"
+          ],
+          "top10_ids": [
+            "59666968245f3c8e",
+            "adabea246f92d140",
+            "9752fa8c565e416c",
+            "67f63c1ad28a266b",
+            "3f0ffbba5ce09807",
+            "6a4b9d4910c15ee5",
+            "c23d1ce9656eec8c",
+            "0372e182c6fe6dee",
+            "570a1a182686966e",
+            "73ed6fa01c9fbf24"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Нужна ли именно Full или Max прошивка для китайского TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "2. Функционал прошивок (Lite / Full / Max и др.) > Нужна ли именно Full или Max прошивка для китайского TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "c23d1ce9656eec8c",
+            "3f0ffbba5ce09807",
+            "323e6cb298cb9e7b",
+            "6a4b9d4910c15ee5",
+            "570a1a182686966e"
+          ],
+          "top10_ids": [
+            "c23d1ce9656eec8c",
+            "3f0ffbba5ce09807",
+            "323e6cb298cb9e7b",
+            "6a4b9d4910c15ee5",
+            "570a1a182686966e",
+            "802cb84f53d76e46",
+            "67f63c1ad28a266b",
+            "9752fa8c565e416c",
+            "adb2450cfee08ec1",
+            "73ed6fa01c9fbf24"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Чем отличаются Lite, Full, бесплатная (колодцы) и более новые версии для TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "2. Функционал прошивок (Lite / Full / Max и др.) > Чем отличаются Lite, Full, бесплатная (колодцы) и более новые версии для TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "802cb84f53d76e46",
+            "31ee14e91ea77498",
+            "d12f466751409516",
+            "c23d1ce9656eec8c",
+            "de2cf744d150f81d"
+          ],
+          "top10_ids": [
+            "802cb84f53d76e46",
+            "31ee14e91ea77498",
+            "d12f466751409516",
+            "c23d1ce9656eec8c",
+            "de2cf744d150f81d",
+            "ca7e40d1e3f256c8",
+            "139df141af422214",
+            "73ed6fa01c9fbf24",
+            "570a1a182686966e",
+            "d5f3115668c3d822"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Android Auto не работает по Wi‑Fi, только по кабелю. Это нормально?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Android Auto не работает по Wi‑Fi, только по кабелю. Это нормально?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "7f7d7dbdb79808eb",
+            "793ad28fd2a18626",
+            "e68baf3364d9b498",
+            "24874e414f8a251d",
+            "de4c08ead8d88b33"
+          ],
+          "top10_ids": [
+            "7f7d7dbdb79808eb",
+            "793ad28fd2a18626",
+            "e68baf3364d9b498",
+            "24874e414f8a251d",
+            "de4c08ead8d88b33",
+            "de2cf744d150f81d",
+            "f2c1327ca3107a95",
+            "27fc0f1b340692d5",
+            "14268febfed77d8f",
+            "139df141af422214"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Выходит ошибка при установке или запуске microG. Как исправить?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Выходит ошибка при установке или запуске microG. Как исправить?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "27a6ce75ba213535",
+            "fac95f086a1acb34",
+            "418caa3ef9330619",
+            "ca3f42b12745c859",
+            "c8f5ad5cb1dc113a"
+          ],
+          "top10_ids": [
+            "27a6ce75ba213535",
+            "fac95f086a1acb34",
+            "418caa3ef9330619",
+            "ca3f42b12745c859",
+            "c8f5ad5cb1dc113a",
+            "bd75de2a5aff7d78",
+            "a483175ddf702019",
+            "91bc6c5b8cac062b",
+            "d12f466751409516",
+            "1050f5bb8a70b4f4"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Зачем нужен microG/GMS Core для YouTube на TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Зачем нужен microG/GMS Core для YouTube на TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "98905f85b8194cb7",
+            "27a6ce75ba213535",
+            "fac95f086a1acb34",
+            "418caa3ef9330619",
+            "ce1e06a4be995374"
+          ],
+          "top10_ids": [
+            "98905f85b8194cb7",
+            "27a6ce75ba213535",
+            "fac95f086a1acb34",
+            "418caa3ef9330619",
+            "ce1e06a4be995374",
+            "59666968245f3c8e",
+            "de2cf744d150f81d",
+            "139df141af422214",
+            "d12f466751409516",
+            "570a1a182686966e"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Не запускается YouTube или зависает в мини‑окне. Что делать?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "3. YouTube, microG и беспроводной CarPlay/AA > Не запускается YouTube или зависает в мини‑окне. Что делать?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "418caa3ef9330619",
+            "1050f5bb8a70b4f4",
+            "3d6c6533918c2d23",
+            "0300d30e80fb560d",
+            "91bc6c5b8cac062b"
+          ],
+          "top10_ids": [
+            "418caa3ef9330619",
+            "1050f5bb8a70b4f4",
+            "3d6c6533918c2d23",
+            "0300d30e80fb560d",
+            "91bc6c5b8cac062b",
+            "f611eac71edf8e38",
+            "0b7d2458f5247bff",
+            "22fa4bde8c71ee9a",
+            "c9ebbeb2f9a5a1e2",
+            "dde7b66f1823214f"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Как вывести карту/навигацию на экран приборной панели?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "4. GPS и навигация > Как вывести карту/навигацию на экран приборной панели?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "be94354d2006e40b",
+            "7272313360f505f6",
+            "baa8150f96e50673",
+            "18119d64586d8817",
+            "8a1cc49a54da13eb"
+          ],
+          "top10_ids": [
+            "be94354d2006e40b",
+            "7272313360f505f6",
+            "baa8150f96e50673",
+            "18119d64586d8817",
+            "8a1cc49a54da13eb",
+            "66ba7fac7d3cff69",
+            "3eaa4235d6f69fad",
+            "81f851e436e8214c",
+            "e68baf3364d9b498",
+            "3dc118c09adab8d1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Нужно ли внешнее устройство для работы навигации на TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "4. GPS и навигация > Нужно ли внешнее устройство для работы навигации на TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "794da73964ea08ad",
+            "3f0ffbba5ce09807",
+            "67f63c1ad28a266b",
+            "de2cf744d150f81d",
+            "139df141af422214"
+          ],
+          "top10_ids": [
+            "794da73964ea08ad",
+            "3f0ffbba5ce09807",
+            "67f63c1ad28a266b",
+            "de2cf744d150f81d",
+            "139df141af422214",
+            "570a1a182686966e",
+            "de9b8c7b76f63cc8",
+            "9752fa8c565e416c",
+            "adabea246f92d140",
+            "bf89717313c1d870"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Есть ли голосовой ассистент на Ultra/Assist/Max для TANK 300?",
+          "source": "ru/FAQ_Tank300.md",
+          "section": "5. Голосовой ассистент > Есть ли голосовой ассистент на Ultra/Assist/Max для TANK 300?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "d7702124cd52e06b",
+            "a4deb8c988898920",
+            "228a371b9b7daa25",
+            "de9b8c7b76f63cc8",
+            "e03c9df17d23ea62"
+          ],
+          "top10_ids": [
+            "d7702124cd52e06b",
+            "a4deb8c988898920",
+            "228a371b9b7daa25",
+            "de9b8c7b76f63cc8",
+            "e03c9df17d23ea62",
+            "ac16c85c974ab9b2",
+            "de2cf744d150f81d",
+            "139df141af422214",
+            "570a1a182686966e",
+            "802cb84f53d76e46"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Какие автомобили HAVAL поддерживаются прошивками GW-CLUB?",
+          "source": "ru/FaqHaval.md",
+          "section": "1. Совместимость и выбор прошивки > Какие автомобили HAVAL поддерживаются прошивками GW-CLUB?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "b8660d58b4a774fd",
+            "e2df328e8f51b341",
+            "e68baf3364d9b498",
+            "415bcd3f44472e78",
+            "f3d95381f09477a4"
+          ],
+          "top10_ids": [
+            "b8660d58b4a774fd",
+            "e2df328e8f51b341",
+            "e68baf3364d9b498",
+            "415bcd3f44472e78",
+            "f3d95381f09477a4",
+            "9c7b98d93f12dbfd",
+            "ac16c85c974ab9b2",
+            "1ac329db83852e72",
+            "8a1cc49a54da13eb",
+            "0ef944dd3b0505a1"
+          ],
+          "recall_at_5": 1.0
+        },
+        {
+          "query": "Подходит ли одна прошивка для Dargo и H6?",
+          "source": "ru/FaqHaval.md",
+          "section": "1. Совместимость и выбор прошивки > Подходит ли одна прошивка для Dargo и H6?",
+          "origin": "faq",
+          "relevant_count": 1,
+          "top5_ids": [
+            "ed63099b7ba20138",
+            "a7e6b8b8525ce29d",
+            "e2df328e8f51b341",
+            "9752fa8c565e416c",
+            "b8660d58b4a774fd"
+          ],
+          "top10_ids": [
+            "ed63099b7ba20138",
+            "a7e6b8b8525ce29d",
+            "e2df328e8f51b341",
+            "9752fa8c565e416c",
+            "b8660d58b4a774fd",
+            "6a4b9d4910c15ee5",
+            "323e6cb298cb9e7b",
+            "ac16c85c974ab9b2",
+            "959178b983228185",
+            "f3d95381f09477a4"
+          ],
+          "recall_at_5": 1.0
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,52 @@
+# Сервисы контейнерного режима бота «Штурман» (v1: RAG = хостовый sidecar).
+#
+#   docker compose up -d --build
+#
+# Внешние зависимости (НЕ в этом compose):
+#   - LM Studio на хосте, :1235 (host.docker.internal)
+#   - RAG sidecar `gwclub serve` на хосте, :18700 (host.docker.internal)
+#
+# ВАЖНО (правило одного поллера): контейнерный bot — единственный getUpdates-поллер
+# на токен. Хостовый bot_responder должен быть ОСТАНОВЛЕН, иначе HTTP 409.
+#
+# Схема данных: живая БД — в named volume bot-data (SQLite WAL на bind mount
+# Docker Desktop ненадёжен); снапшот для чтения — bind ./.tg-db-share (тот же
+# каталог, что читали tg-sqlweb/aiweb на хостовой схеме).
+services:
+  bot:
+    build: .
+    image: shturman-bot:latest
+    container_name: shturman-bot
+    restart: unless-stopped
+    environment:
+      LM_API_BASE: http://host.docker.internal:1235/v1
+      LM_MODEL: ${LM_MODEL:-qwen3-8b-mlx}
+      RAG_SEARCH_URL: http://host.docker.internal:18700/search
+      RAG_K: ${RAG_K:-5}
+      RAG_STRATEGY: ${RAG_STRATEGY:-structure}
+      TG_DB_SYNC_INTERVAL: ${TG_DB_SYNC_INTERVAL:-30}
+    volumes:
+      - bot-data:/app/data
+      - ./config.json:/app/config.json:ro
+      - ../../gw-club-docs:/app/docs:ro
+    extra_hosts:
+      # host-gateway для Linux; на Docker Desktop host.docker.internal и так работает
+      - "host.docker.internal:host-gateway"
+
+  tg-db-sync:
+    image: shturman-bot:latest
+    container_name: shturman-bot-db-sync
+    restart: unless-stopped
+    depends_on:
+      - bot
+    command: ["python", "-u", "sync_loop.py"]
+    environment:
+      TG_DB_FILE: /app/data/.tg_messages.db
+      TG_DB_SHARE_FILE: /app/share/tg_messages.db
+      TG_DB_SYNC_INTERVAL: ${TG_DB_SYNC_INTERVAL:-30}
+    volumes:
+      - bot-data:/app/data
+      - ./.tg-db-share:/app/share
+
+volumes:
+  bot-data:
