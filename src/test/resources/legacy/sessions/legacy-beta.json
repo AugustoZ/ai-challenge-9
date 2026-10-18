@@ -1,0 +1,8 @@
+{
+  "id": "legacy-beta",
+  "messages": [
+    {"role": "user", "content": "Второй рейс без владельца."}
+  ],
+  "createdAt": 1726000010000,
+  "updatedAt": 1726000010001
+}

@@ -3,14 +3,37 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Кэш gradle хоста как доп. контекст билда: дистрибутив wrapper'а и
+      # maven-зависимости берутся с машины (~/.gradle), а не качаются через
+      # прокси Docker, у которого таймаут на services.gradle.org.
+      additional_contexts:
+        - gradle-host=${HOME}/.gradle
     container_name: aiweb
     ports:
       - "8080:8080"
     restart: unless-stopped
     # Конфиг-файл подключается через bind mount.
-    # Скопируйте config.example.json в config.json и заполните своими значениями.
+    # Контейнер читает config.docker.json — копия config.json с добавленной
+    # секцией rag (url -> сервис indexer внутренней сети compose). В хостовом
+    # config.json секции rag нет, а дефолт кода (127.0.0.1:18701) внутри
+    # контейнера недостижим — без этого RAG падает в fail-open (без блоков).
+    #
+    # Каталог данных — named volume под P1-персистентность сессий.
+    # В P0 каталог /app/data смонтирован, но пуст: сессии живут в памяти
+    # (InMemorySessionStore). P1-реализация (файл/SQLite) начнёт писать в
+    # AI_DATA_DIR=/app/data без единой правки этого compose-файла.
     volumes:
-      - ./config.json:/app/config.json:ro
+      - ./config.docker.json:/app/config.json:ro
+      - aiweb-data:/app/data
+      # codegraph MCP: linux-бинарник (v1.2.0, darwin-хостовый не запустится
+      # в контейнере) + репозиторий read-only. Путь внутри контейнера ОБЯЗАН
+      # совпадать с хостовым: repos.root_path в общей SQLite-базе ключуется
+      # абсолютным путём, иначе serve создаст второй пустой repo_id.
+      # Каталог .codegraph монтируется rw поверх ro-маунта репозитория:
+      # SQLite в WAL-режиме требует записи -shm/-wal даже читателю.
+      - ${HOME}/.local/bin/codegraph-linux-arm64:/usr/local/bin/codegraph:ro
+      - .:/Users/augustoz/AI Advent Challenge 9/Projects/ai-challenge-9:ro
+      - ./.codegraph:/Users/augustoz/AI Advent Challenge 9/Projects/ai-challenge-9/.codegraph
     # Переменные окружения имеют ПРИОРИТЕТ над значениями из config.json.
     # Чтобы использовать только файл config.json — закомментируйте блок environment.
     environment:
@@ -18,3 +41,79 @@ services:
       - AI_API_URL=${AI_API_URL}
       - AI_API_KEY=${AI_API_KEY}
       - AI_MODEL=${AI_MODEL}
+      # tg-сервер и бот переехали в standalone-проект shturman-bot: снапшот
+      # TG-БД (./shturman-bot/.tg-db-share) контейнеру больше не нужен —
+      # tg_server на хосте запускается config.json из каталога shturman-bot.
+    # Две сети (P2): default — интернет для LLM API, sandbox — внутренняя
+    # сеть для вызова tool-sandbox (internal: true, без egress).
+    networks:
+      - default
+      - sandbox
+
+  # --- Sandbox для инструментов с эффектами (P2, волна 1) ---
+  #
+  # НЕ стартует по умолчанию: запуск только вручную —
+  #   docker compose --profile sandbox up
+  #
+  # P2-реализация (PLAN.md, «Sandbox-требования к инструментам»):
+  #  - собственный образ (sandbox/Dockerfile): python:3.12-alpine + HTTP-сервер
+  #    sandbox/server.py (POST /run — исполнение кода, POST /read — чтение файлов
+  #    из /sandbox/workspace), слушает 0.0.0.0:8080 КОНТЕЙНЕРНОЙ сети;
+  #  - egress запрещён ЦЕЛИКОМ: сеть sandbox объявлена internal: true —
+  #    строжайший «allowlist» (пустой); aiweb при этом сохраняет интернет
+  #    через сеть default (LLM API);
+  # #  - порты наружу НЕ публикуются, docker socket НЕ монтируется;
+ #  - папка хоста (по умолчанию /Users/augustoz/Downloads) монтируется внутрь
+ #    workspace как host-files — единственная точка доступа агента к файлам
+ #    компьютера: read_file/write_file работают с ней по относительным путям,
+ #    изоляция песочницы (non-root, без egress) сохраняется;
+  #  - таймаут HTTP-вызова к sandbox — на стороне оркестратора (aiweb);
+  #    сервер дополнительно капит таймаут кода на 60 с.
+  tool-sandbox:
+    profiles: ["sandbox"]
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    container_name: tool-sandbox
+    user: "65534:65534"          # nobody — non-root
+    read_only: true              # корневая ФС только для чтения
+    tmpfs: ["/tmp"]              # HOME дочерних процессов — записываемый tmpfs
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    # 768 МиБ > RLIMIT_AS 512 МиБ дочернего процесса: контейнерный лимит не
+    # должен срабатывать раньше серверного, иначе OOM-убийство вместо
+    # контролируемого MemoryError в коде.
+    mem_limit: 768m
+    pids_limit: 100
+    volumes:
+      - sandbox-work:/sandbox/workspace
+      # Папка хоста внутри workspace: агент читает и пишет файлы компьютера
+      # инструментами read_file/write_file по путям вида host-files/<имя>.
+      # Путь задаётся переменной HOST_FILES_DIR (.env или окружение); для
+      # режима «только чтение» добавьте ":ro" к монтированию.
+      # В config.json добавьте "hostDir" в read_file/write_file — тогда модели
+      # в описании инструментов будет видно, что host-files — папка хоста.
+      - ${HOST_FILES_DIR:-/Users/augustoz/Downloads}:/sandbox/workspace/host-files
+    networks:
+      - sandbox
+    # ports НЕ публикуются — доступ только по внутренней сети sandbox.
+
+  # --- RAG-индексер (sidecar для aiweb) --- УДАЛЁН: RAG-режим вырезан
+  # из веб-версии «Штурмана» (история — openspec/changes/add-rag-mode и
+  # add-rag-stage2, git-история docker-compose.yml).
+
+# Сети (P2):
+#  - default (неявная) — обычная сеть с интернетом: aiweb ходит в LLM API;
+#  - sandbox — internal: true: полный запрет egress, доступ только между
+#    aiweb и tool-sandbox; у sandbox других сетей нет вовсе.
+networks:
+  sandbox:
+    internal: true
+
+# Named volumes:
+#  - aiweb-data: данные сессий (P1-персистентность);
+#  - sandbox-work: рабочая папка sandbox — сюда run_code пишет файлы,
+#    оттуда read_file их читает; переживает пересоздание контейнера.
+volumes:
+  aiweb-data:
+  sandbox-work:

@@ -1,0 +1,45 @@
+/* ============================================================
+   Клавиша разворота — порт static/style.css L2424–2466
+   (.expand-toggle, .expandable.is-expanded). Значения не менять:
+   дизайн заморожен.
+   ============================================================ */
+
+/* Плашка в духе бейджа «Сводка применена», но нейтральная —
+   управление, а не показание; янтарь зажигается под курсором */
+.toggle {
+    display: inline-flex;
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    padding: 2px 7px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), border-color 0.1s var(--ease-snap);
+}
+
+.toggle:hover {
+    color: var(--amber);
+    border-color: rgba(var(--lamp-warm), 0.45);
+}
+
+.toggle:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.toggle[hidden] {
+    display: none;
+}
+
+/* Развёрнутый колодец: почти вся высота окна браузера. Свёрнутые
+   потолки задают правила колодца (.judge-raw) — здесь они только
+   поднимаются, не трогая цвет, рамки и шрифты */
+.expandable.expanded {
+    max-height: 92vh;
+}

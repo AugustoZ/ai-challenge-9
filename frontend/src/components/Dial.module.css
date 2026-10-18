@@ -1,0 +1,275 @@
+/* ============================================================
+   Круглая шкала параметра — геометрия, зоны, тултип «?».
+   Порт 1:1 из src/main/resources/static/style.css:
+   секция «--- Круглые шкалы параметров ---» (L361–535) и
+   тултипы «?» (L537–639). Значения не менять: дизайн заморожен.
+   Цвета — только токены tokens.css; rgb-литералы чёрных теней —
+   дословно из style.css (токенов для них в :root нет).
+   ============================================================ */
+
+.gauge {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+}
+
+.dial {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    touch-action: none;
+    cursor: grab;
+}
+
+.dial:active {
+    cursor: grabbing;
+}
+
+.dialSvg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.dialBezel {
+    fill: var(--well);
+    stroke: var(--bezel);
+    stroke-width: 2.5;
+    transition: stroke 0.12s var(--ease-snap);
+}
+
+.dial:hover .dialBezel {
+    stroke: var(--bezel-lit);
+}
+
+/* Янтарь — только когда шкала «взята» (фокус скрытого range или перетаскивание) */
+.engaged .dialBezel {
+    stroke: var(--amber);
+}
+
+/* Прибор оживает: ореол вокруг безеля — под курсором слабее, «взята» — ярче */
+.dial:hover .dialSvg {
+    filter: drop-shadow(0 0 5px rgba(var(--lamp-warm), 0.16));
+}
+
+.engaged .dialSvg {
+    filter: drop-shadow(0 0 7px rgba(var(--lamp-warm), 0.32));
+}
+
+.dialFace {
+    fill: var(--ground);
+}
+
+.dialTicks line {
+    stroke: var(--bezel-lit);
+    stroke-width: 1.5;
+}
+
+.dialTicks line.major {
+    stroke: var(--ink-faint);
+    stroke-width: 2;
+}
+
+/* Показания — зелёные, по дисциплине цвета; свечение — лампа под стрелкой */
+.dialArc {
+    fill: none;
+    stroke: var(--green);
+    stroke-width: 3;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-cool), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-cool), 0.3));
+    transition: stroke 0.12s var(--ease-snap), filter 0.12s var(--ease-snap);
+}
+
+.dialNeedle {
+    stroke: var(--green);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-cool), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-cool), 0.3));
+    transition: stroke 0.12s var(--ease-snap), filter 0.12s var(--ease-snap);
+}
+
+.dialHub {
+    fill: var(--ink-faint);
+}
+
+/* Цифры — в мёртвой зоне (низ), куда стрелка не доходит */
+.dialValue {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 61%;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    color: var(--green);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-cool), 0.9),
+        0 0 8px rgba(var(--lamp-cool), 0.45),
+        0 0 16px rgba(var(--lamp-cool), 0.2);
+    pointer-events: none;
+    transition: color 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap);
+}
+
+/* Зоны допуска на лимбе — гравировка разметки, не активный элемент */
+.dialZone {
+    fill: none;
+    stroke-width: 4;
+    opacity: 0.38;
+}
+
+.zRed { stroke: var(--red); }
+
+.zAmber { stroke: var(--amber); }
+
+.zGreen { stroke: var(--green); }
+
+/* Показание (дуга, стрелка, цифры) перекрашивается и переливается по зоне значения */
+.dialArc.zAmber,
+.dialNeedle.zAmber {
+    stroke: var(--amber);
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-warm), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-warm), 0.3));
+}
+
+.dialArc.zRed,
+.dialNeedle.zRed {
+    stroke: var(--red);
+    filter: drop-shadow(0 0 1.5px rgba(var(--lamp-alarm), 0.8)) drop-shadow(0 0 5px rgba(var(--lamp-alarm), 0.3));
+}
+
+.dialValue.zAmber {
+    color: var(--amber);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-warm), 0.9),
+        0 0 8px rgba(var(--lamp-warm), 0.45),
+        0 0 16px rgba(var(--lamp-warm), 0.2);
+}
+
+.dialValue.zRed {
+    color: var(--red);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-alarm), 0.9),
+        0 0 8px rgba(var(--lamp-alarm), 0.45),
+        0 0 16px rgba(var(--lamp-alarm), 0.2);
+}
+
+/* Клавиатурный диапазон невидим: указатели обрабатывает сама шкала */
+.dialKbd {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.gaugeLabel {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    position: relative;
+}
+
+.gaugeName {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--ink-dim);
+}
+
+.infoBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    padding: 0;
+    position: relative;
+    border-radius: 50%;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    cursor: help;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+/* Hit-область 25px при видимых 15px: WCAG 2.5.8 (минимальный размер цели) */
+.infoBtn::before {
+    content: '';
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+}
+
+.infoBtn:hover,
+.infoBtn[aria-expanded="true"] {
+    color: var(--amber);
+    border-color: var(--amber);
+}
+
+.infoBtn:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.tooltip {
+    position: absolute;
+    bottom: calc(100% + 7px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: 236px;
+    padding: 8px 11px;
+    background: var(--panel-deep);
+    border: 1px solid var(--bezel-lit);
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: auto;
+    z-index: 30;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    transition: opacity 0.12s var(--ease-snap), visibility 0.12s var(--ease-snap);
+}
+
+/* Мост под подсказкой: курсор переезжает с «?» на тултип без провала в зазоре
+   (WCAG 1.4.13 hoverable — контент не исчезает при попытке его коснуться) */
+.tooltip::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 7px;
+}
+
+/* Показ подсказки: hover/focus (CSS) или клик по «?» — тач (состояние от React) */
+.gauge:has(.infoBtn:hover) .tooltip,
+.gauge:has(.infoBtn:focus-visible) .tooltip,
+.gauge:has(.tooltip:hover) .tooltip,
+.tipOpen .tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Панель обрезает всё за своими границами, поэтому у крайних приборов
+   подсказка открывается от своего края, а не по центру шкалы */
+.gauge:first-child .tooltip {
+    left: 0;
+    transform: none;
+}
+
+.gauge:last-child .tooltip {
+    left: auto;
+    right: 0;
+    transform: none;
+}

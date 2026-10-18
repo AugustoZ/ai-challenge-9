@@ -1,0 +1,86 @@
+/* ============================================================
+   Директива состояния — порт src/main/resources/static/style.css
+   L1200–1246 (лампа рендерится компонентом Lamp). Значения не
+   менять: дизайн заморожен.
+   ============================================================ */
+
+.directive {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 30px;
+    padding: 4px 20px;
+    background: var(--panel-deep);
+    border-top: 1px solid var(--bezel);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+.directive[data-kind="fault"] .text {
+    color: var(--red);
+}
+
+.text {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Состояние задачи FSM (ChatResponse.taskState): бейдж этапа + строка
+   шага справа; taskState == null — группа не рендерится вовсе. */
+.task {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    margin-left: auto;
+    padding-left: 9px;
+}
+
+.badge {
+    flex: none;
+    padding: 1px 7px;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.badge[data-stage="PLANNING"],
+.badge[data-stage="PLAN_APPROVED"],
+.badge[data-stage="EXECUTION"],
+.badge[data-stage="VALIDATION"] {
+    color: var(--amber);
+    border-color: rgba(var(--lamp-warm), 0.5);
+}
+
+.badge[data-stage="DONE"] {
+    color: var(--green);
+    border-color: rgba(var(--lamp-cool), 0.5);
+}
+
+.badge[data-stage="PAUSED"] {
+    color: var(--red);
+    border-color: rgba(var(--lamp-alarm), 0.5);
+}
+
+.step {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Отказ перехода задачи (ChatResponse.taskRejected): та же строка-шага,
+   но цветом токена отказов; taskRejected == null — не рендерится. */
+.reject {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--red);
+}

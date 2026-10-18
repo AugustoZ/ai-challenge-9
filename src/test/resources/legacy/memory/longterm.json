@@ -1,0 +1,24 @@
+{
+  "entries": [
+    {
+      "id": "legacy-mem-1",
+      "kind": "profile",
+      "title": "Профиль пилота",
+      "content": "Предпочитает краткие ответы без вступлений.",
+      "tags": ["стиль"],
+      "source": "user",
+      "createdAt": 1726000000000,
+      "updatedAt": 1726000000000
+    },
+    {
+      "id": "legacy-mem-2",
+      "kind": "knowledge",
+      "title": "Любимая трасса",
+      "content": "Спа-Франкоршам: длинные прямые, переменная погода.",
+      "tags": ["трассы"],
+      "source": "agent",
+      "createdAt": 1726000001000,
+      "updatedAt": 1726000001000
+    }
+  ]
+}

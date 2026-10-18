@@ -1,0 +1,361 @@
+/* ============================================================
+   AuthGate — полноэкранный гейт входа в эстетике «Приборной
+   доски». Цвета и шрифты — только токены tokens.css; клавиши
+   пользователей повторяют аннунциаторы (AnnunciatorGroup),
+   поле ПИН — колодец с зелёными табло-цифрами, основная клавиша —
+   янтарная пластина. Значения у порт-паттернов не менять.
+   ============================================================ */
+
+/* ---------- Полноэкранный гейт ---------- */
+
+.gate {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    overflow: auto;
+    background:
+        radial-gradient(90% 70% at 50% 0%, rgba(var(--lamp-warm), 0.06) 0%, transparent 60%),
+        var(--ground);
+}
+
+.plate {
+    width: min(420px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 22px 24px 24px;
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.04),
+        0 12px 34px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- Шапка панели ---------- */
+
+.head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--bezel);
+}
+
+/* Порт .brand из App.module.css — та же гравировка */
+.brand {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.subtitle {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+}
+
+/* ---------- Подписи секций и строк-подсказки ---------- */
+
+.sectionLabel,
+.fieldLabel {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+}
+
+.hint {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--ink-faint);
+}
+
+.error {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--red);
+}
+
+/* ---------- Клавиши пользователей (стиль аннунциаторов) ---------- */
+
+.userGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 6px;
+}
+
+/* Клавиша имени: порт .annunciator (AnnunciatorGroup.module.css) —
+   объёмная, сидит в гнезде панели; выбранная подсвечена лампой */
+.userKey {
+    width: 100%;
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-align: center;
+    color: var(--ink-dim);
+    background: linear-gradient(180deg, var(--panel) 0%, var(--well) 100%);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap), background 0.1s var(--ease-snap),
+                border-color 0.1s var(--ease-snap), box-shadow 0.1s var(--ease-snap),
+                text-shadow 0.1s var(--ease-snap), transform 0.05s var(--ease-snap),
+                filter 0.1s var(--ease-snap);
+}
+
+.userKey:hover:enabled {
+    color: var(--ink);
+    border-color: var(--bezel-lit);
+    filter: brightness(1.18);
+}
+
+/* Выбранный пользователь: лампа под клавишей (порт aria-checked) */
+.userKey[aria-pressed="true"],
+.userKey:active {
+    color: var(--lamp-text);
+    background: var(--lamp-face);
+    border-color: rgba(var(--lamp-rgb), 0.6);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
+}
+
+.userKey:active {
+    transform: translateY(1px);
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-warm), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-warm), 0.22);
+}
+
+.userKey:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* ---------- Формы: колодцы ввода ---------- */
+
+.pinForm,
+.createForm {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    background: var(--panel-deep);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.input {
+    width: 100%;
+    padding: 6px 9px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap);
+}
+
+.input::placeholder {
+    color: var(--ink-faint);
+}
+
+/* Поле ПИН: колодец с табло-цифрами (зелёный моно, разрядка);
+   справа — запас под клавишу-«глаз» (лежит поверх, поле не сдвигает) */
+.pinInput {
+    width: 100%;
+    padding: 8px 40px;
+    font-family: var(--mono);
+    font-size: 18px;
+    letter-spacing: 0.4em;
+    text-indent: 0.4em;
+    text-align: center;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap);
+}
+
+/* Обёртка поля и клавиши-«глаза» */
+.pinWrap {
+    position: relative;
+}
+
+/* Клавиша видимости ПИН: минимальная приборная, наследует currentColor
+   через SVG; открытый ПИН подсвечен янтарным (активный орган) */
+.pinToggle {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    color: var(--ink-faint);
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transform: translateY(-50%);
+    transition: color 0.12s var(--ease-snap);
+}
+
+.pinToggle:hover:enabled {
+    color: var(--ink);
+}
+
+.pinToggle[aria-pressed="true"]:enabled {
+    color: var(--amber);
+}
+
+.pinToggle:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+}
+
+.pinToggle:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.pinInput::placeholder {
+    color: var(--ink-faint);
+    letter-spacing: 0.4em;
+}
+
+.pinInput:focus,
+.input:focus {
+    outline: none;
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.input:disabled,
+.pinInput:disabled {
+    opacity: 0.55;
+}
+
+.input[aria-invalid="true"],
+.pinInput[aria-invalid="true"] {
+    border-color: var(--red);
+}
+
+/* ---------- Клавиши действий ---------- */
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.secondary {
+    display: flex;
+    justify-content: center;
+}
+
+/* Порт .btn/.btnPrimary (MemoryPanel.module.css) */
+.btn,
+.btnPrimary {
+    padding: 6px 12px;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap),
+                background 0.12s var(--ease-snap), opacity 0.12s var(--ease-snap);
+}
+
+.btn {
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+}
+
+.btn:hover:enabled {
+    color: var(--ink);
+    border-color: var(--bezel-lit);
+}
+
+.btnPrimary {
+    color: var(--amber-ink);
+    background: var(--amber);
+    border: 1px solid var(--amber);
+}
+
+.btnPrimary:hover:enabled {
+    background: var(--lamp-text);
+}
+
+.btn:disabled,
+.btnPrimary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.btn:focus-visible,
+.btnPrimary:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* ---------- Отказ загрузки списка ---------- */
+
+.usersError {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--panel-deep);
+    border: 1px dashed var(--bezel);
+    border-radius: var(--radius);
+}
+
+/* ---------- Узкие экраны ---------- */
+
+@media (max-width: 480px) {
+    .plate {
+        padding: 18px 16px 20px;
+    }
+
+    .actions {
+        flex-direction: column-reverse;
+    }
+
+    .actions > button {
+        width: 100%;
+    }
+}

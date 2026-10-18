@@ -1,0 +1,20 @@
+# Git-обвязка и артефакты тестов — в образ не нужны
+.git
+.playwright-mcp
+.gradle
+build
+
+# Зависимости фронтенда не тащим в контекст: npm ci в образе не выполняется
+# (Node-стадии нет), dist копируется из контекста — НЕ исключать frontend/dist.
+frontend/node_modules
+
+# Python MCP-серверы: venv в образ не тащим — собирается в отдельной стадии
+# (mcp-python). НЕ исключать сами .py (Dockerfile их копирует в финал).
+# tg_server/storage переехали в ../shturman-bot — в образ идёт только wiki_server.
+mcp-servers/.venv/
+mcp-servers/__pycache__/
+mcp-servers/echo
+
+# Служебное
+*.log
+.DS_Store

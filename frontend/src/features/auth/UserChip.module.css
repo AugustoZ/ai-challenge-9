@@ -1,0 +1,125 @@
+/* ============================================================
+   Чип пользователя в верхней полосе (план Task 14): имя из
+   auth-стора на клавише с горящей янтарной лампой («оператор на
+   борту»), меню выхода — пластина panel-deep с клавишами.
+   Формула лампы — общие токены --lamp-face/--lamp-label-shadow/
+   --lamp-glow (как у клавиш-аннунциаторов); --lamp-rgb не
+   переопределяется: по умолчанию он янтарный. Меню участвует в
+   общей стопке слоёв (overlayStack): Esc закрывает только верхний.
+   ============================================================ */
+
+.wrap {
+    position: relative;
+    min-width: 0;
+}
+
+/* Клавиша чипа: порт ламповой клавиши (AuthGate .userKey[aria-pressed],
+    SettingsPanel .resetBtn) в янтаре по умолчанию */
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 200px;
+    padding: 6px 12px;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--lamp-text);
+    background: var(--lamp-face);
+    border: 1px solid rgba(var(--lamp-rgb), 0.55);
+    border-radius: var(--radius);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
+    cursor: pointer;
+    transition: filter 0.12s var(--ease-snap), transform 0.05s var(--ease-snap);
+}
+
+.chip:hover {
+    filter: brightness(1.12);
+}
+
+.chip:active {
+    transform: translateY(1px);
+}
+
+.chip:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Лампа-индикатор перед именем: сеанс открыт */
+.dot {
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 6px rgba(var(--lamp-warm), 0.8);
+}
+
+/* ---------- Пластина меню ---------- */
+
+.menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    min-width: 208px;
+    padding: 6px;
+    background: var(--panel-deep);
+    border: 1px solid var(--bezel-lit);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.item {
+    width: 100%;
+    padding: 7px 10px;
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: left;
+    color: var(--ink-dim);
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), background 0.12s var(--ease-snap);
+}
+
+.item:hover {
+    color: var(--ink);
+    background: var(--well);
+}
+
+.item:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: -2px;
+}
+
+.separator {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--bezel);
+}
+
+/* ---------- Узкие экраны ---------- */
+
+@media (max-width: 600px) {
+    .chip {
+        max-width: 130px;
+        padding: 5px 9px;
+        gap: 5px;
+    }
+}

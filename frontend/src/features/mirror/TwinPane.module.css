@@ -1,0 +1,186 @@
+/* ============================================================
+   Колонка сравнения — порт static/style.css L2485–2657 (.mirror-col,
+   .mirror-col-head/title/total, .mirror-strategy-select,
+   .mirror-col-body, .mirror-card, .mirror-error, .mirror-empty).
+   Значения не менять: дизайн заморожен. Цвета — только токены.
+   ============================================================ */
+
+.col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+}
+
+.head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--bezel);
+}
+
+.title {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+}
+
+/* Лампа канала: как маячок живой трассы, цвет — по роли стороны */
+.title::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(var(--lamp-cool), 0.7);
+}
+
+/* Правая колонка — янтарная (механика под проверкой) */
+.colCompressed .title {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+}
+
+.colCompressed .title::before {
+    background: var(--amber);
+    box-shadow: 0 0 6px rgba(var(--lamp-warm), 0.7);
+}
+
+.total {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--green);
+    white-space: nowrap;
+}
+
+/* Селект стратегии в шапке колонки: компактный колодец в тон приборки.
+   Тёмная схема обязательна — иначе выпадающий список рендерится светлым */
+.select {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 2px 3px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    color-scheme: dark;
+    cursor: pointer;
+    transition: border-color 0.12s var(--ease-snap), color 0.12s var(--ease-snap);
+}
+
+.select:hover {
+    border-color: var(--bezel-lit);
+    color: var(--ink);
+}
+
+.select:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 1px;
+}
+
+.select option {
+    background: var(--panel-deep);
+    color: var(--ink);
+}
+
+/* Показания сторон накапливаются: прокрутка живёт внутри колонки,
+   журнал и строка передачи не вытесняются длинными ответами */
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
+    max-height: 32vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.body::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 11px;
+    background: var(--panel);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    animation: entry-in 0.16s var(--ease-snap);
+}
+
+/* Строка топлива в узкой колонке переносится, а не прячется за многоточие */
+.cardHead {
+    max-width: 100%;
+    white-space: normal;
+}
+
+/* Ответ утоплен в колодец колонки */
+.well {
+    background: var(--well);
+}
+
+.badge {
+    align-self: flex-start;
+}
+
+/* Отказ стороны: рамка и текст — красным, по дисциплине цвета */
+.fault {
+    border-color: rgba(var(--lamp-alarm), 0.45);
+}
+
+.fault .tag {
+    color: var(--red);
+}
+
+.error {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--red);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+.emptyNote {
+    margin: 2px 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+}
+
+@keyframes entry-in {
+    from {
+        opacity: 0;
+        transform: translateY(2px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

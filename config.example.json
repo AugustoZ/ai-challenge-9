@@ -2,5 +2,54 @@
   "port": 8080,
   "apiUrl": "https://api.openai.com/v1/chat/completions",
   "apiKey": "ВАШ_API_КЛЮЧ",
-  "model": "gpt-3.5-turbo"
+  "model": "gpt-3.5-turbo",
+  "allowedModels": ["deepseek-v4-flash", "glm-5.3-flash", "qwen3.8-27b"],
+  "dataDir": "/app/data",
+  "supportsTools": false,
+  "compressionEnabled": false,
+  "compressionWindowSize": 5,
+  "compressionMergeEvery": 5,
+  "compressionSummaryMaxTokens": 400,
+  "contextStrategy": "off",
+  "tools": {
+    "current_datetime": true,
+    "calculator": true,
+    "http_get": true,
+    "run_code": {"enabled": false, "url": "http://tool-sandbox:8080", "timeoutSeconds": 30},
+    "read_file": {"enabled": false, "url": "http://tool-sandbox:8080", "hostDir": "/Users/you/Downloads"},
+    "write_file": {"enabled": false, "url": "http://tool-sandbox:8080", "hostDir": "/Users/you/Downloads"}
+  },
+  "mcp": [
+    {
+      "name": "github",
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server:latest", "stdio", "--toolsets=repos,issues,pull_requests"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ВАШ_GITHUB_PAT"},
+      "enabled": false
+    },
+    {
+      "name": "example-server",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": {},
+      "enabled": false
+    }
+  ],
+  "providers": [
+    {
+      "id": "opencode",
+      "name": "OpenCode Zen (бесплатные)",
+      "type": "opencode",
+      "apiUrl": "https://opencode.ai/zen/v1/chat/completions",
+      "apiKey": "ВАШ_API_КЛЮЧ_OPENCODE_ZEN",
+      "upstream": "opencode",
+      "models": [
+        "big-pickle",
+        "ling-3.0-flash-fin-free",
+        "mimo-v2.5-free",
+        "nemotron-3.5-lightning-free",
+        "nemotron-3-ultra-free"
+      ]
+    }
+  ]
 }

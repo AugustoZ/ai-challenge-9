@@ -1,0 +1,257 @@
+/* ============================================================
+   Панель приборов — порт 1:1 из static/style.css:
+   .panel-section/.section-caption L258–272, .gauges L363–367,
+   «?» и тултипы L537–639, строки настройки L641–714,
+   футер с клавишей сброса L769–815. Значения не менять:
+   дизайн заморожен. Цвета — только токены tokens.css;
+   rgb-литералы чёрных теней — дословно из style.css
+   (токенов для них в :root нет). Классы .hint и .annunciator
+   берутся из AnnunciatorGroup.module.css (волна 3a).
+   ============================================================ */
+
+.panelSection {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sectionCaption {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--bezel);
+}
+
+.gauges {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+}
+
+.settingInline {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+}
+
+.settingLabel {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--ink-dim);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+.textInput {
+    width: 100%;
+    padding: 6px 9px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap),
+                color 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap);
+}
+
+.textInput::placeholder {
+    color: var(--ink-faint);
+}
+
+.textInput:focus {
+    outline: none;
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+/* Стоп-фраза набрана — текст горит лампой, как надписи на активных клавишах;
+    пустое поле остаётся гравировкой (placeholder) */
+.textInput:not(:placeholder-shown) {
+    color: var(--lamp-text);
+    text-shadow: var(--lamp-label-shadow);
+}
+
+/* Селект модели ведёт себя как текстовое поле; тёмная схема — иначе выпадающий
+   список рендерится светлым и выбивается из приборки */
+.selectInput {
+    width: 100%;
+    padding: 6px 9px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: 3px;
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap);
+    color-scheme: dark;
+    cursor: pointer;
+}
+
+.selectInput option {
+    background: var(--panel-deep);
+    color: var(--ink);
+}
+
+.selectInput:focus {
+    outline: none;
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.infoBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    padding: 0;
+    position: relative;
+    border-radius: 50%;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ink-faint);
+    background: transparent;
+    border: 1px solid var(--bezel);
+    cursor: help;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap);
+}
+
+/* Hit-область 25px при видимых 15px: WCAG 2.5.8 (минимальный размер цели) */
+.infoBtn::before {
+    content: '';
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+}
+
+.infoBtn:hover,
+.infoBtn[aria-expanded="true"] {
+    color: var(--amber);
+    border-color: var(--amber);
+}
+
+.infoBtn:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+.tooltip {
+    position: absolute;
+    bottom: calc(100% + 7px);
+    left: 0;
+    width: max-content;
+    max-width: 236px;
+    padding: 8px 11px;
+    background: var(--panel-deep);
+    border: 1px solid var(--bezel-lit);
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: auto;
+    z-index: 30;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    transition: opacity 0.12s var(--ease-snap), visibility 0.12s var(--ease-snap);
+}
+
+/* Мост под подсказкой: курсор переезжает с «?» на тултип без провала в зазоре
+   (WCAG 1.4.13 hoverable — контент не исчезает при попытке его коснуться) */
+.tooltip::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 7px;
+}
+
+/* Показ подсказки: hover/focus (CSS) или клик по «?» — тач (состояние от React) */
+.settingInline:has(.infoBtn:hover) .tooltip,
+.settingInline:has(.infoBtn:focus-visible) .tooltip,
+.settingInline:has(.tooltip:hover) .tooltip,
+.tipOpen .tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+
+.panelFoot {
+    flex-shrink: 0;
+    padding: 4px 0 6px;
+    border-top: 1px solid var(--bezel);
+}
+
+/* Клавиша сброса: красная лампа горит всегда — напоминание об ответственности
+   действия; формула та же, цвет лампы переопределён через --lamp-rgb */
+.resetBtn {
+    --lamp-rgb: var(--lamp-alarm);
+
+    width: 100%;
+    padding: 6px 12px;
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--lamp-red);
+    background: var(--lamp-face);
+    border: 1px solid rgba(var(--lamp-rgb), 0.6);
+    border-radius: var(--radius);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
+    cursor: pointer;
+    transition: color 0.12s var(--ease-snap), border-color 0.12s var(--ease-snap),
+                box-shadow 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap),
+                filter 0.12s var(--ease-snap), transform 0.05s var(--ease-snap);
+}
+
+.resetBtn:hover {
+    filter: brightness(1.12);
+}
+
+.resetBtn:active {
+    transform: translateY(1px);
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-rgb), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-rgb), 0.22);
+}
+
+.resetBtn:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+}
+
+/* Повтор загрузки списка моделей: без ванильного прототипа — тихая
+   текстовая клавиша в строке-подсказке, цвет из токенов */
+.retry {
+    padding: 0;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--amber);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.retry:hover {
+    color: var(--ink);
+}
+
+.retry:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}

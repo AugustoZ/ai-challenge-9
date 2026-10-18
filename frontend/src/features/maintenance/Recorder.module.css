@@ -1,0 +1,134 @@
+/* ============================================================
+   Самописец — порт static/style.css L1967–1997 (.json-view),
+   L2116–2231 (.recorder-body .json-view, .rec-entry, .rec-head,
+   .rec-time, .rec-dir, .rec-meta, .recorder-empty). Ширина и
+   облик модалки — общий Overlay (L2000–2136). Значения не менять:
+   дизайн заморожен. Цвета — только токены.
+   ============================================================ */
+
+.jsonView {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    overflow: auto;
+    max-height: 300px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--ink-dim);
+    scrollbar-width: thin;
+    scrollbar-color: var(--bezel) transparent;
+}
+
+.jsonView::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.jsonView::-webkit-scrollbar-thumb {
+    background: var(--bezel);
+    border-radius: 4px;
+}
+
+.jsonView code {
+    font-family: inherit;
+    white-space: pre;
+}
+
+.recEntry {
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    background: var(--well);
+}
+
+.recEntry + .recEntry {
+    margin-top: 8px;
+}
+
+.recEntry[open] {
+    border-color: var(--bezel-lit);
+}
+
+.recHead {
+    list-style: none;
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: baseline;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-dim);
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: color 0.1s var(--ease-snap);
+}
+
+.recHead::-webkit-details-marker {
+    display: none;
+}
+
+.recHead::before {
+    content: '+';
+    font-weight: 700;
+    color: var(--amber);
+}
+
+.recEntry[open] .recHead::before {
+    content: '−';
+}
+
+.recHead:hover {
+    color: var(--ink);
+}
+
+.recTime {
+    color: var(--ink-faint);
+}
+
+.recMeta {
+    text-align: right;
+    color: var(--ink-faint);
+}
+
+/* Направление обмена — лампа: запрос зелёным, ответ янтарным (как надписи клавиш) */
+.req .recDir {
+    color: var(--lamp-green);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-cool), 0.95),
+        0 0 7px rgba(var(--lamp-cool), 0.7),
+        0 0 15px rgba(var(--lamp-cool), 0.35);
+}
+
+.res .recDir {
+    color: var(--lamp-text);
+    text-shadow:
+        0 0 1px rgba(var(--lamp-warm), 0.95),
+        0 0 7px rgba(var(--lamp-warm), 0.7),
+        0 0 15px rgba(var(--lamp-warm), 0.35);
+}
+
+/* Отказ в протоколе — красный, по дисциплине цвета */
+.faultEntry > .recHead,
+.faultEntry > .recHead .recTime,
+.faultEntry > .recHead .recMeta {
+    color: var(--red);
+}
+
+.faultEntry .recDir {
+    color: var(--red);
+    text-shadow: none;
+}
+
+.note {
+    margin: 24px 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+}
+
+.faultNote {
+    color: var(--red);
+}

@@ -1,0 +1,129 @@
+/* ============================================================
+   Строка передачи — порт src/main/resources/static/style.css
+   L1250–1357 (.tx-row/.tx-input/.tx-btn/.tx-stop) и ≤600px
+   L2826–2828. Значения не менять: дизайн заморожен. Цвета —
+   только токены (ламповая формула клавиш — через --lamp-*).
+   Поле — многострочная textarea: формула .tx-input сохранена,
+   многострочность — по образцу колодцев OnboardingWizard
+   (.textarea): line-height, resize: none, max-height + прокрутка.
+   ============================================================ */
+
+.txRow {
+    display: flex;
+    gap: 10px;
+    padding: 14px 20px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--bezel);
+}
+
+.txTextarea {
+    flex: 1;
+    min-width: 0;
+    height: auto;
+    max-height: 160px; /* ~5–6 строк, дальше прокрутка */
+    padding: 12px 14px;
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--ink);
+    background: var(--well);
+    border: 1px solid var(--bezel);
+    border-radius: var(--radius);
+    caret-color: var(--amber);
+    resize: none;
+    overflow-y: auto;
+    transition: border-color 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap);
+}
+
+.txTextarea::placeholder {
+    color: var(--ink-faint);
+}
+
+.txTextarea:focus {
+    outline: none;
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.txTextarea:disabled {
+    opacity: 0.55;
+}
+
+/* Клавиша «Передать»: лампа горит всегда — Штурман готов принять запрос.
+   Та же лампа, что у клавиш-табло: свет сквозь надпись и из-под краёв */
+.txBtn {
+    padding: 12px 22px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--lamp-text);
+    background: var(--lamp-face);
+    border: 1px solid rgba(var(--lamp-rgb), 0.6);
+    border-radius: var(--radius);
+    text-shadow: var(--lamp-label-shadow);
+    box-shadow: var(--lamp-glow);
+    cursor: pointer;
+    transition: filter 0.12s var(--ease-snap), box-shadow 0.12s var(--ease-snap),
+                color 0.12s var(--ease-snap), background 0.12s var(--ease-snap),
+                border-color 0.12s var(--ease-snap), text-shadow 0.12s var(--ease-snap),
+                transform 0.05s var(--ease-snap);
+}
+
+.txBtn:hover {
+    filter: brightness(1.12);
+}
+
+/* Ход клавиши при передаче */
+.txBtn:active {
+    transform: translateY(1px);
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-warm), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-warm), 0.22);
+}
+
+/* Лампа погасла — Штурман обрабатывает запрос */
+.txBtn:disabled {
+    color: var(--ink-faint);
+    background: var(--lamp-key-face);
+    border-color: var(--bezel);
+    text-shadow: none;
+    box-shadow:
+        inset 0 -2px 3px rgba(0, 0, 0, 0.38),
+        0 2px 4px rgba(0, 0, 0, 0.45);
+    cursor: not-allowed;
+    filter: none;
+}
+
+.txBtn:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+}
+
+/* Клавиша «Стоп»: та же формула лампы, но красная — прерывание передачи;
+   видна только пока запрос в полёте */
+.txStop {
+    --lamp-rgb: var(--lamp-alarm);
+
+    padding: 12px 16px;
+    color: var(--lamp-red);
+}
+
+.txStop:active {
+    box-shadow:
+        inset 0 3px 7px rgba(var(--lamp-alarm), 0.25),
+        inset 0 2px 6px rgba(0, 0, 0, 0.5),
+        0 0 13px rgba(var(--lamp-alarm), 0.22);
+}
+
+.txStop:focus-visible {
+    outline-color: var(--red);
+}
+
+@media (max-width: 600px) {
+    .txRow {
+        padding: 12px 14px 14px;
+    }
+}

@@ -4,4 +4,26 @@ build/
 *.iml
 .idea/
 .DS_Store
-config.json
+# Секреты и чувствительные данные
+config*.json
+data/
+!config.example.json
+config*.bak
+.env
+.env.*
+!.env.example
+token.txt
+*.token
+restored.json
+scripts/minichat-sessions/
+.omo/
+.impeccable
+# Фронтенд (React/Vite)
+frontend/dist/
+frontend/node_modules/
+
+# MCP-серверы (Python)
+mcp-servers/.venv/
+/docs/
+/.impeccable/*
+/.codegraph/
