@@ -1,0 +1,72 @@
+{
+  "mcp": [
+    {
+      "name": "tg",
+      "enabled": true,
+      "env": {
+        "TG_BOT_TOKEN": "123456:ABC-DEF...",
+        "TG_CHAT": "tank_dargo_h6_chat"
+      }
+    }
+  ],
+  "github": {
+    "token": "ghp_ВСТАВЬТЕ_PAT_GITHUB",
+    "repos": [
+      "AugustoZ/ai-challenge-9"
+    ],
+    "chats": [
+      "@tank_dargo_h6_chat"
+    ],
+    "interval_sec": 30
+  },
+  "agent": {
+    "models": [
+      {
+        "id": "local",
+        "label": "Локальная (qwen3.5-9b)",
+        "api_base": "http://localhost:1234/v1",
+        "model": "qwen3.5-9b-mlx",
+        "api_key_env": "",
+        "timeout_sec": 120,
+        "max_tokens": 2000,
+        "frequency_penalty": 0.3
+      },
+      {
+        "id": "glm",
+        "label": "GLM 5.3 (GPUstack)",
+        "api_base": "https://gpustack.data.lmru.tech/v1",
+        "model": "glm-5.3-flash",
+        "api_key_env": "GPUSTACK_API_KEY",
+        "timeout_sec": 300,
+        "max_tokens": 256000,
+        "frequency_penalty": 0.0
+      },
+      {
+        "id": "deepseek",
+        "label": "DeepSeek Flash (GPUstack)",
+        "api_base": "https://gpustack.data.lmru.tech/v1",
+        "model": "deepseek-v4-flash",
+        "api_key_env": "GPUSTACK_API_KEY",
+        "timeout_sec": 300,
+        "max_tokens": 256000,
+        "frequency_penalty": 0.0
+      }
+    ],
+    "shell_allow": [
+      "git status",
+      "git log",
+      "git diff",
+      "git branch",
+      "git checkout",
+      "git switch",
+      "ls",
+      "grep",
+      "find",
+      "wc",
+      "npm test",
+      "npm run",
+      "./gradlew test",
+      "python -m py_compile"
+    ]
+  }
+}

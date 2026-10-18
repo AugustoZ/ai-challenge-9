@@ -1,0 +1,15 @@
+# RAG-конфиг для корпуса документации проекта «Штурман» (бот в shturman-bot).
+# Перекрывает дефолты gwclub_indexer.config.DEFAULTS только там, где указано;
+# остальное (эмбеддер multilingual-e5-small, чанкинг structure) — как в
+# индексере.
+
+[paths]
+docs_root = "~/ai-challenge-9/docs"
+
+[filters]
+exclude_paths = []
+exclude_draft = false
+min_chars = 60
+
+[search]
+default_strategy = "structure"

@@ -1,0 +1,22 @@
+# Секреты и чувствительные данные
+config.json
+config*.bak*
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Runtime бота: pid, лог, снапшот БД, бэкапы
+.bot_responder.*
+.tg-db-share/
+backups/
+data/
+*.log
+
+# macOS / IDE
+.DS_Store
+.idea/
