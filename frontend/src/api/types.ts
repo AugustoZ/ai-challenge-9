@@ -31,16 +31,6 @@ export interface ChatRequest {
   requestId?: string | null;
   /** Инструменты и блок памяти агента: null/true — включены, false — выключены. */
   memoryTools?: boolean | null;
-  /** RAG-поиск по корпусу документов: null/false — выключен, true — включён. */
-  ragEnabled?: boolean | null;
-  /**
-   * Stage-2 overrides RAG (Kotlin: Models.kt ChatRequest — синхронизировать
-   * вручную): порог отсечения, реранкер, query rewrite. null — взять из
-   * конфига сервера. Фронтенд их НЕ отправляет — только контракт.
-   */
-  ragThreshold?: number | null;
-  ragRerank?: boolean | null;
-  ragRewrite?: boolean | null;
 }
 
 /** Полный ответ сервера: и блокирующий /api/chat, и кадр final стрима. */
@@ -59,13 +49,9 @@ export interface ChatResponse {
   branchId?: string | null;
   /** Актуальный список фактов сессии (стратегия facts). */
   facts: Fact[];
-  /** Найденные RAG-фрагменты документов; пусто/отсутствует — RAG не действовал. */
-  retrievedSources?: RetrievedSource[];
   /** Полное время обработки на сервере, мс. */
   elapsedMs?: number | null;
   judge?: JudgeReport | null;
-  /** Действовал ли RAG в этом запросе (echo; true — фрагменты подставлены в контекст). */
-  ragEnabled?: boolean;
   /** Серверная сессия диалога; создаётся на каждый запрос. */
   sessionId?: string | null;
   /** Сырые обмены с LLM (режим ТО/самописец). */
@@ -140,19 +126,6 @@ export interface InvariantsPayload {
 export interface Fact {
   key: string;
   value: string;
-}
-
-/**
- * Один найденный RAG-фрагмент документа (Kotlin: RetrievedSource, Models.kt)
- * — синхронизировать вручную; полный content на проводе не передаётся.
- */
-export interface RetrievedSource {
-  chunkId: string;
-  source: string;
-  title: string;
-  section: string;
-  score: number;
-  snippet: string;
 }
 
 /** Оценка судьи по одному критерию. */

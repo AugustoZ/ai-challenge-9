@@ -4,7 +4,7 @@
 слеживаемости). Все пункты выполняются TDD; агент не коммитит — пользователь
 коммитит вручную.
 
-## 2. `gwclub serve` — HTTP-sidecar поиска в индексере (gw-club-indexer)
+## 2. `serve-режим индексера` — HTTP-sidecar поиска в индексере (внешний индексер)
 
 - [x] 2.1 Модуль `serve.py`: `build_server` (ThreadingHTTPServer) + `POST /search`
       → 200 JSON `[{chunk_id, score, source, title, section, content}]` с полным
@@ -106,11 +106,11 @@
 
 ## 9. Контрольный набор: eval/rag-questions.yaml (10 вопросов)
 
-- [x] 9.1 10 разнотематичных вопросов по корпусу gw-club-docs (покрыть ≥5
+- [x] 9.1 10 разнотематичных вопросов по корпусу корпус документации (покрыть ≥5
       разных source-файлов; seed — 30 FAQ из groundtruth.yaml индексера)
 - [x] 9.2 У каждого: question + expectedSubstrings (1–3, проверены grep'ом по
       тексту корпуса) + expectedSources (1–2) + комментарий `# ожидание: ...`
-- [x] 9.3 Валидность: для каждого вопроса `gwclub search --strategy structure
+- [x] 9.3 Валидность: для каждого вопроса `поиск индексатора --strategy structure
       -k 5 --json` находит expectedSource в top-5
 - [x] 9.4 YAML валиден (yaml.safe_load, 10 элементов, полные ключи)
 
@@ -145,7 +145,7 @@
 
 ## 12. Финальная документация: README индексера + AGENTS.md + openspec
 
-- [x] 12.1 `gw-club-indexer/README.md`: раздел «gwclub serve» — назначение,
+- [x] 12.1 `внешний индексер/README.md`: раздел «serve-режим индексера» — назначение,
       флаги, формат ответа (полный content), запуск из корня репо, lock,
       warm-up, примеры curl
 - [x] 12.2 `AGENTS.md` (Штурман): строка в WHERE TO LOOK (RAG → `rag/` +

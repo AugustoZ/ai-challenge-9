@@ -99,13 +99,27 @@ class McpServerManager(private val serverConfigs: List<McpServerConfig>) : AutoC
         val effectiveEnv = buildMap {
             System.getenv("PATH")?.let { put("PATH", it) }
             System.getenv("HOME")?.let { put("HOME", it) }
+            // Санирование: PYTHONPATH/PYTHONHOME/VIRTUAL_ENV родителя ломают импорты
+            // python-детей (venv-серверов) — SDK мерджит окружение процесса, и
+            // чужой PYTHONPATH затеняет site-packages venv'а сервера.
             putAll(config.env)
+            put("PYTHONUNBUFFERED", "1")
         }
         val params = ServerParameters.builder(config.command)
             .args(config.args)
             .env(effectiveEnv)
             .build()
-        val transport = StdioClientTransport(params, mapper)
+        val transport = object : StdioClientTransport(params, mapper) {
+            // SDK мерджит окружение родителя в ProcessBuilder ребёнка
+            // (environment().putAll(env)); PYTHONPATH/PYTHONHOME/VIRTUAL_ENV
+            // родителя затеняют site-packages venv'а python-сервера и ломают
+            // импорты — вырезаем их после мерджа (явно заданные config.env
+            // ключи с этими именами вернутся через putAll ниже по стеку).
+            override fun getProcessBuilder(): ProcessBuilder =
+                super.getProcessBuilder().apply {
+                    environment().keys.removeAll(setOf("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"))
+                }
+        }
         return McpClient.sync(transport)
             .requestTimeout(Duration.ofMillis(config.requestTimeoutMs))
             .initializationTimeout(Duration.ofMillis(config.initializationTimeoutMs))
@@ -211,6 +225,9 @@ class McpServerManager(private val serverConfigs: List<McpServerConfig>) : AutoC
             "error=2" in msg || "createprocess" in msg || "error=13" in msg
     }
 
-    private fun safeError(e: Throwable): String =
-        e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName ?: "unknown"
+    private fun safeError(e: Throwable): String {
+        val chain = generateSequence(e as Throwable?) { it.cause }.take(4)
+            .joinToString(" ← ") { it::class.simpleName + ": " + (it.message?.takeIf { m -> m.isNotBlank() } ?: "") }
+        return chain.ifBlank { e::class.simpleName ?: "unknown" }
+    }
 }

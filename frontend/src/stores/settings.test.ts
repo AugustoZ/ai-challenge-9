@@ -82,41 +82,6 @@ describe('createSettingsStore', () => {
     expect(second.getState().memoryTools).toBe(false);
   });
 
-  it('ragEnabled по умолчанию выключен', () => {
-    const store = createSettingsStore(createMemoryStorage());
-    expect(store.getState().ragEnabled).toBe(false);
-  });
-
-  it('setRagEnabled переключает RAG-поиск по документам', () => {
-    const store = createSettingsStore(createMemoryStorage());
-    store.getState().setRagEnabled(true);
-    expect(store.getState().ragEnabled).toBe(true);
-    store.getState().setRagEnabled(false);
-    expect(store.getState().ragEnabled).toBe(false);
-  });
-
-  it('ragEnabled персистится и читается обратно', () => {
-    const storage = createMemoryStorage();
-    const first = createSettingsStore(storage);
-    first.getState().setRagEnabled(true);
-
-    const envelope = JSON.parse(storage.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
-      state: Record<string, unknown>;
-    };
-    expect(envelope.state.ragEnabled).toBe(true);
-
-    const second = createSettingsStore(storage);
-    expect(second.getState().ragEnabled).toBe(true);
-  });
-
-  it('битый ragEnabled в хранилище отбрасывается коэрсией', () => {
-    const storage = createMemoryStorage({
-      [SETTINGS_STORAGE_KEY]: persistedEnvelope({ ragEnabled: 'включено' }),
-    });
-    const store = createSettingsStore(storage);
-    expect(store.getState().ragEnabled).toBe(false);
-  });
-
   it('персист пишет конверт {state, version} без действий', () => {
     const storage = createMemoryStorage();
     const store = createSettingsStore(storage);

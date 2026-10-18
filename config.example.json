@@ -21,6 +21,13 @@
   },
   "mcp": [
     {
+      "name": "github",
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN", "ghcr.io/github/github-mcp-server:latest", "stdio", "--toolsets=repos,issues,pull_requests"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ВАШ_GITHUB_PAT"},
+      "enabled": false
+    },
+    {
       "name": "example-server",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-everything"],
@@ -28,17 +35,6 @@
       "enabled": false
     }
   ],
-  "rag": {
-    "url": "http://localhost:18700/search",
-    "k": 5,
-    "timeoutMs": 10000,
-    "maxBlockChars": 6000,
-    "rerank": false,
-    "threshold": null,
-    "kBefore": null,
-    "rewrite": false,
-    "rewriteTimeoutMs": 8000
-  },
   "providers": [
     {
       "id": "opencode",

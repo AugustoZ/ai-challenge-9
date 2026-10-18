@@ -3,7 +3,6 @@ package com.example.aiweb.model
 import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.memory.MemoryEntry
 import com.example.aiweb.memory.WorkingEntry
-import com.example.aiweb.rag.RetrievedSource
 import com.example.aiweb.task.TaskState
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -56,12 +55,6 @@ data class FileConfig(
     val tools: FileToolsConfig? = null,
     /** Настройки памяти агента: стратегия поиска и (стадия 2) эмбеддинги; null — keyword-поиск. */
     val memory: MemoryConfig? = null,
-    /**
-     * Раздел RAG-поиска по базе знаний: адрес RAG-сервиса и параметры поиска.
-     * null/отсутствие раздела — RAG выключен.
-     * Только конфиг-файл: переменных окружения для раздела нет.
-     */
-    val rag: RagFileConfig? = null,
     /**
      * Раздел MCP-серверов: внешние инструменты по stdio-транспорту (список
      * [FileMcpServerConfig]). null/отсутствие раздела — MCP-серверы не подключены.
@@ -123,33 +116,6 @@ data class MemoryConfig(
     val search: String? = null,
     /** Поставщик эмбеддингов (стадия 2); в этом чейндже не активирует реализацию. */
     val embedding: EmbeddingConfig? = null
-)
-
-/**
- * Раздел RAG-поиска из конфиг-файла: адрес RAG-сервиса и параметры извлечения.
- * null/отсутствие раздела — RAG выключен (валидация значений — только при
- * непустом url, см. AppConfig.validate).
- */
-@Serializable
-data class RagFileConfig(
-    /** Адрес RAG-сервиса (POST {url} с телом {"query": ..., "k": ...}); null — RAG выключен. */
-    val url: String? = null,
-    /** Число извлекаемых чанков; null — значение по умолчанию. */
-    val k: Int? = null,
-    /** Таймаут запроса к RAG-сервису, мс; null — значение по умолчанию. */
-    val timeoutMs: Long? = null,
-    /** Максимальный суммарный размер инжектируемого блока документов, символы; null — значение по умолчанию. */
-    val maxBlockChars: Int? = null,
-    /** Реранкер на стороне RAG-сервиса; null — значение по умолчанию (false). */
-    val rerank: Boolean? = null,
-    /** Порог отсечения на финальной шкале score; null — фильтрация порогом выключена. */
-    val threshold: Double? = null,
-    /** Число кандидатов до фильтрации/реранкинга (1..20); null — берётся k. */
-    val kBefore: Int? = null,
-    /** Переписывание поискового запроса через LLM; null — значение по умолчанию (false). */
-    val rewrite: Boolean? = null,
-    /** Таймаут переписывания запроса, мс; null — значение по умолчанию (8000). */
-    val rewriteTimeoutMs: Long? = null
 )
 
 /** Конечная точка эмбеддингов (стадия 2). */
@@ -224,21 +190,6 @@ data class ChatRequest(
     val model: String? = null,
     /** Режим «Судья»: true → после ответа выполняется контрольная проверка отдельным вызовом LLM. */
     val judgeEnabled: Boolean? = null,
-    /**
-     * RAG-поиск для этого запроса: true → при настроенном сервером RAG
-     * (config.rag.url != null) в seed инжектится блок документов, а ответ
-     * эхом несёт ragEnabled и retrievedSources; false/дефолт — RAG выключен.
-     */
-    val ragEnabled: Boolean = false,
-    /**
-     * Порог релевантности RAG для этого запроса, перекрывающий config.rag.threshold;
-     * null — берётся из конфигурации. Вне диапазона (0, 1] — 400 при приёме запроса.
-     */
-    val ragThreshold: Double? = null,
-    /** Реранкер для этого запроса, перекрывающий config.rag.rerank; null — берётся из конфигурации. */
-    val ragRerank: Boolean? = null,
-    /** Переписывание запроса для этого запроса, перекрывающее config.rag.rewrite; null — берётся из конфигурации. */
-    val ragRewrite: Boolean? = null,
     /** Сжатие истории для этого запроса; null — брать из конфигурации (приоритет: поле запроса > конфиг). */
     val compressionEnabled: Boolean? = null,
     /** Стратегия формирования контекста: off | window | summary | facts | branching; null — разрешить по приоритету (legacy-флаг, затем конфиг). */
@@ -295,22 +246,6 @@ data class ChatResponse(
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val facts: List<Fact> = emptyList(),
-    /**
-     * RAG-поиск для этого запроса (echo): true — блок документов инжектился
-     * в seed. @EncodeDefault(ALWAYS): серверный Json имеет encodeDefaults=false,
-     * иначе ключ omitился бы из ответа, ломая контракт для фронтенда.
-     */
-    @OptIn(ExperimentalSerializationApi::class)
-    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
-    val ragEnabled: Boolean = false,
-    /**
-     * Документы, извлечённые RAG-поиском (snippet ≤ 200 символов каждый);
-     * пусто — RAG выключен или недоступен. @EncodeDefault(ALWAYS) — ключ
-     * всегда присутствует в JSON (контракт фронтенда, задача 6).
-     */
-    @OptIn(ExperimentalSerializationApi::class)
-    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
-    val retrievedSources: List<RetrievedSource> = emptyList(),
     /** Полное время обработки запроса на сервере (все вызовы LLM), мс. */
     val elapsedMs: Long? = null,
     /** Заключение судьи (режим «Судья»); null — проверка не выполнялась. */

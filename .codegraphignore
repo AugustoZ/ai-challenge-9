@@ -1,0 +1,11 @@
+build/
+.gradle/
+frontend/dist/
+frontend/node_modules/
+node_modules/
+data/
+target/
+.DS_Store
+*.png
+*.jpg
+*.woff2

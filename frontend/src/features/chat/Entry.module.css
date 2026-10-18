@@ -317,26 +317,6 @@
     text-shadow: var(--lamp-label-shadow);
 }
 
-/* ---------- Бейдж числа RAG-источников ---------- */
-
-/* Та же янтарная пластина, что у «Сводка применена»: RAG участвовал
-   в обмене, счёт источников виден сразу, не раскрывая «Источники» */
-.sourcesBadge {
-    display: inline-flex;
-    align-self: flex-start;
-    font-family: var(--mono);
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--lamp-text);
-    background: var(--amber-soft);
-    border: 1px solid rgba(var(--lamp-warm), 0.45);
-    border-radius: var(--radius);
-    padding: 2px 7px;
-    text-shadow: var(--lamp-label-shadow);
-}
-
 /* ---------- Бейдж нештатного завершения хода ---------- */
 
 /* Красная лампа отказа: ход закончился не «готово» (зацикливание,

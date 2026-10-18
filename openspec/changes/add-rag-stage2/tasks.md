@@ -4,7 +4,7 @@
 для слеживаемости). Все пункты выполняются TDD; агент не коммитит —
 пользователь коммитит вручную. Требования — `specs/rag-stage2/spec.md`.
 
-## 2. Probe: распределение score + reranker smoke (gw-club-indexer)
+## 2. Probe: распределение score + reranker smoke (внешний индексер)
 
 - [x] 2.1 Одноразовый probe-скрипт (в /tmp, НЕ в репо): загрузить
       существующий индекс (376 чанков), 10 вопросов из
@@ -22,7 +22,7 @@
 - [x] 2.5 Если латентность 20 кандидатов > 5s — зафиксировать РИСК в
       reports/ + notepad (влияет на таймауты T8/T9)
 
-## 3. Индексер: `src/gwclub_indexer/rerank.py` — CrossEncoder-обёртка
+## 3. Индексер: модуль реранка (`rerank.py`) — CrossEncoder-обёртка
 
 - [x] 3.1 `Reranker(model_name, *, device=None, max_length=512)`: ленивая
       загрузка модели при первом `score()` под `threading.Lock` (двойная
@@ -190,7 +190,7 @@
 
 ## 12. Документация + openspec sync
 
-- [x] 12.1 `gw-club-indexer/README.md` (секция serve): новые параметры
+- [x] 12.1 `внешний индексер/README.md` (секция serve): новые параметры
       /search (k_before/threshold/rerank), шкалы score (когда какая), флаг
       `--rerank-model`, цифры из `reports/stage2-probe.md`, примечание о
       размере модели (~2.2 GB, качается при первом использовании)

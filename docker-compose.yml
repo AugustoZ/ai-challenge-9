@@ -25,6 +25,15 @@ services:
     volumes:
       - ./config.docker.json:/app/config.json:ro
       - aiweb-data:/app/data
+      # codegraph MCP: linux-бинарник (v1.2.0, darwin-хостовый не запустится
+      # в контейнере) + репозиторий read-only. Путь внутри контейнера ОБЯЗАН
+      # совпадать с хостовым: repos.root_path в общей SQLite-базе ключуется
+      # абсолютным путём, иначе serve создаст второй пустой repo_id.
+      # Каталог .codegraph монтируется rw поверх ro-маунта репозитория:
+      # SQLite в WAL-режиме требует записи -shm/-wal даже читателю.
+      - ${HOME}/.local/bin/codegraph-linux-arm64:/usr/local/bin/codegraph:ro
+      - .:/Users/augustoz/AI Advent Challenge 9/Projects/ai-challenge-9:ro
+      - ./.codegraph:/Users/augustoz/AI Advent Challenge 9/Projects/ai-challenge-9/.codegraph
     # Переменные окружения имеют ПРИОРИТЕТ над значениями из config.json.
     # Чтобы использовать только файл config.json — закомментируйте блок environment.
     environment:
@@ -89,33 +98,9 @@ services:
       - sandbox
     # ports НЕ публикуются — доступ только по внутренней сети sandbox.
 
-  # --- RAG-индексер gw-club (sidecar для aiweb) ---
-  #
-  # Отдельный репозиторий ../../gw-club-indexer: uv-проект с FAISS-индексом и
-  # CPU-реранкером BAAI/bge-reranker-v2-m3. aiweb ходит к нему по внутренней
-  # default-сети: http://indexer:8000/search (см. RagClient.kt).
-  #
-  # Первый запуск: контейнер докачивает веса моделей в hf-cache (~2.7 ГБ:
-  # bge-reranker ~2.2 + e5 ~0.5) — до healthy может пройти 10-15 минут
-  # (start_period 600s в healthcheck образа).
-  indexer:
-    build:
-      context: ../../gw-club-indexer
-      dockerfile: Dockerfile
-    container_name: indexer
-    # Хост 0.0.0.0 ОБЯЗАТЕЛЕН: serve.py дефолт 127.0.0.1 (serve.py:65) — иначе контейнер молча недоступен
-    command: ["uv","run","gwclub","serve","--host","0.0.0.0","--port","8000","--rerank-model","BAAI/bge-reranker-v2-m3"]
-    ports:
-      # Наружу ТОЛЬКО для отладки с хоста; приложение ходит по внутренней сети (http://indexer:8000/search)
-      - "127.0.0.1:18701:8000"
-    volumes:
-      # Веса моделей (~2.7 ГБ) — именованный том, скачиваются при ПЕРВОМ старте (start_period 600s в healthcheck образа)
-      - hf-cache:/home/indexer/.cache/huggingface
-      # Готовый FAISS-индекс с хоста (read-only); после ребилда индекса нужен: docker compose restart indexer
-      - ../../gw-club-indexer/data/index:/app/data/index:ro
-    restart: unless-stopped
-    # healthcheck НЕ дублируем: compose автоматически использует HEALTHCHECK из образа
-    # (python TCP one-liner, start_period 600s) — см. Dockerfile индексера
+  # --- RAG-индексер (sidecar для aiweb) --- УДАЛЁН: RAG-режим вырезан
+  # из веб-версии «Штурмана» (история — openspec/changes/add-rag-mode и
+  # add-rag-stage2, git-история docker-compose.yml).
 
 # Сети (P2):
 #  - default (неявная) — обычная сеть с интернетом: aiweb ходит в LLM API;
@@ -129,9 +114,6 @@ networks:
 #  - aiweb-data: данные сессий (P1-персистентность);
 #  - sandbox-work: рабочая папка sandbox — сюда run_code пишет файлы,
 #    оттуда read_file их читает; переживает пересоздание контейнера.
-#  - hf-cache: HuggingFace-кэш весов моделей индексера (~2.7 ГБ), скачивается
-#    при первом старте; переживает пересоздание контейнера.
 volumes:
   aiweb-data:
   sandbox-work:
-  hf-cache:

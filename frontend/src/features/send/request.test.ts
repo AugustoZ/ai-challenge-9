@@ -26,7 +26,6 @@ function settings(overrides: Partial<SendSettings> = {}): SendSettings {
     judge: DEFAULT_SETTINGS.judge,
     contextStrategy: DEFAULT_SETTINGS.contextStrategy,
     memoryTools: DEFAULT_SETTINGS.memoryTools,
-    ragEnabled: DEFAULT_SETTINGS.ragEnabled,
     ...overrides,
   };
 }
@@ -46,30 +45,12 @@ describe('buildChatRequest', () => {
       judgeEnabled: false,
       contextStrategy: 'off',
       memoryTools: true,
-      ragEnabled: false,
     });
   });
 
   it('memoryTools уходит явным boolean всегда — и ВКЛ, и ВЫКЛ', () => {
     expect(buildChatRequest(settings({ memoryTools: true }), NO_SESSION, 'q').memoryTools).toBe(true);
     expect(buildChatRequest(settings({ memoryTools: false }), NO_SESSION, 'q').memoryTools).toBe(false);
-  });
-
-  it('ragEnabled уходит явным boolean всегда — и ВКЛ, и ВЫКЛ', () => {
-    expect(buildChatRequest(settings({ ragEnabled: true }), NO_SESSION, 'q').ragEnabled).toBe(true);
-    expect(buildChatRequest(settings({ ragEnabled: false }), NO_SESSION, 'q').ragEnabled).toBe(false);
-  });
-
-  it('stage-2 overrides (ragThreshold/ragRerank/ragRewrite) фронт НЕ отправляет — ни по умолчанию, ни при ragEnabled=true', () => {
-    const requests = [
-      buildChatRequest(settings(), NO_SESSION, 'q'),
-      buildChatRequest(settings({ ragEnabled: true }), NO_SESSION, 'q'),
-    ];
-    for (const request of requests) {
-      expect('ragThreshold' in request).toBe(false);
-      expect('ragRerank' in request).toBe(false);
-      expect('ragRewrite' in request).toBe(false);
-    }
   });
 
   it('составная модель «providerId/modelId» разбирается на пару провайдер/модель', () => {

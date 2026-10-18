@@ -45,7 +45,7 @@ DEFAULT_BASE_URL = "https://wiki.gwm-club.ru"
 LOCALE = "ru"
 DEFAULT_PATH = "faq-admin/chastye-voprosy"
 DEFAULT_TITLE = "Частые вопросы"
-DEFAULT_DESCRIPTION = "FAQ клуба GW-CLUB"
+DEFAULT_DESCRIPTION = "FAQ проекта «Штурман»"
 ALLOWED_PREFIX = "faq-admin/"
 TIMEOUT_S = 20.0
 

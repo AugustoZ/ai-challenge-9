@@ -334,9 +334,6 @@ export function useChatStream() {
           events:
             Array.isArray(data.events) && data.events.length ? data.events : undefined,
           judge: data.judge ?? undefined,
-          rag: data.ragEnabled
-            ? { enabled: true, sources: data.retrievedSources ?? [] }
-            : undefined,
         });
         /* Учёт топлива (addBotMessage, L306–315): totalTokens != null —
            плюс к счётчику сессии и столбец в историю топливомера */

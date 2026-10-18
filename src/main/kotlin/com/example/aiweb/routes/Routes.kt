@@ -16,7 +16,6 @@ import com.example.aiweb.client.OpenAIFactExtractor
 import com.example.aiweb.client.OpenAIHistorySummarizer
 import com.example.aiweb.config.AppConfig
 import com.example.aiweb.config.ProviderConfig
-import com.example.aiweb.config.RagConfig
 import com.example.aiweb.invariants.GlobalInvariantStore
 import com.example.aiweb.invariants.StoredInvariant
 import com.example.aiweb.invariants.renderInvariantBlock
@@ -93,14 +92,6 @@ import com.example.aiweb.pipeline.PipelineRunAccepted
 import com.example.aiweb.pipeline.PipelineRunOutcome
 import com.example.aiweb.pipeline.PipelineRunRequest
 import com.example.aiweb.pipeline.PipelineService
-import com.example.aiweb.rag.KtorRagClient
-import com.example.aiweb.rag.LLMQueryRewriter
-import com.example.aiweb.rag.Passage
-import com.example.aiweb.rag.RagClient
-import com.example.aiweb.rag.RagPrompts
-import com.example.aiweb.rag.RagService
-import com.example.aiweb.rag.RetrieveResult
-import com.example.aiweb.rag.toRetrievedSource
 import com.example.aiweb.tools.MemoryRecallTool
 import com.example.aiweb.tools.MemorySaveTool
 import com.example.aiweb.tools.NativeToolProvider
@@ -137,7 +128,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
 import java.nio.file.Files
-import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -160,7 +150,6 @@ fun Route.aiRoutes(
     factExtractorFactory: (LLMClient) -> FactExtractor = {
         OpenAIFactExtractor(it)
     },
-    ragFactory: (RagConfig) -> RagClient = { KtorRagClient(it) },
     pipelineScenarioDir: String? = null,
     pipelineExtraTools: List<Tool> = emptyList()
 ) {
@@ -219,11 +208,6 @@ fun Route.aiRoutes(
     val baseRegistry = ToolRegistry.forConfig(config.tools)
     val nativeTools = NativeToolProvider.tools(memoryBaseDir, clients.values.firstOrNull())
     val registry = baseRegistry.augmentedWith(nativeTools)
-
-    // RAG (задача 6 плана rag-mode): клиент строится один раз при настроенном
-    // сервером RAG (config.rag.url != null); KtorRagClient бросает на пустом url,
-    // поэтому создаётся только когда RAG включён — иначе null (руг выключен).
-    val ragClient: RagClient? = config.rag.url?.let { ragFactory(config.rag) }
 
     // MCP (задача 9): менеджер подключений строится из раздела "mcp" конфига —
     // единственный экземпляр на процесс, рядом со сборкой реестра. Лайфцикл —
@@ -574,10 +558,10 @@ fun Route.aiRoutes(
         }
 
         try {
-            val outcome = withContext(ExchangeLog.userContext(userId)) {
+            val response = withContext(ExchangeLog.userContext(userId)) {
                 handleAgent(
                     chat.aiClient, body, chat.provider, chat.session,
-                    sessions, config, ragClient, compressors.getValue(chat.provider), registry,
+                    sessions, config, compressors.getValue(chat.provider), registry,
                     mcpManager.adapters(), memory,
                     preferences, invariantStore, userId
                 )
@@ -586,9 +570,8 @@ fun Route.aiRoutes(
             call.respond(
                 withContext(ExchangeLog.userContext(userId)) {
                     finalizeResponse(
-                        chat.aiClient, body, outcome.response, chat.session, sessions, invariantStore, startedAt,
-                        hooks = contextHooks(chat.provider, body),
-                        ragPassages = outcome.ragPassages
+                        chat.aiClient, body, response, chat.session, sessions, invariantStore, startedAt,
+                        hooks = contextHooks(chat.provider, body)
                     )
                 }
             )
@@ -684,7 +667,7 @@ fun Route.aiRoutes(
                     val outcome = withContext(ExchangeLog.userContext(userId)) {
                         handleAgent(
                             chat.aiClient, body, chat.provider, chat.session,
-                            sessions, config, ragClient, compressors.getValue(chat.provider), registry,
+                            sessions, config, compressors.getValue(chat.provider), registry,
                             mcpManager.adapters(), memory,
                             preferences, invariantStore, userId,
                             onEvent = { event ->
@@ -709,9 +692,8 @@ fun Route.aiRoutes(
                     }
                     val finalized = withContext(ExchangeLog.userContext(userId)) {
                         finalizeResponse(
-                            chat.aiClient, body, outcome.response, chat.session, sessions, invariantStore, startedAt,
-                            hooks = contextHooks(chat.provider, body),
-                            ragPassages = outcome.ragPassages
+                            chat.aiClient, body, outcome, chat.session, sessions, invariantStore, startedAt,
+                            hooks = contextHooks(chat.provider, body)
                         ) { status ->
                             frames.trySend(StreamEvent.Status(status))
                         }
@@ -1559,20 +1541,6 @@ private suspend fun ApplicationCall.receiveChatRequest(): ChatRequest? {
         return null
     }
 
-    // Override порога RAG валидируется при приёме (до LLM и сессии): значение вне
-    // (0, 1] отсекло бы все документы или завалило бы фильтр — ранняя русская 400.
-    val ragThreshold = body.ragThreshold
-    if (ragThreshold != null && (ragThreshold <= 0.0 || ragThreshold > 1.0)) {
-        respond(
-            HttpStatusCode.BadRequest,
-            ChatResponse(
-                "Некорректный порог RAG: ragThreshold должен быть больше 0 и не больше 1 " +
-                    "(получено: $ragThreshold)."
-            )
-        )
-        return null
-    }
-
     return body
 }
 
@@ -1739,7 +1707,6 @@ private suspend fun finalizeResponse(
     invariantStore: GlobalInvariantStore,
     startedAt: Long,
     hooks: ContextHooks? = null,
-    ragPassages: List<Passage> = emptyList(),
     onStatus: suspend (String) -> Unit = {}
 ): ChatResponse {
     // FSM (задача 5, G3): стрип task-state блоков из reply ДО append истории
@@ -1876,20 +1843,10 @@ private suspend fun finalizeResponse(
         global = invariantStore.list(),
         session = session?.invariants ?: emptyList()
     ).takeIf { it.global.isNotEmpty() || it.session.isNotEmpty() }
-    // RAG-источники (задача 5 плана rag-answers-minichat): клиент хотел RAG И
-    // sidecar вернул чанки — к финальному ответу детерминированно прикладываются
-    // блоки «Источники:»/«Цитаты:». В историю выше уже записан cleanReply (БЕЗ
-    // блоков) — RAW-ответ последующих LLM-ходов не засоряется. ragEnabled=false
-    // или пустые источники — ответ не меняется (байт-паритет).
-    val augmentedReply = if (response.ragEnabled && response.retrievedSources.isNotEmpty() && ragPassages.isNotEmpty()) {
-        appendSourcesBlocks(cleanReply, ragPassages)
-    } else {
-        cleanReply
-    }
     return if (body.judgeEnabled == true) {
         onStatus("Судья проверяет ответ…")
         response.copy(
-            reply = augmentedReply,
+            reply = cleanReply,
             elapsedMs = elapsedMs,
             judge = runJudge(aiClient, body, response.copy(reply = cleanReply), elapsedMs),
             facts = currentFacts,
@@ -1899,7 +1856,7 @@ private suspend fun finalizeResponse(
         )
     } else {
         response.copy(
-            reply = augmentedReply,
+            reply = cleanReply,
             elapsedMs = elapsedMs,
             facts = currentFacts,
             taskState = echoTaskState,
@@ -2306,62 +2263,6 @@ private suspend fun ApplicationCall.receiveInvariantSessionBody(): Pair<String, 
 private fun invariantListJson(list: List<StoredInvariant>): JsonElement =
     Json.encodeToJsonElement(ListSerializer(StoredInvariant.serializer()), list)
 
-/** Результат [handleAgent]: ответ + исходные RAG-чанки для [finalizeResponse]. */
-private data class AgentOutcome(
-    val response: ChatResponse,
-    val ragPassages: List<Passage>
-)
-
-/** Детерминированный ответ при RAG «ниже порога» (без вызова LLM) — шаблон плана. */
-private const val RAG_NOT_KNOWN =
-    "Не знаю по этому вопросу — в базе знаний нет достаточно релевантных материалов. " +
-        "Уточните, пожалуйста: о каком разделе или файле идёт речь?"
-
-/** Цитата: max-длина фрагмента после санитизации (контракт блока «Цитаты:»). */
-private const val SOURCE_FRAGMENT_MAX = 300
-
-/**
- * Детерминированное приложение блоков «Источники:» и «Цитаты:» к ответу (задача 5
- * плана rag-answers-minichat) — единственный эмитент этих блоков, бэкенд: модель
- * по инструкции (RagPrompts.INSTRUCTION) их не выводит.
- *
- * Формат: reply + «\n\nИсточники:\n» + строки «[N] source · section · chunk chunkId · score»
- * (N = 1..passages.size) + (при ≥1 непустой цитате) «\nЦитаты:\n» + строки «[N] «fragment»»;
- * нумерация [N] совпадает в обоих блоках (индекс чанка). Чанк с пустым содержанием
- * строки цитаты не даёт; пустой [passages] — reply без изменений.
- */
-private fun appendSourcesBlocks(reply: String, passages: List<Passage>): String {
-    if (passages.isEmpty()) return reply
-    val sourceLines = passages.mapIndexed { i, p ->
-        "[${i + 1}] ${p.source} · ${p.section} · chunk ${p.chunkId} · ${String.format(Locale.US, "%.4f", p.score)}"
-    }
-    val quoteLines = passages.mapIndexed { i, p ->
-        val fragment = sanitizeSourceFragment(p.content)
-        if (fragment.isBlank()) null else "[${i + 1}] «$fragment»"
-    }
-    val sb = StringBuilder(reply).append("\n\nИсточники:\n").append(sourceLines.joinToString("\n"))
-    val presentQuotes = quoteLines.filterNotNull()
-    if (presentQuotes.isNotEmpty()) {
-        sb.append("\nЦитаты:\n").append(presentQuotes.joinToString("\n"))
-    }
-    return sb.toString()
-}
-
-/**
- * Санитизация фрагмента цитаты: схлопывание пробелов, удаление ```, обрезка
- * ≤ [SOURCE_FRAGMENT_MAX] на границе предложения (last [.!?…] в первых 300 символах).
- */
-private fun sanitizeSourceFragment(raw: String): String {
-    var text = raw.replace(Regex("\\s+"), " ").trim()
-    text = text.replace("```", "").trim()
-    if (text.length > SOURCE_FRAGMENT_MAX) {
-        val head = text.take(SOURCE_FRAGMENT_MAX)
-        val boundary = head.indexOfLast { it == '.' || it == '!' || it == '?' || it == '…' }
-        text = if (boundary >= 0) head.take(boundary + 1) else head
-    }
-    return text
-}
-
 /**
  * Агентная обработка запроса: AgentLoop итерирует модель с инструментами до финального ответа.
  * Транспорт выбирается по возможностям провайдера: нативный function calling
@@ -2408,7 +2309,6 @@ private suspend fun handleAgent(
     session: Session?,
     sessions: SessionStore,
     config: AppConfig,
-    ragClient: RagClient?,
     compressor: HistoryCompressor,
     registry: ToolRegistry,
     mcpTools: List<Tool>,
@@ -2419,7 +2319,7 @@ private suspend fun handleAgent(
     onEvent: suspend (AgentEvent) -> Unit = {},
     onCancelled: ((List<OpenAIMessage>) -> Unit)? = null,
     resumeContext: List<OpenAIMessage>? = null
-): AgentOutcome {
+): ChatResponse {
     val startSeq = ExchangeLog.mark()
 
     // MCP (mcp-integration): адаптеры тулов подключённых MCP-серверов (tg, wiki)
@@ -2534,81 +2434,7 @@ private suspend fun handleAgent(
         session?.invariants ?: emptyList()
     )?.let { OpenAIMessage(role = "system", content = it) }
 
-    // RAG (задача 6 плана rag-mode): клиент хочет RAG (ragEnabled=true) И сервер
-    // его настроил (config.rag.url != null). Retrieval — по body.message после trim,
-    // блок документов — последним system-сообщением seed (после памяти). Fail-open:
-    // недоступный RAG → Unavailable → пустой список + warn-лог (RagService);
-    // блок инжектить нечего. Ok с пустым списком — «ниже порога», тоже без блока.
-    val ragWanted = body.ragEnabled == true && config.rag.url != null
-    // Статусная обёртка (план rag-answers-minichat): различаем «Ok (пусто)» — это
-    // «ниже порога релевантности» — от «недоступен» (Unavailable/сервиса нет).
-    // Ok идёт на детерминированный ответ «не знаю»; Unavailable — прежний
-    // fail-open (свободный ответ модели + warn, см. RagService).
-    var ragRetrieved = false
-    var ragPassages: List<Passage> = emptyList()
-    if (ragWanted && body.message.isNotBlank()) {
-        val ragService = ragClient?.let { RagService(it) }
-        // kBefore — ТОЛЬКО из конфига: per-request override Lock OUT (задача 9).
-        val kBefore = config.rag.kBefore
-        val threshold = body.ragThreshold ?: config.rag.threshold
-        val rerank = body.ragRerank ?: config.rag.rerank
-        val retrieveResult = if (body.ragRewrite ?: config.rag.rewrite) {
-            // Rewrite ДО retrieve: переиспользуем существующий aiClient (не создаём
-            // новый); сбой/таймаут возвращает оригинальный запрос (fail-open), а пара
-            // «оригинал → рерайт» пишется только в серверный лог (LLMQueryRewriter).
-            val rewritten = LLMQueryRewriter(aiClient, timeoutMs = config.rag.rewriteTimeoutMs).rewrite(body.message)
-            ragService?.retrieve(rewritten, config.rag.k, kBefore, threshold, rerank)
-        } else {
-            ragService?.retrieve(body.message, config.rag.k, kBefore, threshold, rerank)
-        }
-        when (retrieveResult) {
-            is RetrieveResult.Ok -> {
-                ragRetrieved = true
-                ragPassages = retrieveResult.passages
-            }
-            is RetrieveResult.Unavailable -> { /* fail-open: пусто, поведение как раньше */ }
-            null -> { /* сервиса нет (ragClient == null): fail-open */ }
-        }
-    }
-    // RAG «не знаю» (задача 5 плана rag-answers-minichat): клиент хотел RAG,
-    // sidecar ответил Ok, но все чанки ниже порога релевантности — пустой список.
-    // Детерминированный ответ БЕЗ вызова LLM/AgentLoop: токены нулевые,
-    // retrievedSources пусты. ragEnabled эхом остаётся true; «не знаю» попадает
-    // и в ответ, и в историю (специальное событие RagUnknown).
-    if (ragWanted && ragRetrieved && ragPassages.isEmpty()) {
-        val event = AgentEvent.RagUnknown(
-            step = 1,
-            message = "RAG: релевантность ниже порога — ответ \u201Eне знаю\u201C"
-        )
-        onEvent(event)
-        return AgentOutcome(
-            response = ChatResponse(
-                reply = RAG_NOT_KNOWN,
-                promptTokens = 0,
-                completionTokens = 0,
-                totalTokens = 0,
-                sessionId = session?.id,
-                events = listOf(event),
-                exchanges = ExchangeLog.since(startSeq),
-                summaryTokens = mergeResult?.tokens,
-                summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
-                contextStrategy = strategy.id,
-                branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null,
-                ragEnabled = ragWanted,
-                retrievedSources = emptyList()
-            ),
-            ragPassages = emptyList()
-        )
-    }
-    val ragMessage = if (ragPassages.isNotEmpty()) {
-        OpenAIMessage(
-            role = "system",
-            content = RagPrompts.buildRagBlock(ragPassages, config.rag.maxBlockChars)
-        )
-    } else {
-        null
-    }
-    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, invariantsMessage, memoryMessage, ragMessage)
+    val seed = trimmedSeed + listOfNotNull(preferencesMessage, taskStateMessage, invariantsMessage, memoryMessage)
 
     val events = mutableListOf<AgentEvent>()
     val outcome = loop.run(
@@ -2627,23 +2453,18 @@ private suspend fun handleAgent(
         resumeContext = resumeContext
     )
 
-    return AgentOutcome(
-        response = ChatResponse(
-            reply = outcome.reply,
-            promptTokens = outcome.promptTokens,
-            completionTokens = outcome.completionTokens,
-            totalTokens = outcome.totalTokens,
-            sessionId = session?.id,
-            events = events,
-            exchanges = ExchangeLog.since(startSeq),
-            summaryTokens = mergeResult?.tokens,
-            summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
-            contextStrategy = strategy.id,
-            branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null,
-            ragEnabled = ragWanted,
-            retrievedSources = ragPassages.map { it.toRetrievedSource() }
-        ),
-        ragPassages = ragPassages
+    return ChatResponse(
+        reply = outcome.reply,
+        promptTokens = outcome.promptTokens,
+        completionTokens = outcome.completionTokens,
+        totalTokens = outcome.totalTokens,
+        sessionId = session?.id,
+        events = events,
+        exchanges = ExchangeLog.since(startSeq),
+        summaryTokens = mergeResult?.tokens,
+        summaryApplied = strategy == ContextStrategy.SUMMARY && viewSession?.summary != null,
+        contextStrategy = strategy.id,
+        branchId = if (strategy == ContextStrategy.BRANCHING) session?.activeBranchId else null
     )
 }
 

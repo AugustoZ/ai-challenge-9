@@ -34,8 +34,6 @@ export interface SettingsValues {
   mirrorStrategyComp: MirrorStrategy;
   /** Инструменты памяти агента: чтение/сохранение памяти на сервере. */
   memoryTools: boolean;
-  /** RAG: поиск релевантных документов в корпусе перед ответом. */
-  ragEnabled: boolean;
 }
 
 /** Дефолты = DEFAULTS из script.js минус поле режима рассуждений (режимы удалены). */
@@ -52,7 +50,6 @@ export const DEFAULT_SETTINGS: SettingsValues = {
   mirrorStrategyFull: 'off',
   mirrorStrategyComp: 'summary',
   memoryTools: true,
-  ragEnabled: false,
 };
 
 export const SETTINGS_STORAGE_KEY = 'shturman.settings.v1';
@@ -107,7 +104,6 @@ export function coerceSettings(raw: unknown): SettingsValues {
       ? (stored.mirrorStrategyComp as MirrorStrategy)
       : DEFAULT_SETTINGS.mirrorStrategyComp,
     memoryTools: bool('memoryTools', DEFAULT_SETTINGS.memoryTools),
-    ragEnabled: bool('ragEnabled', DEFAULT_SETTINGS.ragEnabled),
   };
 }
 
@@ -129,7 +125,6 @@ export interface SettingsState extends SettingsValues {
   setMirrorStrategyFull: (strategy: MirrorStrategy) => void;
   setMirrorStrategyComp: (strategy: MirrorStrategy) => void;
   setMemoryTools: (memoryTools: boolean) => void;
-  setRagEnabled: (ragEnabled: boolean) => void;
   /** «Новый диалог»: настройки возвращаются к дефолтам. */
   reset: () => void;
 }
@@ -168,7 +163,6 @@ export function createSettingsStore(baseStorage?: StringStorage) {
         setMirrorStrategyFull: (strategy) => set({ mirrorStrategyFull: strategy }),
         setMirrorStrategyComp: (strategy) => set({ mirrorStrategyComp: strategy }),
         setMemoryTools: (memoryTools) => set({ memoryTools }),
-        setRagEnabled: (ragEnabled) => set({ ragEnabled }),
         reset: () => set({ ...DEFAULT_SETTINGS }),
       }),
       {
@@ -188,7 +182,6 @@ export function createSettingsStore(baseStorage?: StringStorage) {
           mirrorStrategyFull: state.mirrorStrategyFull,
           mirrorStrategyComp: state.mirrorStrategyComp,
           memoryTools: state.memoryTools,
-          ragEnabled: state.ragEnabled,
         }),
         // Битые/чужие данные в хранилище не пролезают: та же коэрсия, что у seed
         merge: (persisted, current) => ({ ...current, ...coerceSettings(persisted) }),
